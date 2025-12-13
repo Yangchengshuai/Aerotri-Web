@@ -1,0 +1,84 @@
+#!/bin/bash
+set -e -x
+uname -a
+CURRDIR=$(pwd)
+
+export PATH="/usr/bin"
+
+# Install config manager and EPEL release
+yum install -y dnf-plugins-core epel-release
+# Enable the PowerTools repository (required for ninja-build)
+yum config-manager --set-enabled powertools
+
+# Install toolchain under AlmaLinux 8,
+# see https://almalinux.pkgs.org/8/almalinux-appstream-x86_64/
+yum install -y \
+    gcc-toolset-12-gcc \
+    gcc-toolset-12-gcc-c++ \
+    gcc-toolset-12-gcc-gfortran \
+    kernel-headers \
+    perl-IPC-Cmd \
+    scl-utils \
+    git \
+    cmake3 \
+    ninja-build \
+    curl \
+    zip \
+    unzip \
+    tar \
+    perl \
+    libXmu-devel \
+    libXi-devel \
+    mesa-libGL-devel
+
+source scl_source enable gcc-toolset-12
+
+CUDA_HOME="/usr/local/cuda"
+if [ ! -d "${CUDA_HOME}" ] && [ -d "${CUDA_HOME}-12.9" ]; then
+    ln -s "${CUDA_HOME}-12.9" "${CUDA_HOME}"
+fi
+if [ -d "${CUDA_HOME}" ]; then
+    export PATH="${CUDA_HOME}/bin:${PATH}"
+    if [ ! -f "/usr/local/bin/nvcc" ] && [ -f "${CUDA_HOME}/bin/nvcc" ]; then
+        ln -s "${CUDA_HOME}/bin/nvcc" /usr/local/bin/nvcc
+    fi
+    echo "${CUDA_HOME}/lib64" > /etc/ld.so.conf.d/cuda.conf
+fi
+
+# ccache shipped by CentOS is too old so we download and cache it.
+COMPILER_TOOLS_DIR="${CONTAINER_COMPILER_CACHE_DIR}/bin"
+mkdir -p ${COMPILER_TOOLS_DIR}
+if [ ! -f "${COMPILER_TOOLS_DIR}/ccache" ]; then
+    FILE="ccache-4.10.1-linux-x86_64"
+    curl -sSLO https://github.com/ccache/ccache/releases/download/v4.10.1/${FILE}.tar.xz
+    tar -xf ${FILE}.tar.xz
+    cp ${FILE}/ccache ${COMPILER_TOOLS_DIR}
+fi
+export PATH="${COMPILER_TOOLS_DIR}:${PATH}"
+
+# Setup vcpkg
+git clone https://github.com/microsoft/vcpkg ${VCPKG_INSTALLATION_ROOT}
+cd ${VCPKG_INSTALLATION_ROOT}
+./bootstrap-vcpkg.sh
+./vcpkg integrate install
+
+# Build COLMAP
+cd ${CURRDIR}
+mkdir build && cd build
+cmake3 .. -GNinja \
+    -DCUDA_ENABLED="${BUILD_CUDA_ENABLED}" \
+    -DCMAKE_CUDA_ARCHITECTURES="all-major" \
+    -DGUI_ENABLED=OFF \
+    -DCGAL_ENABLED=OFF \
+    -DLSD_ENABLED=OFF \
+    -DCCACHE_ENABLED=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_MAKE_PROGRAM=/usr/bin/ninja \
+    -DCMAKE_TOOLCHAIN_FILE="${CMAKE_TOOLCHAIN_FILE}" \
+    -DVCPKG_TARGET_TRIPLET="${VCPKG_TARGET_TRIPLET}" \
+    -DCMAKE_EXE_LINKER_FLAGS_INIT="-ldl"
+ninja install
+
+ccache --show-stats --verbose
+ccache --evict-older-than 1d
+ccache --show-stats --verbose

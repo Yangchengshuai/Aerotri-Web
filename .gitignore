@@ -1,0 +1,46 @@
+# Root repo ignore rules (colmap_glomap)
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# Large datasets / outputs (do NOT commit)
+aerotri-web/data/
+
+# AeroTri logs
+*.log
+
+# Build artifacts (CMake etc.)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+build/
+build_*/
+
+# COLMAP local build/deps artifacts
+colmap/_deps/
+colmap/build*/
+colmap/**/build*/
+colmap/**/CMakeFiles/
+
+# We temporarily moved COLMAP's nested git metadata out
+colmap/.git.bak-colmap_glomap_upload/
+
+# Other local folders under /root/work that are not part of deliverables
+.claude/
+glomap/
+hloc-glomap/
