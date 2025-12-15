@@ -87,6 +87,39 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="showDirectoryDialog"
+      title="选择图像目录"
+      width="640px"
+      destroy-on-close
+    >
+      <div class="dir-browser">
+        <div class="dir-browser__header">
+          <span class="current-path">{{ currentDir || '请选择目录' }}</span>
+          <el-button text size="small" :disabled="!parentDir" @click="goParent">上一级</el-button>
+        </div>
+        <el-skeleton v-if="directoryLoading" :rows="4" animated />
+        <el-empty v-else-if="directoryEntries.length === 0" description="没有可用的子目录" />
+        <el-scrollbar v-else class="dir-list">
+          <div
+            v-for="entry in directoryEntries"
+            :key="entry.path"
+            class="dir-item"
+          >
+            <div class="dir-item__info" @click="openDirectory(entry.path)">
+              <el-icon><Folder /></el-icon>
+              <span class="dir-name">{{ entry.name }}</span>
+              <div class="dir-tags">
+                <el-tag v-if="entry.has_images" size="small" type="success" effect="plain">含图像</el-tag>
+                <el-tag v-if="entry.has_subdirs" size="small" effect="plain">有子目录</el-tag>
+              </div>
+            </div>
+            <el-button size="small" @click="selectDirectory(entry.path)">选择</el-button>
+          </div>
+        </el-scrollbar>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -95,9 +128,10 @@ import { ref, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Folder } from '@element-plus/icons-vue'
 import { useBlocksStore } from '@/stores/blocks'
-import type { Block } from '@/types'
+import type { Block, DirectoryEntry } from '@/types'
+import { filesystemApi } from '@/api'
 import BlockCard from '@/components/BlockCard.vue'
 
 const router = useRouter()
@@ -106,6 +140,12 @@ const blocksStore = useBlocksStore()
 const showCreateDialog = ref(false)
 const creating = ref(false)
 const formRef = ref<FormInstance>()
+
+const showDirectoryDialog = ref(false)
+const directoryLoading = ref(false)
+const directoryEntries = ref<DirectoryEntry[]>([])
+const currentDir = ref('')
+const parentDir = ref<string | null>(null)
 
 const formData = reactive({
   name: '',
@@ -174,10 +214,38 @@ async function handleDelete(block: Block) {
   }
 }
 
-function browseDirectory() {
-  // In a real app, this would open a directory picker
-  // For now, just set a default test path
-  formData.image_path = '/root/data/city1-CQ02-441-bagcp-riggcp-adj - export'
+async function browseDirectory() {
+  showDirectoryDialog.value = true
+  await loadDirectories()
+}
+
+async function loadDirectories(path?: string) {
+  directoryLoading.value = true
+  try {
+    const resp = await filesystemApi.listDirs(path)
+    directoryEntries.value = resp.data.entries
+    currentDir.value = resp.data.current
+    parentDir.value = resp.data.parent
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '目录加载失败')
+  } finally {
+    directoryLoading.value = false
+  }
+}
+
+function openDirectory(path: string) {
+  loadDirectories(path)
+}
+
+function goParent() {
+  if (parentDir.value) {
+    loadDirectories(parentDir.value)
+  }
+}
+
+function selectDirectory(path: string) {
+  formData.image_path = path
+  showDirectoryDialog.value = false
 }
 </script>
 
@@ -236,5 +304,61 @@ function browseDirectory() {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 20px;
+}
+
+.dir-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dir-browser__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  color: #606266;
+}
+
+.current-path {
+  word-break: break-all;
+}
+
+.dir-list {
+  max-height: 320px;
+}
+
+.dir-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  transition: all 0.15s ease;
+}
+
+.dir-item:hover {
+  border-color: #409eff;
+  background: #f5f7fa;
+}
+
+.dir-item__info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.dir-name {
+  font-weight: 500;
+  color: #303133;
+}
+
+.dir-tags {
+  display: flex;
+  gap: 6px;
 }
 </style>

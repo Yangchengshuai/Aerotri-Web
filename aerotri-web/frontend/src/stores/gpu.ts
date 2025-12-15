@@ -9,8 +9,11 @@ export const useGPUStore = defineStore('gpu', () => {
   const error = ref<string | null>(null)
   const selectedGpuIndex = ref(0)
 
-  async function fetchGPUs() {
-    loading.value = true
+  async function fetchGPUs(options: { showLoading?: boolean } = {}) {
+    const showLoading = options.showLoading ?? true
+    if (showLoading) {
+      loading.value = true
+    }
     error.value = null
     try {
       const response = await gpuApi.list()
@@ -24,7 +27,9 @@ export const useGPUStore = defineStore('gpu', () => {
       error.value = e instanceof Error ? e.message : 'Failed to fetch GPUs'
       gpus.value = []
     } finally {
-      loading.value = false
+      if (showLoading) {
+        loading.value = false
+      }
     }
   }
 

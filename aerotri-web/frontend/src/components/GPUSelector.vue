@@ -57,7 +57,14 @@
       </div>
     </div>
 
-    <el-button text type="primary" @click="refresh" :loading="loading" class="refresh-btn">
+    <el-button
+      v-if="!autoRefreshActive"
+      text
+      type="primary"
+      @click="refresh"
+      :loading="loading"
+      class="refresh-btn"
+    >
       <el-icon><Refresh /></el-icon>
       刷新
     </el-button>
@@ -65,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { useGPUStore } from '@/stores/gpu'
 import { storeToRefs } from 'pinia'
@@ -81,9 +88,29 @@ const emit = defineEmits<{
 
 const gpuStore = useGPUStore()
 const { gpus, loading } = storeToRefs(gpuStore)
+const autoRefreshActive = ref(false)
 
 onMounted(() => {
   gpuStore.fetchGPUs()
+  startAutoRefresh()
+})
+
+const AUTO_REFRESH_INTERVAL = 2000
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+function startAutoRefresh() {
+  refreshTimer = setInterval(() => {
+    gpuStore.fetchGPUs({ showLoading: false })
+  }, AUTO_REFRESH_INTERVAL)
+  autoRefreshActive.value = true
+}
+
+onBeforeUnmount(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+    autoRefreshActive.value = false
+  }
 })
 
 function selectGPU(gpu: GPUInfo) {

@@ -83,6 +83,21 @@ export interface ImageListResponse {
   page_size: number
 }
 
+// Filesystem browsing types
+export interface DirectoryEntry {
+  name: string
+  path: string
+  has_subdirs: boolean
+  has_images: boolean
+}
+
+export interface DirectoryListResponse {
+  root: string
+  current: string
+  parent: string | null
+  entries: DirectoryEntry[]
+}
+
 // GPU types
 export interface GPUInfo {
   index: number

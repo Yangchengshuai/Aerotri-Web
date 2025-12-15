@@ -2,6 +2,7 @@ import axios from 'axios'
 import type { 
   Block, 
   ImageListResponse, 
+  DirectoryListResponse, 
   GPUInfo, 
   TaskStatus,
   CameraInfo,
@@ -70,6 +71,13 @@ export const taskApi = {
   stop: (blockId: string) =>
     api.post<TaskStatus>(`/blocks/${blockId}/stop`),
 }
+
+// Filesystem API
+export const filesystemApi = {
+  listDirs: (path?: string) =>
+    api.get<DirectoryListResponse>('/filesystem/dirs', { params: { path } }),
+}
+
 
 // Result API
 export const resultApi = {
