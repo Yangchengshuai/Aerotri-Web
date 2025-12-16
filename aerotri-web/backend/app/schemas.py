@@ -10,8 +10,8 @@ class FeatureParams(BaseModel):
     """Feature extraction parameters."""
     use_gpu: bool = True
     gpu_index: int = 0
-    max_image_size: int = 2000
-    max_num_features: int = 4096
+    max_image_size: int = 2640
+    max_num_features: int = 12000
     camera_model: str = "SIMPLE_RADIAL"
     single_camera: bool = True
 
@@ -20,7 +20,7 @@ class FeatureParams(BaseModel):
 class MatchingParams(BaseModel):
     """Feature matching parameters."""
     method: MatchingMethod = MatchingMethod.SEQUENTIAL
-    overlap: int = 20  # For sequential matching
+    overlap: int = 10  # For sequential matching
     use_gpu: bool = True
     gpu_index: int = 0
 
@@ -36,10 +36,10 @@ class GlomapMapperParams(BaseModel):
     """GLOMAP mapper (global SfM) parameters."""
     global_positioning_use_gpu: bool = True
     global_positioning_gpu_index: int = 0
-    global_positioning_min_num_images_gpu_solver: int = 1
+    global_positioning_min_num_images_gpu_solver: int = 50
     bundle_adjustment_use_gpu: bool = True
     bundle_adjustment_gpu_index: int = 0
-    bundle_adjustment_min_num_images_gpu_solver: int = 1
+    bundle_adjustment_min_num_images_gpu_solver: int = 50
 
 
 # ============ Block Schemas ============

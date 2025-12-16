@@ -121,7 +121,7 @@ $GLOMAP mapper \
   --output_format bin \
   --GlobalPositioning.use_gpu 1 \
   --GlobalPositioning.gpu_index 0 \
-  --GlobalPositioning.min_num_images_gpu_solver 1 \
+  --GlobalPositioning.min_num_images_gpu_solver 50 \
   --BundleAdjustment.use_gpu 1 \
   --BundleAdjustment.gpu_index 0 \
   --BundleAdjustment.min_num_images_gpu_solver 1
@@ -159,6 +159,20 @@ grep -nE "GLOMAP: (GlobalPositioning|BundleAdjustment) using Ceres CUDA" glomap_
 
 想要 “CUDA sparse”：
 - 需要 **Ceres 版本支持 `ceres::CUDA_SPARSE`** 并且能找到 **cuDSS**
+
+### 4.5 小结：当前 Ceres **无 cuDSS** 时的真实运行模式
+
+- **前提（本项目当前配置）**  
+  - 使用的 Ceres：**2.2.0 + CUDA**，只支持 **CUDA dense**，**不包含 CUDA sparse / cuDSS**。  
+- **当你设置 `GlobalPositioning.use_gpu = 1` / `BundleAdjustment.use_gpu = 1` 时：**
+  - GLOMAP 会启用 **Ceres CUDA dense solver（跑在 GPU 上）**：  
+    - 日志里能看到：`GLOMAP: GlobalPositioning/BundleAdjustment using Ceres CUDA dense solver ...`  
+  - 但由于 **缺少 cuDSS**，**稀疏求解部分会回退到 CPU（CHOLMOD 等）**：  
+    - 日志里会看到：`without cuDSS support. Falling back to CPU-based sparse solvers.`  
+- **这意味着：**
+  - GlobalPositioning 和 BundleAdjustment 两个阶段，实际是 **“GPU dense + CPU sparse 的混合模式”**；  
+  - 不是“完全 GPU”，也不是“完全 CPU”，而是 **部分算子在 GPU、稀疏线性求解仍在 CPU**；  
+  - 在中大型问题上仍然可以获得一定加速效果，但**想要“更彻底的 GPU sparse 加速”需要升级到支持 `ceres::CUDA_SPARSE` + cuDSS 的 Ceres 版本**（见第 7 节）。
 
 ---
 
@@ -235,6 +249,134 @@ cmake .. -DCMAKE_PREFIX_PATH=/opt/ceres-<new>-cuda-cudss ...
 之后再跑 GLOMAP：
 - 你应该不再看到 `without cuDSS support ...` 的回退 warning
 - 且日志中仍会保留 `GLOMAP: ... using Ceres CUDA ...` 的启用标记
+
+### 7.5 实测：用 `/root/data/test` 小数据集验证 CUDA_SPARSE（含对比）
+
+> 本节是“可直接复制执行”的最短验证路径：先用 COLMAP 生成 `database.db`，再用 GLOMAP mapper 验证 **CUDA dense + CUDA sparse（cuDSS）** 是否启用，并与旧版 Ceres 2.2（dense-only）对比。
+
+#### 7.5.1 编译 Ceres 2.3 + cuDSS（推荐固定 commit，可复现）
+
+```bash
+cd /root/work/colmap
+bash scripts/build_ceres_cuda_2.3.0.sh 2>&1 | tee /tmp/ceres23_build.log
+```
+
+完成后重点确认：
+
+```bash
+ldd /opt/ceres-2.3.0-cuda-cudss/lib/libceres.so | grep -i cudss
+```
+
+#### 7.5.2 用新 Ceres 重新编译 COLMAP/GLOMAP
+
+```bash
+cd /root/work/colmap
+rm -rf build_cuda_ceres23_cudss && mkdir -p build_cuda_ceres23_cudss
+cd build_cuda_ceres23_cudss
+cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCUDA_ENABLED=ON \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES=120 \
+  -DCMAKE_CUDA_STANDARD=17 \
+  -DCMAKE_CXX_STANDARD=17 \
+  -DCMAKE_PREFIX_PATH=/opt/ceres-2.3.0-cuda-cudss \
+  -DGUI_ENABLED=ON \
+  -DOPENGL_ENABLED=ON \
+  -DSIMD_ENABLED=ON \
+  -DOPENMP_ENABLED=ON \
+  -DCGAL_ENABLED=ON \
+  -DLSD_ENABLED=ON \
+  -DDOWNLOAD_ENABLED=ON \
+  -DTESTS_ENABLED=OFF \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_CUDA_FLAGS="-Wno-deprecated-gpu-targets --expt-relaxed-constexpr"
+make -j"$(nproc)" 2>&1 | tee /tmp/colmap_build_ceres23.log
+```
+
+产物路径（本文实测）：
+- `COLMAP=/root/work/colmap/build_cuda_ceres23_cudss/src/colmap/exe/colmap`
+- `GLOMAP=/root/work/colmap/build_cuda_ceres23_cudss/src/glomap/glomap`
+
+#### 7.5.3 COLMAP 特征提取 + 匹配（生成 `database.db`）
+
+```bash
+IMG_DIR="/root/data/test"
+OUT="/root/data/test_output"
+DB="${OUT}/database.db"
+mkdir -p "${OUT}"
+
+$COLMAP feature_extractor \
+  --database_path "$DB" \
+  --image_path "$IMG_DIR" \
+  --ImageReader.single_camera 1 \
+  --ImageReader.camera_model SIMPLE_RADIAL \
+  --FeatureExtraction.use_gpu 1 \
+  --FeatureExtraction.gpu_index 0 \
+  --SiftExtraction.max_image_size 2000 \
+  --SiftExtraction.max_num_features 4096 \
+  2>&1 | tee "${OUT}/feature_extractor.log"
+
+$COLMAP sequential_matcher \
+  --database_path "$DB" \
+  --SequentialMatching.overlap 20 \
+  --FeatureMatching.use_gpu 1 \
+  --FeatureMatching.gpu_index 0 \
+  2>&1 | tee "${OUT}/sequential_matcher.log"
+```
+
+#### 7.5.4 GLOMAP mapper（cuDSS / CUDA_SPARSE 版）
+
+```bash
+OUT_MODEL="${OUT}/glomap_gpu_sparse"
+mkdir -p "${OUT_MODEL}"
+
+$GLOMAP mapper \
+  --database_path "$DB" \
+  --image_path "$IMG_DIR" \
+  --output_path "$OUT_MODEL" \
+  --output_format bin \
+  --GlobalPositioning.use_gpu 1 \
+  --GlobalPositioning.gpu_index 0 \
+  --GlobalPositioning.min_num_images_gpu_solver 1 \
+  --BundleAdjustment.use_gpu 1 \
+  --BundleAdjustment.gpu_index 0 \
+  --BundleAdjustment.min_num_images_gpu_solver 1 \
+  2>&1 | tee "${OUT}/glomap_gpu_sparse.log"
+```
+
+验证关键日志（应看到 CUDA sparse solver）：
+
+```bash
+grep -nE "GLOMAP: (GlobalPositioning|BundleAdjustment) using Ceres CUDA (dense|sparse) solver" \
+  "${OUT}/glomap_gpu_sparse.log"
+```
+
+预期至少包含：
+- `GLOMAP: GlobalPositioning using Ceres CUDA sparse solver ...`
+- `GLOMAP: BundleAdjustment using Ceres CUDA sparse solver ...`
+
+#### 7.5.5 对比：旧版 Ceres 2.2（dense-only，sparse 回退 CPU）
+
+```bash
+GLOMAP_OLD=/root/work/colmap/build_cuda_ceres2/src/glomap/glomap
+OUT_MODEL_OLD="${OUT}/glomap_gpu_dense_only"
+mkdir -p "${OUT_MODEL_OLD}"
+
+$GLOMAP_OLD mapper \
+  --database_path "$DB" \
+  --image_path "$IMG_DIR" \
+  --output_path "$OUT_MODEL_OLD" \
+  --output_format bin \
+  --GlobalPositioning.use_gpu 1 \
+  --GlobalPositioning.min_num_images_gpu_solver 1 \
+  --BundleAdjustment.use_gpu 1 \
+  --BundleAdjustment.min_num_images_gpu_solver 1 \
+  2>&1 | tee "${OUT}/glomap_gpu_dense_only.log"
+
+grep -nE "without cuDSS support|Falling back to CPU-based sparse solvers" \
+  "${OUT}/glomap_gpu_dense_only.log"
+```
 
 ---
 

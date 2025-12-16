@@ -91,3 +91,11 @@ COLMAP_ADD_EXECUTABLE(
         Boost::boost
 )
 set_target_properties(colmap_main PROPERTIES OUTPUT_NAME colmap)
+
+# Some system libraries (e.g. OpenImageIO -> Poppler -> NSS) require NSPR
+# symbols (PR_*). On some linkers these are not pulled in transitively, so we
+# link them explicitly to avoid undefined references at link time.
+#
+# NOTE: COLMAP_ADD_EXECUTABLE uses the "plain" target_link_libraries signature,
+# so we must use the same signature here (no PUBLIC/PRIVATE keywords).
+target_link_libraries(colmap_main nspr4 plc4 plds4)

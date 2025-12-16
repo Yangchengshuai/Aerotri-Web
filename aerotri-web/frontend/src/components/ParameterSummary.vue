@@ -11,10 +11,10 @@
         {{ gpuEnabled ? '启用' : '禁用' }}
       </el-descriptions-item>
       <el-descriptions-item label="最大图像尺寸">
-        {{ block.feature_params?.max_image_size || 2000 }}
+        {{ block.feature_params?.max_image_size || 2640 }}
       </el-descriptions-item>
       <el-descriptions-item label="最大特征数">
-        {{ block.feature_params?.max_num_features || 4096 }}
+        {{ block.feature_params?.max_num_features || 12000 }}
       </el-descriptions-item>
     </el-descriptions>
   </div>

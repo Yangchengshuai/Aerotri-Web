@@ -290,8 +290,8 @@ class TaskRunner:
             "--ImageReader.camera_model", params.get("camera_model", "SIMPLE_RADIAL"),
             "--FeatureExtraction.use_gpu", str(params.get("use_gpu", 1)),
             "--FeatureExtraction.gpu_index", str(gpu_index),
-            "--SiftExtraction.max_image_size", str(params.get("max_image_size", 2000)),
-            "--SiftExtraction.max_num_features", str(params.get("max_num_features", 4096)),
+            "--SiftExtraction.max_image_size", str(params.get("max_image_size", 2640)),
+            "--SiftExtraction.max_num_features", str(params.get("max_num_features", 12000)),
         ]
         
         await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
@@ -380,11 +380,11 @@ class TaskRunner:
             "--GlobalPositioning.use_gpu", str(params.get("global_positioning_use_gpu", 1)),
             "--GlobalPositioning.gpu_index", str(gpu_index),
             "--GlobalPositioning.min_num_images_gpu_solver", 
-                str(params.get("global_positioning_min_num_images_gpu_solver", 1)),
+                str(params.get("global_positioning_min_num_images_gpu_solver", 50)),
             "--BundleAdjustment.use_gpu", str(params.get("bundle_adjustment_use_gpu", 1)),
             "--BundleAdjustment.gpu_index", str(gpu_index),
             "--BundleAdjustment.min_num_images_gpu_solver",
-                str(params.get("bundle_adjustment_min_num_images_gpu_solver", 1)),
+                str(params.get("bundle_adjustment_min_num_images_gpu_solver", 50)),
         ]
         
         await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
