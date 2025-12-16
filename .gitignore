@@ -44,3 +44,11 @@ colmap/.git.bak-colmap_glomap_upload/
 .claude/
 glomap/
 hloc-glomap/
+
+# OpenMVS build artifacts and dependencies
+openMVS/build/
+openMVS/build_*/
+openMVS/eigen-3.4.0/
+openMVS/eigen-3.4.0.zip
+openMVS/vcg/
+openMVS/.git/

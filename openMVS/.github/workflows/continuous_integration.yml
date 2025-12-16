@@ -1,0 +1,110 @@
+name: Continuous Integration
+run-name: ${{ github.actor }} is building OpenMVS
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+    branches: [master, develop]
+  # Allows to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-tests:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            triplet: x64-windows-release
+            build-type: Release
+          - os: ubuntu-latest
+            triplet: x64-linux-release
+            build-type: Release
+          - os: macos-latest
+            triplet: arm64-osx
+            build-type: Release
+    env:
+      # Turn on manifests and binary caching; use the GHA backend
+      VCPKG_FEATURE_FLAGS: manifests,binarycaching,registries
+      VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
+      VCPKG_COMMIT: 'ef7dbf94b9198bc58f45951adcf1f041fcbc5ea0'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup vcpkg and cache artifacts
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+
+      - name: Install Ubuntu dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y autoconf-archive libxmu-dev libdbus-1-dev libxtst-dev libxi-dev libxinerama-dev libxcursor-dev xorg-dev libgl-dev libglu1-mesa-dev autoconf automake bison libtool libltdl-dev pkg-config ninja-build
+
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install automake autoconf autoconf-archive libtool ninja
+
+      - name: Configure CMake for Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          cmake -S . -B make -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DOpenMVS_USE_CUDA=OFF
+
+      - name: Configure CMake for Ubuntu and macOS
+        if: matrix.os != 'windows-latest'
+        run: |
+          cmake -S . -B make -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DOpenMVS_USE_CUDA=OFF -G Ninja
+
+      - name: Build
+        working-directory: ./make
+        run: |
+          rm -rf ../vcpkg/buildtrees
+          rm -rf ../vcpkg/downloads
+          cmake --build . --config ${{ matrix.build-type }} --parallel $(nproc)
+
+      - name: Unit Tests
+        working-directory: ./make
+        run: |
+          ctest -j$(nproc) --build-config ${{ matrix.build-type }}
+
+      - name: Deploy Windows release
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMVS_Windows_Release_x64
+          path: |
+            ${{ github.workspace }}/make/bin/**/x64
+            !${{ github.workspace }}/make/bin/**/*.exp
+
+      - name: Deploy Ubuntu release
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMVS_Ubuntu_Release_x64
+          path: |
+            ${{ github.workspace }}/make/bin/**
+            !${{ github.workspace }}/make/bin/**/*.exp
+
+      - name: Deploy macOS release
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenMVS_macOS_Release_arm64
+          path: |
+            ${{ github.workspace }}/make/bin/**
+            !${{ github.workspace }}/make/bin/**/*.exp

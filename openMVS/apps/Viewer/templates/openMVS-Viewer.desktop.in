@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=@VIEWER_NAME@
+Comment=OpenMVS Viewer
+Exec=@EXEC_PATH@ %F
+Icon=@ICON_NAME@
+Terminal=false
+Categories=Graphics;Science;
+MimeType=@MIME_TYPE@;
+Version=@OpenMVS_VERSION@

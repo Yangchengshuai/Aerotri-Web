@@ -1,0 +1,25 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\\.mvs]
+@="OpenMVS.mvs"
+
+[HKEY_CLASSES_ROOT\\OpenMVS.mvs]
+@="OpenMVS Scene"
+
+[HKEY_CLASSES_ROOT\\OpenMVS.mvs\\DefaultIcon]
+@="%~dp0\\Viewer.ico,0"
+
+[HKEY_CLASSES_ROOT\\OpenMVS.mvs\\shell\\open\\command]
+@='"%INSTALL_PATH%\\Viewer.exe" "%1"'
+
+[HKEY_CLASSES_ROOT\\.dmap]
+@="OpenMVS.dmap"
+
+[HKEY_CLASSES_ROOT\\OpenMVS.dmap]
+@="OpenMVS Depth Map"
+
+[HKEY_CLASSES_ROOT\\OpenMVS.dmap\\DefaultIcon]
+@="%~dp0\\Viewer.ico,0"
+
+[HKEY_CLASSES_ROOT\\OpenMVS.dmap\\shell\\open\\command]
+@='"%INSTALL_PATH%\\Viewer.exe" "%1"'
