@@ -18,11 +18,11 @@ from .workspace_service import WorkspaceService
 # COLMAP/GLOMAP executable paths
 COLMAP_PATH = os.environ.get(
     "COLMAP_PATH", 
-    "/root/work/colmap/build_cuda_ceres2/src/colmap/exe/colmap"
+    "/root/work/colmap/build_cuda_ceres23_cudss/src/colmap/exe/colmap"
 )
 GLOMAP_PATH = os.environ.get(
     "GLOMAP_PATH",
-    "/root/work/colmap/build_cuda_ceres2/src/glomap/glomap"
+    "/root/work/colmap/build_cuda_ceres23_cudss/src/glomap/glomap"
 )
 
 
@@ -76,6 +76,82 @@ class TaskRunner:
     def __init__(self):
         self.running_tasks: Dict[str, TaskContext] = {}
         self.ws_connections: Dict[str, List] = {}  # block_id -> list of websocket connections
+        self._recovery_done = False
+    
+    async def recover_orphaned_tasks(self):
+        """Recover tasks that were running when backend was killed.
+        
+        This checks the database for tasks in RUNNING state and:
+        1. Checks if their processes still exist
+        2. If not, marks them as FAILED with appropriate error message
+        """
+        if self._recovery_done:
+            return
+        
+        self._recovery_done = True
+        
+        try:
+            import psutil
+            
+            async with AsyncSessionLocal() as db:
+                # Find all RUNNING tasks
+                result = await db.execute(
+                    select(Block).where(Block.status == BlockStatus.RUNNING)
+                )
+                running_blocks = result.scalars().all()
+                
+                if not running_blocks:
+                    return
+                
+                print(f"Found {len(running_blocks)} tasks in RUNNING state, checking for orphaned processes...")
+                
+                # Get all running colmap/glomap processes
+                running_pids = set()
+                for proc in psutil.process_iter(['pid', 'cmdline']):
+                    try:
+                        cmdline = proc.info.get('cmdline', [])
+                        if cmdline and any('colmap' in str(arg).lower() or 'glomap' in str(arg).lower() for arg in cmdline):
+                            running_pids.add(proc.info['pid'])
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                
+                print(f"Found {len(running_pids)} active COLMAP/GLOMAP processes")
+                
+                # Check each RUNNING block
+                for block in running_blocks:
+                    # Check if output exists and is valid
+                    if block.output_path:
+                        sparse_path = os.path.join(block.output_path, "sparse")
+                        # Check if sparse output exists and has files
+                        has_output = os.path.exists(sparse_path) and len(os.listdir(sparse_path)) > 0
+                        
+                        if has_output:
+                            # Task appears to have completed but status not updated
+                            block.status = BlockStatus.COMPLETED
+                            block.completed_at = datetime.utcnow()
+                            block.current_stage = "completed"
+                            block.progress = 100.0
+                            print(f"Recovered completed task: {block.name} ({block.id})")
+                        else:
+                            # No valid output, mark as failed
+                            block.status = BlockStatus.FAILED
+                            block.error_message = "Task process lost during backend restart (no valid output found)"
+                            block.completed_at = datetime.utcnow()
+                            print(f"Marked orphaned task as FAILED: {block.name} ({block.id})")
+                    else:
+                        # No output path, definitely failed
+                        block.status = BlockStatus.FAILED
+                        block.error_message = "Task lost during backend restart (no output path)"
+                        block.completed_at = datetime.utcnow()
+                        print(f"Marked task without output as FAILED: {block.name} ({block.id})")
+                
+                await db.commit()
+                print("Task recovery completed")
+                
+        except Exception as e:
+            print(f"Error during task recovery: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def start_task(
         self, 
@@ -396,10 +472,13 @@ class TaskRunner:
             cmd: Command and arguments
             ctx: Task context
         """
+        # Increase limit to handle long progress lines (GLOMAP/COLMAP uses \r for progress)
+        # Default limit is 64KB, we set it to 10MB to handle very long progress outputs
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            limit=10 * 1024 * 1024,  # 10MB buffer limit
         )
         ctx.process = process
 

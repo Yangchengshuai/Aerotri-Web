@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import api_router
 from .ws import progress_router
 from .models.database import init_db
+from .services.task_runner import task_runner
 
 
 @asynccontextmanager
@@ -19,6 +20,9 @@ async def lifespan(app: FastAPI):
     # Ensure data directories exist
     os.makedirs("/root/work/aerotri-web/data/outputs", exist_ok=True)
     os.makedirs("/root/work/aerotri-web/data/thumbnails", exist_ok=True)
+    
+    # Recover orphaned tasks from previous session
+    await task_runner.recover_orphaned_tasks()
     
     yield
     
