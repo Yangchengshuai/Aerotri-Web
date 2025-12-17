@@ -28,6 +28,7 @@ class MatchingMethod(str, enum.Enum):
     SEQUENTIAL = "sequential"
     EXHAUSTIVE = "exhaustive"
     VOCAB_TREE = "vocab_tree"
+    SPATIAL = "spatial"
 
 
 class Block(Base):
