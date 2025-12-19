@@ -1,7 +1,11 @@
 """Reconstruction results API endpoints."""
 import os
+import struct
+import tempfile
 from typing import List
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,8 +84,8 @@ async def get_points(
         )
     
     try:
-        points = ResultReader.read_points3d(block.output_path, limit=limit)
-        return {"points": points, "total": len(points)}
+        points, total = ResultReader.read_points3d(block.output_path, limit=limit)
+        return {"points": points, "total": total}
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -147,3 +151,118 @@ async def get_stats(
     }
     
     return ReconstructionStats(**merged)
+
+
+@router.get("/{block_id}/result/points3d/ply")
+async def download_points3d_ply(
+    block_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Download points3D.ply file for the block.
+    
+    First tries to find existing points3D.ply file.
+    If not found, generates it from points3D.bin.
+    """
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}"
+        )
+    
+    if block.status != BlockStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reconstruction not completed"
+        )
+    
+    if not block.output_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No output path available"
+        )
+    
+    # Find sparse directory
+    sparse_dir = ResultReader._find_sparse_dir(block.output_path)
+    if not sparse_dir:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No sparse reconstruction found"
+        )
+    
+    # First, try to find existing points3D.ply
+    ply_path = os.path.join(sparse_dir, "points3D.ply")
+    if os.path.exists(ply_path):
+        return FileResponse(
+            path=ply_path,
+            filename="points3D.ply",
+            media_type="application/octet-stream"
+        )
+    
+    # If not found, generate from points3D.bin
+    points_bin = os.path.join(sparse_dir, "points3D.bin")
+    if not os.path.exists(points_bin):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="points3D.bin not found"
+        )
+    
+    # Read all points from binary file and convert to PLY
+    try:
+        # Create temporary PLY file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.ply', delete=False) as ply_file:
+            ply_temp_path = ply_file.name
+            
+            # Read points from binary file
+            points_data = []
+            with open(points_bin, "rb") as f:
+                num_points = struct.unpack("<Q", f.read(8))[0]
+                
+                for _ in range(num_points):
+                    point_id = struct.unpack("<Q", f.read(8))[0]
+                    x, y, z = struct.unpack("<3d", f.read(24))
+                    r, g, b = struct.unpack("<3B", f.read(3))
+                    error = struct.unpack("<d", f.read(8))[0]
+                    track_length = struct.unpack("<Q", f.read(8))[0]
+                    f.read(track_length * 8)  # Skip track data
+                    
+                    points_data.append((x, y, z, r, g, b))
+            
+            # Write PLY header
+            ply_file.write("ply\n")
+            ply_file.write("format ascii 1.0\n")
+            ply_file.write(f"element vertex {len(points_data)}\n")
+            ply_file.write("property float x\n")
+            ply_file.write("property float y\n")
+            ply_file.write("property float z\n")
+            ply_file.write("property uchar red\n")
+            ply_file.write("property uchar green\n")
+            ply_file.write("property uchar blue\n")
+            ply_file.write("end_header\n")
+            
+            # Write point data
+            for x, y, z, r, g, b in points_data:
+                ply_file.write(f"{x} {y} {z} {r} {g} {b}\n")
+        
+        # Return the temporary file
+        # Note: We'll keep the temp file and let the OS clean it up later
+        # For production, consider caching generated PLY files
+        return FileResponse(
+            path=ply_temp_path,
+            filename="points3D.ply",
+            media_type="application/octet-stream"
+        )
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if 'ply_temp_path' in locals() and os.path.exists(ply_temp_path):
+            try:
+                os.unlink(ply_temp_path)
+            except:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate PLY file: {str(e)}"
+        )

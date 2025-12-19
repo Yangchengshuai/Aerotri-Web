@@ -2,7 +2,7 @@
   <div class="parameter-summary">
     <el-descriptions :column="1" size="small" border>
       <el-descriptions-item label="算法">
-        {{ block.algorithm === 'glomap' ? 'GLOMAP (全局式)' : 'COLMAP (增量式)' }}
+        {{ algorithmText }}
       </el-descriptions-item>
       <el-descriptions-item label="匹配方法">
         {{ matchingMethodText }}
@@ -34,6 +34,15 @@ const matchingMethodText = computed(() => {
     case 'exhaustive': return '穷举匹配'
     case 'vocab_tree': return '词汇树匹配'
     default: return props.block.matching_method
+  }
+})
+
+const algorithmText = computed(() => {
+  switch (props.block.algorithm) {
+    case 'glomap': return 'GLOMAP (全局式)'
+    case 'colmap': return 'COLMAP (增量式)'
+    case 'instantsfm': return 'InstantSfM (快速全局式)'
+    default: return props.block.algorithm
   }
 })
 

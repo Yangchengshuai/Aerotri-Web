@@ -1,7 +1,9 @@
 """Pydantic schemas for API request/response validation."""
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
+
 from pydantic import BaseModel, Field
+
 from .models.block import BlockStatus, AlgorithmType, MatchingMethod
 
 
@@ -42,6 +44,21 @@ class GlomapMapperParams(BaseModel):
     bundle_adjustment_min_num_images_gpu_solver: int = 50
 
 
+class InstantsfmMapperParams(BaseModel):
+    """InstantSfM mapper (fast global SfM) parameters."""
+    export_txt: bool = True
+    disable_depths: bool = False
+    manual_config_name: Optional[str] = None
+    gpu_index: int = 0  # GPU index to use
+    num_iteration_bundle_adjustment: int = 3
+    bundle_adjustment_max_iterations: int = 200
+    bundle_adjustment_function_tolerance: float = 5e-4
+    global_positioning_max_iterations: int = 100
+    global_positioning_function_tolerance: float = 5e-4
+    min_num_matches: int = 30
+    min_triangulation_angle: float = 1.5
+
+
 # ============ Block Schemas ============
 class BlockCreate(BaseModel):
     """Schema for creating a new block."""
@@ -51,7 +68,7 @@ class BlockCreate(BaseModel):
     matching_method: MatchingMethod = MatchingMethod.SEQUENTIAL
     feature_params: Optional[FeatureParams] = None
     matching_params: Optional[MatchingParams] = None
-    mapper_params: Optional[dict] = None  # ColmapMapperParams or GlomapMapperParams
+    mapper_params: Optional[dict] = None  # ColmapMapperParams, GlomapMapperParams, or InstantsfmMapperParams
 
 
 class BlockUpdate(BaseModel):
@@ -80,6 +97,13 @@ class BlockResponse(BaseModel):
     current_stage: Optional[str]
     progress: Optional[float]
     error_message: Optional[str]
+    # Reconstruction (OpenMVS) fields
+    recon_status: Optional[str] = None
+    recon_progress: Optional[float] = None
+    recon_current_stage: Optional[str] = None
+    recon_output_path: Optional[str] = None
+    recon_error_message: Optional[str] = None
+    recon_statistics: Optional[dict] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     started_at: Optional[datetime]
@@ -186,3 +210,47 @@ class ReconstructionStats(BaseModel):
     mean_track_length: float = 0.0
     stage_times: dict = Field(default_factory=dict)  # Stage -> elapsed seconds
     algorithm_params: dict = Field(default_factory=dict)
+
+
+# ============ Reconstruction Schemas ============
+class ReconstructRequest(BaseModel):
+    """Request payload for starting reconstruction."""
+
+    quality_preset: Literal["fast", "balanced", "high"] = "balanced"
+
+
+class ReconstructionFileInfo(BaseModel):
+    """Information about a reconstruction output file."""
+
+    stage: str  # dense | mesh | refine | texture
+    type: str  # point_cloud | mesh | texture | other
+    name: str
+    size_bytes: int
+    mtime: datetime
+    preview_supported: bool
+    download_url: str
+
+
+class ReconstructionFilesResponse(BaseModel):
+    """List of reconstruction output files."""
+
+    files: List[ReconstructionFileInfo]
+
+
+class ReconstructionStatusResponse(BaseModel):
+    """Reconstruction status for a block."""
+
+    block_id: str
+    recon_status: Optional[str]
+    recon_progress: Optional[float]
+    recon_current_stage: Optional[str]
+    recon_output_path: Optional[str]
+    recon_error_message: Optional[str]
+    recon_statistics: Optional[dict]
+
+
+class ReconstructionLogResponse(BaseModel):
+    """Tail of reconstruction logs for a block."""
+
+    block_id: str
+    lines: List[str]

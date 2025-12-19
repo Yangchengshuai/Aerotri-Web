@@ -1,6 +1,6 @@
 // Block types
 export type BlockStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled'
-export type AlgorithmType = 'colmap' | 'glomap'
+export type AlgorithmType = 'colmap' | 'glomap' | 'instantsfm'
 export type MatchingMethod = 'sequential' | 'exhaustive' | 'vocab_tree'
 
 export interface FeatureParams {
@@ -33,6 +33,20 @@ export interface GlomapMapperParams {
   bundle_adjustment_min_num_images_gpu_solver: number
 }
 
+export interface InstantsfmMapperParams {
+  export_txt: boolean
+  disable_depths: boolean
+  manual_config_name: string | null
+  gpu_index: number
+  num_iteration_bundle_adjustment: number
+  bundle_adjustment_max_iterations: number
+  bundle_adjustment_function_tolerance: number
+  global_positioning_max_iterations: number
+  global_positioning_function_tolerance: number
+  min_num_matches: number
+  min_triangulation_angle: number
+}
+
 export interface Block {
   id: string
   name: string
@@ -43,11 +57,18 @@ export interface Block {
   matching_method: MatchingMethod
   feature_params: FeatureParams | null
   matching_params: MatchingParams | null
-  mapper_params: ColmapMapperParams | GlomapMapperParams | null
+  mapper_params: ColmapMapperParams | GlomapMapperParams | InstantsfmMapperParams | null
   statistics: BlockStatistics | null
   current_stage: string | null
   progress: number | null
   error_message: string | null
+  // Reconstruction (OpenMVS) fields
+  recon_status?: string | null
+  recon_progress?: number | null
+  recon_current_stage?: string | null
+  recon_output_path?: string | null
+  recon_error_message?: string | null
+  recon_statistics?: Record<string, unknown> | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -64,6 +85,24 @@ export interface BlockStatistics {
   stage_times?: Record<string, number>
   total_time?: number
   algorithm_params?: Record<string, unknown>
+}
+
+// Reconstruction types
+export interface ReconFileInfo {
+  stage: 'dense' | 'mesh' | 'refine' | 'texture'
+  type: 'point_cloud' | 'mesh' | 'texture' | 'other'
+  name: string
+  size_bytes: number
+  mtime: string
+  preview_supported: boolean
+  download_url: string
+}
+
+export interface ReconstructionState {
+  status: 'NOT_STARTED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  progress: number
+  currentStage: string | null
+  files: ReconFileInfo[]
 }
 
 // Image types
@@ -148,6 +187,7 @@ export interface Point3D {
 
 // Progress WebSocket message
 export interface ProgressMessage {
+  pipeline?: 'sfm' | 'reconstruction'
   stage: string
   progress: number
   message: string

@@ -1,10 +1,12 @@
 from fastapi import APIRouter
+
 from .blocks import router as blocks_router
-from .images import router as images_router
 from .filesystem import router as filesystem_router
 from .gpu import router as gpu_router
-from .tasks import router as tasks_router
+from .images import router as images_router
+from .reconstruction import router as reconstruction_router
 from .results import router as results_router
+from .tasks import router as tasks_router
 
 api_router = APIRouter()
 
@@ -14,3 +16,4 @@ api_router.include_router(filesystem_router, tags=["filesystem"])
 api_router.include_router(gpu_router, prefix="/gpu", tags=["gpu"])
 api_router.include_router(tasks_router, prefix="/blocks", tags=["tasks"])
 api_router.include_router(results_router, prefix="/blocks", tags=["results"])
+api_router.include_router(reconstruction_router, tags=["reconstruction"])

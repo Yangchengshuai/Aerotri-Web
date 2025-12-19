@@ -7,7 +7,8 @@ import type {
   TaskStatus,
   CameraInfo,
   Point3D,
-  BlockStatistics
+  BlockStatistics,
+  ReconFileInfo,
 } from '@/types'
 
 const api = axios.create({
@@ -91,6 +92,44 @@ export const resultApi = {
   
   getStats: (blockId: string) =>
     api.get<BlockStatistics>(`/blocks/${blockId}/result/stats`),
+  
+  downloadPoints3DPly: (blockId: string) =>
+    api.get(`/blocks/${blockId}/result/points3d/ply`, {
+      responseType: 'blob',
+    }),
+}
+
+// Reconstruction API
+export const reconstructionApi = {
+  start: (blockId: string, qualityPreset: 'fast' | 'balanced' | 'high' = 'balanced') =>
+    api.post(`/blocks/${blockId}/reconstruct`, {
+      quality_preset: qualityPreset,
+    }),
+
+  status: (blockId: string) =>
+    api.get<{
+      block_id: string
+      recon_status: string | null
+      recon_progress: number | null
+      recon_current_stage: string | null
+      recon_output_path: string | null
+      recon_error_message: string | null
+      recon_statistics: Record<string, unknown> | null
+    }>(`/blocks/${blockId}/reconstruction/status`),
+
+  files: (blockId: string) =>
+    api.get<{ files: ReconFileInfo[] }>(`/blocks/${blockId}/reconstruction/files`),
+
+  cancel: (blockId: string) =>
+    api.post(`/blocks/${blockId}/reconstruction/cancel`, {}),
+
+  logTail: (blockId: string, lines = 200) =>
+    api.get<{ block_id: string; lines: string[] }>(
+      `/blocks/${blockId}/reconstruction/log_tail`,
+      {
+        params: { lines },
+      },
+    ),
 }
 
 export default api

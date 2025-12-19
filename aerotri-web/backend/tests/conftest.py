@@ -72,4 +72,5 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 @pytest.fixture
 def test_image_path():
     """Path to test images."""
-    return "/root/data/city1-CQ02-441-bagcp-riggcp-adj - export"
+    # Use the small DJI test dataset mounted at /root/data/test
+    return "/root/data/test"

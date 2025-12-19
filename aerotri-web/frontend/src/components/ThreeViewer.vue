@@ -12,6 +12,10 @@
         <el-icon><Refresh /></el-icon>
         刷新
       </el-button>
+      <el-button size="small" @click="downloadPly" :loading="downloadingPly">
+        <el-icon><Download /></el-icon>
+        下载完整点云
+      </el-button>
     </div>
 
     <!-- 3D Canvas -->
@@ -41,7 +45,8 @@
 import { ref, onMounted, onUnmounted, watch, reactive, nextTick } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { Aim, Refresh, Loading } from '@element-plus/icons-vue'
+import { Aim, Refresh, Loading, Download } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { resultApi } from '@/api'
 import type { CameraInfo, Point3D } from '@/types'
 
@@ -51,6 +56,7 @@ const props = defineProps<{
 
 const containerRef = ref<HTMLElement | null>(null)
 const loading = ref(false)
+const downloadingPly = ref(false)
 const showCameras = ref(true)
 const showPoints = ref(true)
 
@@ -208,6 +214,28 @@ async function loadData() {
     console.error('Failed to load data:', e)
   } finally {
     loading.value = false
+  }
+}
+
+async function downloadPly() {
+  downloadingPly.value = true
+  try {
+    const response = await resultApi.downloadPoints3DPly(props.blockId)
+    // Create blob URL and trigger download
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `points3D_${props.blockId}.ply`)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('点云文件下载成功')
+  } catch (e) {
+    console.error('下载失败:', e)
+    ElMessage.error('下载失败，请稍后重试')
+  } finally {
+    downloadingPly.value = false
   }
 }
 

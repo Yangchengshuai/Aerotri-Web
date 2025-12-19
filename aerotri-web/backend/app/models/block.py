@@ -21,6 +21,7 @@ class AlgorithmType(str, enum.Enum):
     """Algorithm type for mapping."""
     COLMAP = "colmap"  # Incremental SfM
     GLOMAP = "glomap"  # Global SfM
+    INSTANTSFM = "instantsfm"  # InstantSfM (Fast Global SfM)
 
 
 class MatchingMethod(str, enum.Enum):
@@ -81,6 +82,30 @@ class Block(Base):
     # Error message if failed
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
+    # ====== Reconstruction (OpenMVS) fields ======
+    # Status of reconstruction pipeline (OpenMVS)
+    recon_status: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        default="NOT_STARTED",
+    )
+    # Overall reconstruction progress (0-100)
+    recon_progress: Mapped[Optional[float]] = mapped_column(
+        nullable=True,
+        default=0.0,
+    )
+    # Current coarse reconstruction stage, e.g. undistort/convert/densify/mesh/refine/texture/completed
+    recon_current_stage: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    # Root output path for reconstruction artifacts (e.g. <output_path>/recon)
+    recon_output_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Human-readable error message for reconstruction failures
+    recon_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # JSON statistics for reconstruction (stage times, params, etc.)
+    recon_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -107,6 +132,12 @@ class Block(Base):
             "current_detail": self.current_detail,
             "progress": self.progress,
             "error_message": self.error_message,
+            "recon_status": self.recon_status,
+            "recon_progress": self.recon_progress,
+            "recon_current_stage": self.recon_current_stage,
+            "recon_output_path": self.recon_output_path,
+            "recon_error_message": self.recon_error_message,
+            "recon_statistics": self.recon_statistics,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,

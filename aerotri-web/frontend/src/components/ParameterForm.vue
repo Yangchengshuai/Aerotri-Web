@@ -8,6 +8,7 @@
         <el-radio-group v-model="formData.algorithm">
           <el-radio value="glomap">GLOMAP (全局式)</el-radio>
           <el-radio value="colmap">COLMAP (增量式)</el-radio>
+          <el-radio value="instantsfm">InstantSfM (快速全局式)</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -92,7 +93,7 @@
         </el-form-item>
       </template>
 
-      <template v-else>
+      <template v-else-if="formData.algorithm === 'glomap'">
         <el-form-item label="GlobalPositioning GPU">
           <el-switch v-model="formData.mapper_params.global_positioning_use_gpu" />
         </el-form-item>
@@ -109,6 +110,107 @@
           <el-switch v-model="formData.mapper_params.bundle_adjustment_use_gpu" />
         </el-form-item>
       </template>
+
+      <template v-else-if="formData.algorithm === 'instantsfm'">
+        <el-form-item label="导出文本格式">
+          <el-switch v-model="formData.mapper_params.export_txt" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            导出 cameras.txt, images.txt, points3D.txt
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="禁用深度信息">
+          <el-switch v-model="formData.mapper_params.disable_depths" />
+        </el-form-item>
+
+        <el-form-item label="自定义配置文件名">
+          <el-input
+            v-model="formData.mapper_params.manual_config_name"
+            placeholder="留空使用默认配置 (colmap)"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item label="GPU 索引">
+          <el-input-number
+            v-model="formData.mapper_params.gpu_index"
+            :min="0"
+            :max="15"
+            :step="1"
+          />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            指定使用的 GPU 设备编号（0-15）
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="束调整迭代次数">
+          <el-input-number
+            v-model="formData.mapper_params.num_iteration_bundle_adjustment"
+            :min="1"
+            :max="10"
+          />
+        </el-form-item>
+
+        <el-form-item label="束调整最大迭代次数">
+          <el-input-number
+            v-model="formData.mapper_params.bundle_adjustment_max_iterations"
+            :min="50"
+            :max="500"
+            :step="50"
+          />
+        </el-form-item>
+
+        <el-form-item label="束调整函数容差">
+          <el-input-number
+            v-model="formData.mapper_params.bundle_adjustment_function_tolerance"
+            :min="1e-6"
+            :max="1e-2"
+            :step="1e-4"
+            :precision="6"
+          />
+        </el-form-item>
+
+        <el-form-item label="全局定位最大迭代次数">
+          <el-input-number
+            v-model="formData.mapper_params.global_positioning_max_iterations"
+            :min="50"
+            :max="200"
+            :step="10"
+          />
+        </el-form-item>
+
+        <el-form-item label="全局定位函数容差">
+          <el-input-number
+            v-model="formData.mapper_params.global_positioning_function_tolerance"
+            :min="1e-6"
+            :max="1e-2"
+            :step="1e-4"
+            :precision="6"
+          />
+        </el-form-item>
+
+        <el-form-item label="最小匹配数">
+          <el-input-number
+            v-model="formData.mapper_params.min_num_matches"
+            :min="10"
+            :max="100"
+            :step="5"
+          />
+        </el-form-item>
+
+        <el-form-item label="最小三角化角度">
+          <el-input-number
+            v-model="formData.mapper_params.min_triangulation_angle"
+            :min="0.5"
+            :max="5.0"
+            :step="0.5"
+            :precision="1"
+          />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            度
+          </el-text>
+        </el-form-item>
+      </template>
     </el-form>
 
     <div class="form-actions">
@@ -120,7 +222,7 @@
 
 <script setup lang="ts">
 import { reactive, watch } from 'vue'
-import type { Block, FeatureParams, MatchingParams, GlomapMapperParams, ColmapMapperParams } from '@/types'
+import type { Block, FeatureParams, MatchingParams, GlomapMapperParams, ColmapMapperParams, InstantsfmMapperParams } from '@/types'
 
 const props = defineProps<{
   block: Block
@@ -162,6 +264,20 @@ const defaultColmapParams: ColmapMapperParams = {
   ba_gpu_index: 0,
 }
 
+const defaultInstantsfmParams: InstantsfmMapperParams = {
+  export_txt: true,
+  disable_depths: false,
+  manual_config_name: null,
+  gpu_index: 0,
+  num_iteration_bundle_adjustment: 3,
+  bundle_adjustment_max_iterations: 200,
+  bundle_adjustment_function_tolerance: 5e-4,
+  global_positioning_max_iterations: 100,
+  global_positioning_function_tolerance: 5e-4,
+  min_num_matches: 30,
+  min_triangulation_angle: 1.5,
+}
+
 const formData = reactive({
   algorithm: props.block.algorithm,
   matching_method: props.block.matching_method,
@@ -169,6 +285,8 @@ const formData = reactive({
   matching_params: { ...defaultMatchingParams, ...props.block.matching_params },
   mapper_params: props.block.algorithm === 'glomap'
     ? { ...defaultGlomapParams, ...(props.block.mapper_params as GlomapMapperParams) }
+    : props.block.algorithm === 'instantsfm'
+    ? { ...defaultInstantsfmParams, ...(props.block.mapper_params as InstantsfmMapperParams) }
     : { ...defaultColmapParams, ...(props.block.mapper_params as ColmapMapperParams) },
 })
 
@@ -176,6 +294,8 @@ const formData = reactive({
 watch(() => formData.algorithm, (algorithm) => {
   if (algorithm === 'glomap') {
     formData.mapper_params = { ...defaultGlomapParams }
+  } else if (algorithm === 'instantsfm') {
+    formData.mapper_params = { ...defaultInstantsfmParams }
   } else {
     formData.mapper_params = { ...defaultColmapParams }
   }

@@ -48,11 +48,20 @@ async def init_db():
                 ("source_image_path", "TEXT"),
                 ("working_image_path", "TEXT"),
                 ("current_detail", "TEXT"),
+                # Reconstruction (OpenMVS) fields
+                ("recon_status", "VARCHAR(32)"),
+                ("recon_progress", "FLOAT"),
+                ("recon_current_stage", "VARCHAR(100)"),
+                ("recon_output_path", "TEXT"),
+                ("recon_error_message", "TEXT"),
+                ("recon_statistics", "JSON"),
             ]
 
             for col, col_type in migrations:
                 if col not in existing_cols:
-                    await conn.execute(text(f"ALTER TABLE blocks ADD COLUMN {col} {col_type}"))
+                    await conn.execute(
+                        text(f"ALTER TABLE blocks ADD COLUMN {col} {col_type}")
+                    )
         except Exception:
             # If anything goes wrong, don't block startup; tests use fresh DB anyway.
             pass

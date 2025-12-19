@@ -68,6 +68,7 @@
           <el-radio-group v-model="formData.algorithm">
             <el-radio value="glomap">GLOMAP (全局式)</el-radio>
             <el-radio value="colmap">COLMAP (增量式)</el-radio>
+            <el-radio value="instantsfm">InstantSfM (快速全局式)</el-radio>
           </el-radio-group>
         </el-form-item>
         

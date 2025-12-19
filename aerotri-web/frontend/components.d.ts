@@ -54,6 +54,8 @@ declare module 'vue' {
     ParameterForm: typeof import('./src/components/ParameterForm.vue')['default']
     ParameterSummary: typeof import('./src/components/ParameterSummary.vue')['default']
     ProgressView: typeof import('./src/components/ProgressView.vue')['default']
+    ReconstructionPanel: typeof import('./src/components/ReconstructionPanel.vue')['default']
+    ReconstructionViewer: typeof import('./src/components/ReconstructionViewer.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']

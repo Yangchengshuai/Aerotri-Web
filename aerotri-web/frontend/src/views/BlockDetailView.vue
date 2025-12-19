@@ -100,6 +100,11 @@
           <el-tab-pane label="统计数据" name="stats" :disabled="block?.status !== 'completed'">
             <StatisticsView v-if="block?.status === 'completed'" :block="block" />
           </el-tab-pane>
+
+          <!-- Reconstruction Tab -->
+          <el-tab-pane label="重建" name="reconstruction" v-if="block">
+            <ReconstructionPanel :block="block" :websocket-progress="wsProgress" />
+          </el-tab-pane>
         </el-tabs>
       </el-main>
     </div>
@@ -138,6 +143,7 @@ import GPUSelector from '@/components/GPUSelector.vue'
 import ProgressView from '@/components/ProgressView.vue'
 import ThreeViewer from '@/components/ThreeViewer.vue'
 import StatisticsView from '@/components/StatisticsView.vue'
+import ReconstructionPanel from '@/components/ReconstructionPanel.vue'
 
 const route = useRoute()
 const router = useRouter()

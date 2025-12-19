@@ -18,11 +18,16 @@ from .workspace_service import WorkspaceService
 # COLMAP/GLOMAP executable paths
 COLMAP_PATH = os.environ.get(
     "COLMAP_PATH", 
-    "/root/work/colmap/build_cuda_ceres23_cudss/src/colmap/exe/colmap"
+    # "/root/work/colmap/build_cuda_ceres23_cudss/src/colmap/exe/colmap"
+    "/root/work/colmap/build_cuda/src/colmap/exe/colmap"
 )
 GLOMAP_PATH = os.environ.get(
     "GLOMAP_PATH",
     "/root/work/colmap/build_cuda_ceres23_cudss/src/glomap/glomap"
+)
+INSTANTSFM_PATH = os.environ.get(
+    "INSTANTSFM_PATH",
+    "ins-sfm"  # Use conda environment's ins-sfm command
 )
 
 
@@ -294,6 +299,21 @@ class TaskRunner:
                             block_id,
                             coarse_stage="mapping",
                         )
+                    elif block.algorithm == AlgorithmType.INSTANTSFM:
+                        # For InstantSfM, data_path should be the parent of sparse_path
+                        # because InstantSfM writes output to data_path/sparse/0/
+                        instantsfm_data_path = block.output_path or ""
+                        await self._run_instantsfm_mapper(
+                            database_path,
+                            image_dir,
+                            instantsfm_data_path,  # Use output_path, not sparse_path
+                            mapper_params,
+                            gpu_index,
+                            ctx,
+                            db,
+                            block_id,
+                            coarse_stage="mapping",
+                        )
                     else:
                         await self._run_colmap_mapper(
                             database_path,
@@ -465,6 +485,105 @@ class TaskRunner:
         
         await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
     
+    async def _run_instantsfm_mapper(
+        self,
+        database_path: str,
+        image_path: str,
+        output_path: str,
+        params: dict,
+        gpu_index: int,
+        ctx: TaskContext,
+        db: AsyncSession,
+        block_id: str,
+        coarse_stage: str,
+    ):
+        """Run InstantSfM mapper."""
+        # InstantSfM expects data_path to be the parent directory containing images/ and database.db
+        # The output will be written to data_path/sparse/0/
+        # output_path here is block.output_path (parent of sparse/), not sparse_path
+        data_path = output_path  # This is block.output_path, which contains database.db
+        
+        # Ensure images/ subdirectory exists in data_path (create symlink if needed)
+        images_dir_in_data = os.path.join(data_path, "images")
+        if not os.path.exists(images_dir_in_data):
+            # Create symlink to the actual image directory
+            try:
+                # Remove if it's a broken symlink or existing file/dir
+                if os.path.exists(images_dir_in_data) or os.path.islink(images_dir_in_data):
+                    if os.path.islink(images_dir_in_data):
+                        os.unlink(images_dir_in_data)
+                    elif os.path.isdir(images_dir_in_data):
+                        # If it's a real directory, we can't symlink over it
+                        ctx.write_log_line(f"Warning: {images_dir_in_data} already exists as a directory")
+                    else:
+                        os.remove(images_dir_in_data)
+                
+                # Create absolute path for symlink target
+                abs_image_path = os.path.abspath(image_path)
+                os.symlink(abs_image_path, images_dir_in_data)
+                ctx.write_log_line(f"Created symlink: {images_dir_in_data} -> {abs_image_path}")
+            except (OSError, FileExistsError) as e:
+                ctx.write_log_line(f"Error creating symlink for images directory: {e}")
+                raise RuntimeError(f"Failed to create images symlink: {e}")
+        
+        # Verify database.db exists in data_path
+        expected_db_path = os.path.join(data_path, "database.db")
+        if not os.path.exists(expected_db_path):
+            # If database is in a different location, copy or link it
+            if os.path.exists(database_path) and database_path != expected_db_path:
+                try:
+                    if os.path.islink(expected_db_path):
+                        os.unlink(expected_db_path)
+                    os.symlink(os.path.abspath(database_path), expected_db_path)
+                    ctx.write_log_line(f"Created database symlink: {expected_db_path} -> {database_path}")
+                except Exception as e:
+                    ctx.write_log_line(f"Warning: Could not link database: {e}")
+            else:
+                raise RuntimeError(f"Database file not found at {expected_db_path}")
+        
+        # Verify database is readable and has images table
+        try:
+            import sqlite3
+            test_conn = sqlite3.connect(expected_db_path)
+            cursor = test_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='images'")
+            if not cursor.fetchone():
+                raise RuntimeError(f"Database {expected_db_path} does not contain 'images' table")
+            test_conn.close()
+        except Exception as e:
+            ctx.write_log_line(f"Database verification error: {e}")
+            raise RuntimeError(f"Database verification failed: {e}")
+        
+        # Build command with conda environment activation
+        # Use bash -c to activate conda environment and set environment variables
+        # Use GPU index from params if provided and not None, otherwise use the passed gpu_index
+        effective_gpu_index = params.get("gpu_index")
+        if effective_gpu_index is None:
+            effective_gpu_index = gpu_index
+        manual_config = params.get("manual_config_name") or "colmap"
+        base_cmd_parts = [
+            "source /root/miniconda3/etc/profile.d/conda.sh",
+            "conda activate instantsfm",
+            f"export LD_LIBRARY_PATH=/opt/ceres-2.3.0-cuda-cudss/lib:$LD_LIBRARY_PATH",
+            f"export CUDA_VISIBLE_DEVICES={effective_gpu_index}",
+            f"{INSTANTSFM_PATH} --data_path {data_path} --manual_config_name {manual_config}"
+        ]
+        
+        # Add optional parameters
+        if params.get("export_txt", True):
+            base_cmd_parts[-1] += " --export_txt"
+        
+        if params.get("disable_depths", False):
+            base_cmd_parts[-1] += " --disable_depths"
+        
+        base_cmd = " && ".join(base_cmd_parts)
+        cmd = ["bash", "-c", base_cmd]
+        
+        ctx.write_log_line(f"Running InstantSfM with data_path={data_path}, gpu_index={effective_gpu_index} (from params: {params.get('gpu_index', 'not set')}, fallback: {gpu_index})")
+        ctx.write_log_line(f"Command: {' '.join(cmd)}")
+        
+        # Run the process
+        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+    
     async def _run_process(self, cmd: List[str], ctx: TaskContext, db: AsyncSession, block_id: str, coarse_stage: str):
         """Run a subprocess and capture output.
         
@@ -560,110 +679,6 @@ class TaskRunner:
             block_id: Block ID
             data: Progress data
         """
-        if block_id in self.ws_connections:
-            for ws in self.ws_connections[block_id]:
-                try:
-                    await ws.send_json(data)
-                except Exception:
-                    pass
-    
-    async def stop_task(self, block_id: str, db: AsyncSession):
-        """Stop a running task.
-        
-        Args:
-            block_id: Block ID
-            db: Database session
-        """
-        if block_id not in self.running_tasks:
-            return
-        
-        ctx = self.running_tasks[block_id]
-        ctx.cancelled = True
-        
-        if ctx.process:
-            ctx.process.terminate()
-            try:
-                await asyncio.wait_for(ctx.process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                ctx.process.kill()
-        
-        # Update block status using a fresh session (avoid request-session lifecycle issues)
-        async with AsyncSessionLocal() as s:
-            result = await s.execute(select(Block).where(Block.id == block_id))
-            block = result.scalar_one_or_none()
-            if block:
-                block.status = BlockStatus.CANCELLED
-                block.current_stage = "cancelled"
-                block.current_detail = None
-                block.completed_at = datetime.utcnow()
-                await s.commit()
-    
-    def get_log_tail(self, block_id: str, lines: int = 20) -> Optional[List[str]]:
-        """Get last N lines of log.
-        
-        Args:
-            block_id: Block ID
-            lines: Number of lines
-            
-        Returns:
-            List of log lines or None
-        """
-        # If running, use in-memory buffer
-        if block_id in self.running_tasks:
-            ctx = self.running_tasks[block_id]
-            return list(ctx.log_buffer)[-lines:]
-
-        # If completed, try read persisted log file
-        log_path = os.path.join("/root/work/aerotri-web/data/outputs", block_id, "run.log")
-        if not os.path.exists(log_path):
-            return None
-        try:
-            dq: deque = deque(maxlen=lines)
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                for ln in f:
-                    dq.append(ln.rstrip("\n"))
-            return list(dq)
-        except Exception:
-            return None
-    
-    def get_stage_times(self, block_id: str) -> Optional[Dict[str, float]]:
-        """Get stage timing information.
-        
-        Args:
-            block_id: Block ID
-            
-        Returns:
-            Dict of stage times or None
-        """
-        if block_id not in self.running_tasks:
-            return None
-        
-        ctx = self.running_tasks[block_id]
-        return ctx.log_parser.get_stage_times()
-    
-    def register_websocket(self, block_id: str, ws):
-        """Register a WebSocket connection for progress updates.
-        
-        Args:
-            block_id: Block ID
-            ws: WebSocket connection
-        """
-        if block_id not in self.ws_connections:
-            self.ws_connections[block_id] = []
-        self.ws_connections[block_id].append(ws)
-    
-    def unregister_websocket(self, block_id: str, ws):
-        """Unregister a WebSocket connection.
-        
-        Args:
-            block_id: Block ID
-            ws: WebSocket connection
-        """
-        if block_id in self.ws_connections:
-            self.ws_connections[block_id] = [
-                w for w in self.ws_connections[block_id] if w != ws
-            ]
-
-
-# Singleton TaskRunner instance shared across API and WebSocket.
-task_runner = TaskRunner()
+        # Default pipeline for legacy callers (SfM)
+        if "pipeline" not in data:
+            data["pip
