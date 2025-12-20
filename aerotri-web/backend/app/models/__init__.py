@@ -1,5 +1,6 @@
 from .block import Block, BlockStatus, AlgorithmType, MatchingMethod
 from .database import get_db, init_db, AsyncSessionLocal
+from .partition import BlockPartition
 
 __all__ = [
     "Block",
@@ -9,4 +10,5 @@ __all__ = [
     "get_db",
     "init_db",
     "AsyncSessionLocal",
+    "BlockPartition",
 ]

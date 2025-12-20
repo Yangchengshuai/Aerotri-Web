@@ -55,6 +55,12 @@ async def init_db():
                 ("recon_output_path", "TEXT"),
                 ("recon_error_message", "TEXT"),
                 ("recon_statistics", "JSON"),
+                # Partitioned SfM fields
+                ("partition_enabled", "BOOLEAN"),
+                ("partition_strategy", "VARCHAR(64)"),
+                ("partition_params", "JSON"),
+                ("sfm_pipeline_mode", "VARCHAR(64)"),
+                ("merge_strategy", "VARCHAR(64)"),
             ]
 
             for col, col_type in migrations:

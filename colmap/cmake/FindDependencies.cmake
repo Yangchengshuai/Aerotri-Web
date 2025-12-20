@@ -29,6 +29,57 @@ find_package(Eigen3 ${COLMAP_FIND_TYPE})
 
 find_package(OpenImageIO ${COLMAP_FIND_TYPE})
 
+# OpenImageIO 2.3+ splits some symbols (e.g. tostring) into a separate
+# OpenImageIO_Util library. Some OpenImageIO CMake configs do not link it
+# transitively, which can lead to link errors like:
+#   undefined reference to OpenImageIO_v2_3::tostring(...)
+#   error adding symbols: DSO missing from command line
+#
+# To make COLMAP robust across OpenImageIO installations, we:
+# - Create an imported target OpenImageIO::OpenImageIO_Util if missing
+# - Append it to the INTERFACE_LINK_LIBRARIES of OpenImageIO::OpenImageIO
+if(TARGET OpenImageIO::OpenImageIO)
+    # Prefer an existing exported util target.
+    if(NOT TARGET OpenImageIO::OpenImageIO_Util)
+        # Try to infer the library directory from the imported location.
+        get_target_property(_oiio_loc OpenImageIO::OpenImageIO IMPORTED_LOCATION)
+        if(NOT _oiio_loc)
+            get_target_property(_oiio_loc OpenImageIO::OpenImageIO IMPORTED_LOCATION_RELEASE)
+        endif()
+        if(NOT _oiio_loc)
+            get_target_property(_oiio_loc OpenImageIO::OpenImageIO IMPORTED_LOCATION_RELWITHDEBINFO)
+        endif()
+        if(NOT _oiio_loc)
+            get_target_property(_oiio_loc OpenImageIO::OpenImageIO IMPORTED_LOCATION_DEBUG)
+        endif()
+        if(_oiio_loc)
+            get_filename_component(_oiio_libdir "${_oiio_loc}" DIRECTORY)
+        endif()
+
+        find_library(
+            OpenImageIO_UTIL_LIBRARY
+            NAMES OpenImageIO_Util
+            HINTS ${_oiio_libdir}
+        )
+
+        if(OpenImageIO_UTIL_LIBRARY)
+            add_library(OpenImageIO::OpenImageIO_Util UNKNOWN IMPORTED)
+            get_target_property(_oiio_includes OpenImageIO::OpenImageIO INTERFACE_INCLUDE_DIRECTORIES)
+            set_target_properties(OpenImageIO::OpenImageIO_Util PROPERTIES
+                IMPORTED_LOCATION "${OpenImageIO_UTIL_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${_oiio_includes}"
+            )
+        endif()
+    endif()
+
+    if(TARGET OpenImageIO::OpenImageIO_Util)
+        set_property(
+            TARGET OpenImageIO::OpenImageIO
+            APPEND PROPERTY INTERFACE_LINK_LIBRARIES OpenImageIO::OpenImageIO_Util
+        )
+    endif()
+endif()
+
 find_package(Metis ${COLMAP_FIND_TYPE})
 
 find_package(SQLite3 ${COLMAP_FIND_TYPE})

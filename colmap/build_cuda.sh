@@ -1,7 +1,8 @@
 #!/bin/bash
 # COLMAP CUDA 编译脚本
 # 使用 CUDA 12.8 和 RTX 5090 (Compute Capability 12.0)
-# Ceres 版本: 1.14.0
+# Ceres 版本: 2.3.0 (CUDA/cuDSS)
+# OpenImageIO 版本: 2.3.10.1
 # Eigen 版本: 3.3.7
 
 set -e  # 遇到错误立即退出
@@ -11,14 +12,19 @@ echo "COLMAP CUDA 编译配置"
 echo "=========================================="
 echo "CUDA 版本: 12.8"
 echo "GPU: RTX 5090 (Compute Capability 12.0)"
-echo "Ceres 版本: 1.14.0"
+echo "Ceres 版本: 2.3.0 (/opt/ceres-2.3.0-cuda-cudss)"
+echo "OpenImageIO 版本: 2.3.10.1 (/opt/openimageio-2.3.10.1)"
 echo "Eigen 版本: 3.3.7"
 echo "=========================================="
+
+# 设置库路径
+export Ceres_DIR=/opt/ceres-2.3.0-cuda-cudss/lib/cmake/Ceres
+export OpenImageIO_DIR=/opt/openimageio-2.3.10.1/lib/cmake/OpenImageIO
 
 # 设置 CUDA 路径
 export CUDA_HOME=/usr/local/cuda-12.8
 export PATH=${CUDA_HOME}/bin:${PATH}
-export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=/opt/ceres-2.3.0-cuda-cudss/lib:/opt/openimageio-2.3.10.1/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 
 # 验证 CUDA
 if [ ! -f "${CUDA_HOME}/bin/nvcc" ]; then
@@ -70,11 +76,14 @@ cmake .. \
     -DCMAKE_CUDA_ARCHITECTURES="120" \
     -DCMAKE_CUDA_STANDARD=17 \
     -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_PREFIX_PATH="/opt/ceres-2.3.0-cuda-cudss;/opt/openimageio-2.3.10.1" \
+    -DCeres_DIR=${Ceres_DIR} \
+    -DOpenImageIO_ROOT=/opt/openimageio-2.3.10.1 \
     -DGUI_ENABLED=ON \
     -DOPENGL_ENABLED=ON \
     -DSIMD_ENABLED=ON \
     -DOPENMP_ENABLED=ON \
-    -DCGAL_ENABLED=ON \
+    -DCGAL_ENABLED=OFF \
     -DLSD_ENABLED=ON \
     -DDOWNLOAD_ENABLED=ON \
     -DTESTS_ENABLED=OFF \
@@ -109,8 +118,8 @@ echo ""
 echo "=========================================="
 echo "编译完成！"
 echo "=========================================="
-if [ -f "src/colmap/colmap" ]; then
-    echo "✓ 可执行文件位置: $(pwd)/src/colmap/colmap"
+if [ -f "src/colmap/exe/colmap" ]; then
+    echo "✓ 可执行文件位置: $(pwd)/src/colmap/exe/colmap"
     echo "✓ 安装命令: cd $(pwd) && sudo make install"
 else
     echo "⚠ 警告: 未找到可执行文件，请检查编译日志"

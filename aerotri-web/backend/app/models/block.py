@@ -3,7 +3,7 @@ import enum
 import uuid
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Text, Enum, DateTime, JSON
+from sqlalchemy import String, Text, Enum, DateTime, JSON, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -106,6 +106,34 @@ class Block(Base):
     # JSON statistics for reconstruction (stage times, params, etc.)
     recon_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
+    # ====== Partitioned SfM fields (large-scale datasets) ======
+    # Whether partitioned SfM mode is enabled for this block
+    partition_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    # Partitioning strategy identifier, e.g. "name_range_with_overlap"
+    partition_strategy: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    # JSON blob for strategy-specific params, e.g. {"partition_size": 500, "overlap": 50}
+    partition_params: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    # SfM pipeline mode: "default" (single-block), "global_feat_match", "per_partition_full", etc.
+    sfm_pipeline_mode: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    # Merge strategy for partition results: "rigid_keep_one", "rigid_optimize", etc.
+    merge_strategy: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+    
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -138,6 +166,11 @@ class Block(Base):
             "recon_output_path": self.recon_output_path,
             "recon_error_message": self.recon_error_message,
             "recon_statistics": self.recon_statistics,
+            "partition_enabled": self.partition_enabled,
+            "partition_strategy": self.partition_strategy,
+            "partition_params": self.partition_params,
+            "sfm_pipeline_mode": self.sfm_pipeline_mode,
+            "merge_strategy": self.merge_strategy,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,

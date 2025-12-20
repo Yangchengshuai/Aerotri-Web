@@ -71,6 +71,9 @@ export const taskApi = {
   
   stop: (blockId: string) =>
     api.post<TaskStatus>(`/blocks/${blockId}/stop`),
+  
+  merge: (blockId: string) =>
+    api.post<TaskStatus>(`/blocks/${blockId}/merge`),
 }
 
 // Filesystem API
@@ -96,6 +99,9 @@ export const resultApi = {
   downloadPoints3DPly: (blockId: string) =>
     api.get(`/blocks/${blockId}/result/points3d/ply`, {
       responseType: 'blob',
+      // 点云文件可能几十/上百 MB，受网络/浏览器影响下载时间可能超过全局 30s timeout
+      // 这里禁用超时，避免前端误报“下载失败”
+      timeout: 0,
     }),
 }
 
@@ -130,6 +136,103 @@ export const reconstructionApi = {
         params: { lines },
       },
     ),
+}
+
+// Partition API
+export const partitionApi = {
+  getConfig: (blockId: string) =>
+    api.get<{
+      partition_enabled: boolean
+      partition_strategy: string | null
+      partition_params: Record<string, unknown> | null
+      sfm_pipeline_mode: string | null
+      merge_strategy: string | null
+      partitions: Array<{
+        id?: string
+        index: number
+        name: string
+        image_start_name: string | null
+        image_end_name: string | null
+        image_count: number
+        overlap_with_prev: number
+        overlap_with_next: number
+        status: string | null
+        progress: number | null
+        error_message: string | null
+      }>
+    }>(`/blocks/${blockId}/partitions/config`),
+
+  updateConfig: (blockId: string, config: {
+    partition_enabled: boolean
+    partition_strategy?: string
+    partition_params?: Record<string, unknown>
+    sfm_pipeline_mode?: string
+    merge_strategy?: string
+  }) =>
+    api.put(`/blocks/${blockId}/partitions/config`, config),
+
+  preview: (blockId: string, partitionSize: number, overlap: number) =>
+    api.post<{
+      partitions: Array<{
+        index: number
+        name: string
+        image_start_name: string | null
+        image_end_name: string | null
+        image_count: number
+        overlap_with_prev: number
+        overlap_with_next: number
+        image_names?: string[]
+      }>
+      total_images: number
+    }>(`/blocks/${blockId}/partitions/preview`, {
+      partition_size: partitionSize,
+      overlap,
+    }),
+
+  getStatus: (blockId: string) =>
+    api.get<{
+      partition_enabled: boolean
+      partition_strategy: string | null
+      partition_params: Record<string, unknown> | null
+      sfm_pipeline_mode: string | null
+      merge_strategy: string | null
+      partitions: Array<{
+        id?: string
+        index: number
+        name: string
+        image_start_name: string | null
+        image_end_name: string | null
+        image_count: number
+        overlap_with_prev: number
+        overlap_with_next: number
+        status: string | null
+        progress: number | null
+        error_message: string | null
+        statistics?: {
+          num_registered_images?: number
+          num_points3d?: number
+          num_observations?: number
+          mean_reprojection_error?: number
+          mean_track_length?: number
+        } | null
+      }>
+    }>(`/blocks/${blockId}/partitions/status`),
+
+  getPartitionCameras: (blockId: string, partitionIndex: number) =>
+    api.get<CameraInfo[]>(`/blocks/${blockId}/partitions/${partitionIndex}/result/cameras`),
+
+  getPartitionPoints: (blockId: string, partitionIndex: number, limit = 100000) =>
+    api.get<{ points: Point3D[], total: number }>(`/blocks/${blockId}/partitions/${partitionIndex}/result/points`, {
+      params: { limit }
+    }),
+
+  getPartitionStats: (blockId: string, partitionIndex: number) =>
+    api.get<BlockStatistics>(`/blocks/${blockId}/partitions/${partitionIndex}/result/stats`),
+
+  downloadPartitionPoints3DPly: (blockId: string, partitionIndex: number) =>
+    api.get(`/blocks/${blockId}/partitions/${partitionIndex}/result/points3d/ply`, {
+      responseType: 'blob',
+    }),
 }
 
 export default api

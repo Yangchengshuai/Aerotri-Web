@@ -88,12 +88,26 @@
       <el-divider content-position="left">Mapper 参数</el-divider>
 
       <template v-if="formData.algorithm === 'colmap'">
+        <el-form-item label="使用 Pose Prior">
+          <el-switch v-model="(formData.mapper_params as any).use_pose_prior" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            使用图像 EXIF GPS（lat/lon/alt）位置先验加速重建
+          </el-text>
+        </el-form-item>
+
         <el-form-item label="BA GPU 加速">
           <el-switch v-model="formData.mapper_params.ba_use_gpu" />
         </el-form-item>
       </template>
 
       <template v-else-if="formData.algorithm === 'glomap'">
+        <el-form-item label="使用 Pose Prior">
+          <el-switch v-model="(formData.mapper_params as any).use_pose_prior" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            使用图像 EXIF GPS（lat/lon/alt）位置先验加速 GP/BA
+          </el-text>
+        </el-form-item>
+
         <el-form-item label="GlobalPositioning GPU">
           <el-switch v-model="formData.mapper_params.global_positioning_use_gpu" />
         </el-form-item>
@@ -251,6 +265,7 @@ const defaultMatchingParams: MatchingParams = {
 }
 
 const defaultGlomapParams: GlomapMapperParams = {
+  use_pose_prior: false,
   global_positioning_use_gpu: true,
   global_positioning_gpu_index: 0,
   global_positioning_min_num_images_gpu_solver: 50,
@@ -260,6 +275,7 @@ const defaultGlomapParams: GlomapMapperParams = {
 }
 
 const defaultColmapParams: ColmapMapperParams = {
+  use_pose_prior: false,
   ba_use_gpu: true,
   ba_gpu_index: 0,
 }

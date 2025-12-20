@@ -12,7 +12,7 @@ from ..services.workspace_service import IMAGE_EXTENSIONS
 router = APIRouter()
 
 # Restrict browsing to a configurable root to avoid arbitrary filesystem access
-IMAGE_ROOT = Path(os.getenv("AEROTRI_IMAGE_ROOT", "/root")).resolve()
+IMAGE_ROOT = Path(os.getenv("AEROTRI_IMAGE_ROOT", "/mnt/work_odm/chengshuai")).resolve()
 
 
 class DirectoryEntry(BaseModel):

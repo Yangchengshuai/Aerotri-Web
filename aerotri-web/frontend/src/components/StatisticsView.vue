@@ -4,8 +4,14 @@
     <div class="summary-cards">
       <el-card class="summary-card">
         <div class="summary-content">
-          <div class="summary-value">{{ stats.num_registered_images || '-' }}</div>
-          <div class="summary-label">注册图像数</div>
+          <div class="summary-value">{{ registeredUniqueDisplay }}</div>
+          <div class="summary-label">
+            注册图像数
+            <span v-if="registeredSumDisplay !== '-'"
+              class="summary-sub">
+              (求和 {{ registeredSumDisplay }})
+            </span>
+          </div>
         </div>
         <el-icon class="summary-icon" :size="40"><Camera /></el-icon>
       </el-card>
@@ -80,6 +86,63 @@
       </el-col>
     </el-row>
 
+    <!-- Partition Statistics (if partitioned) -->
+    <el-card v-if="block.partition_enabled" class="partition-stats-card">
+      <template #header>
+        <span>分区统计</span>
+      </template>
+      <div v-if="loadingPartitions" class="loading-container">
+        <el-skeleton :rows="3" animated />
+      </div>
+      <div v-else-if="partitionStats.length === 0" class="empty-container">
+        <el-empty description="暂无分区统计数据" />
+      </div>
+      <el-collapse v-else v-model="expandedPartitions">
+        <el-collapse-item
+          v-for="partition in partitionStats"
+          :key="partition.index"
+          :name="partition.index"
+        >
+          <template #title>
+            <div class="partition-header">
+              <el-tag>{{ partition.name }}</el-tag>
+              <span class="partition-summary">
+                {{ partition.statistics?.num_registered_images || 0 }} 相机,
+                {{ formatNumber(partition.statistics?.num_points3d || 0) }} 点
+              </span>
+              <el-tag
+                :type="partition.status === 'COMPLETED' ? 'success' : 'info'"
+                size="small"
+                style="margin-left: 8px"
+              >
+                {{ partition.status === 'COMPLETED' ? '已完成' : partition.status || '未知' }}
+              </el-tag>
+            </div>
+          </template>
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="注册图像数">
+              {{ partition.statistics?.num_registered_images || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="3D 点数">
+              {{ formatNumber(partition.statistics?.num_points3d) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="观测数">
+              {{ formatNumber(partition.statistics?.num_observations) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="平均重投影误差">
+              {{ partition.statistics?.mean_reprojection_error?.toFixed(4) || '-' }} px
+            </el-descriptions-item>
+            <el-descriptions-item label="平均轨迹长度">
+              {{ partition.statistics?.mean_track_length?.toFixed(2) || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="图像数量">
+              {{ partition.image_count }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </el-collapse-item>
+      </el-collapse>
+    </el-card>
+
     <!-- Algorithm Parameters -->
     <el-card class="params-card">
       <template #header>
@@ -87,7 +150,7 @@
       </template>
       <el-descriptions :column="3" border>
         <el-descriptions-item label="算法">
-          {{ block.algorithm === 'glomap' ? 'GLOMAP' : 'COLMAP' }}
+          {{ block.algorithm === 'glomap' ? 'GLOMAP' : block.algorithm === 'instantsfm' ? 'InstantSfM' : 'COLMAP' }}
         </el-descriptions-item>
         <el-descriptions-item label="匹配方法">
           {{ matchingMethodLabel }}
@@ -113,7 +176,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { Camera, Location, View, Timer } from '@element-plus/icons-vue'
 import type { Block, BlockStatistics } from '@/types'
-import { resultApi } from '@/api'
+import { resultApi, partitionApi } from '@/api'
 
 const props = defineProps<{
   block: Block
@@ -133,6 +196,21 @@ const stageLabels: Record<string, string> = {
 }
 
 const stats = ref<BlockStatistics>({})
+const partitionStats = ref<Array<{
+  index: number
+  name: string
+  status: string | null
+  image_count: number
+  statistics?: {
+    num_registered_images?: number
+    num_points3d?: number
+    num_observations?: number
+    mean_reprojection_error?: number
+    mean_track_length?: number
+  } | null
+}>>([])
+const loadingPartitions = ref(false)
+const expandedPartitions = ref<number[]>([])
 
 const stageTimes = computed(() => {
   return props.block.statistics?.stage_times || {}
@@ -148,10 +226,20 @@ const algorithmParams = computed(() => {
 })
 
 const successRate = computed(() => {
-  const registered = stats.value.num_registered_images || 0
+  const registered = stats.value.num_registered_images_unique ?? stats.value.num_registered_images ?? 0
   const total = stats.value.num_images || registered
   if (total === 0) return '-'
   return `${((registered / total) * 100).toFixed(1)}%`
+})
+
+const registeredUniqueDisplay = computed(() => {
+  const v = stats.value.num_registered_images_unique ?? stats.value.num_registered_images
+  return v === undefined ? '-' : v.toLocaleString()
+})
+
+const registeredSumDisplay = computed(() => {
+  const v = stats.value.num_registered_images_sum
+  return v === undefined ? '-' : v.toLocaleString()
 })
 
 const matchingMethodLabel = computed(() => {
@@ -171,7 +259,32 @@ onMounted(async () => {
     // Use block statistics as fallback
     stats.value = props.block.statistics || {}
   }
+  
+  // Load partition statistics if partitioned
+  if (props.block.partition_enabled) {
+    await loadPartitionStats()
+  }
 })
+
+async function loadPartitionStats() {
+  loadingPartitions.value = true
+  try {
+    const response = await partitionApi.getStatus(props.block.id)
+    partitionStats.value = (response.data.partitions || [])
+      .filter((p: any) => p.status === 'COMPLETED')
+      .map((p: any) => ({
+        index: p.index,
+        name: p.name,
+        status: p.status,
+        image_count: p.image_count,
+        statistics: p.statistics,
+      }))
+  } catch (e) {
+    console.error('Failed to load partition stats:', e)
+  } finally {
+    loadingPartitions.value = false
+  }
+}
 
 function formatNumber(num: number | undefined): string {
   if (num === undefined) return '-'
@@ -227,6 +340,12 @@ function formatTime(seconds: number | undefined): string {
   margin-top: 4px;
 }
 
+.summary-sub {
+  margin-left: 6px;
+  font-size: 12px;
+  color: #b0b3b8;
+}
+
 .summary-icon {
   color: var(--el-color-primary-light-5);
   opacity: 0.8;
@@ -260,5 +379,28 @@ function formatTime(seconds: number | undefined): string {
 
 .params-card {
   margin-top: 20px;
+}
+
+.partition-stats-card {
+  margin-top: 20px;
+}
+
+.partition-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.partition-summary {
+  flex: 1;
+  color: #606266;
+  font-size: 13px;
+}
+
+.loading-container,
+.empty-container {
+  padding: 20px;
+  text-align: center;
 }
 </style>

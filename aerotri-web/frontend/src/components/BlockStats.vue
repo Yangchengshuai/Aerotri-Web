@@ -5,7 +5,7 @@
         <el-tag :type="statusType" size="small">{{ statusText }}</el-tag>
       </el-descriptions-item>
       <el-descriptions-item label="算法">
-        {{ block.algorithm === 'glomap' ? 'GLOMAP' : 'COLMAP' }}
+        {{ block.algorithm === 'glomap' ? 'GLOMAP' : block.algorithm === 'instantsfm' ? 'InstantSfM' : 'COLMAP' }}
       </el-descriptions-item>
       <el-descriptions-item label="注册图像">
         {{ block.statistics?.num_registered_images || '-' }}

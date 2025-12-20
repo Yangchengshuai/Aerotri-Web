@@ -20,11 +20,15 @@ export interface MatchingParams {
 }
 
 export interface ColmapMapperParams {
+  // Whether to use EXIF GPS position priors (pose priors) to accelerate SfM.
+  use_pose_prior?: boolean
   ba_use_gpu: boolean
   ba_gpu_index: number
 }
 
 export interface GlomapMapperParams {
+  // Whether to use EXIF GPS position priors (pose priors) to accelerate SfM.
+  use_pose_prior?: boolean
   global_positioning_use_gpu: boolean
   global_positioning_gpu_index: number
   global_positioning_min_num_images_gpu_solver: number
@@ -69,6 +73,9 @@ export interface Block {
   recon_output_path?: string | null
   recon_error_message?: string | null
   recon_statistics?: Record<string, unknown> | null
+  // Partition fields
+  partition_enabled?: boolean
+  current_stage?: string | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -78,6 +85,8 @@ export interface Block {
 export interface BlockStatistics {
   num_images?: number
   num_registered_images?: number
+  num_registered_images_unique?: number
+  num_registered_images_sum?: number
   num_points3d?: number
   num_observations?: number
   mean_reprojection_error?: number

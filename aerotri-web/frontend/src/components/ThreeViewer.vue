@@ -2,6 +2,23 @@
   <div class="three-viewer">
     <!-- Controls -->
     <div class="viewer-controls">
+      <!-- View Mode Selector (for partitioned blocks) -->
+      <div v-if="isPartitioned" class="mode-selector">
+        <el-radio-group v-model="viewMode" size="small" @change="handleModeChange">
+          <el-radio-button label="partition">单分区</el-radio-button>
+          <el-radio-button label="merged" :disabled="!isMerged">合并结果</el-radio-button>
+        </el-radio-group>
+        
+        <!-- Partition Selector (only in partition mode) -->
+        <PartitionSelector
+          v-if="viewMode === 'partition'"
+          :block-id="blockId"
+          v-model="selectedPartitionIndex"
+          @change="handlePartitionChange"
+          class="partition-selector-inline"
+        />
+      </div>
+      
       <el-checkbox v-model="showCameras">显示相机</el-checkbox>
       <el-checkbox v-model="showPoints">显示点云</el-checkbox>
       <el-button size="small" @click="fitToView">
@@ -47,8 +64,9 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Aim, Refresh, Loading, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { resultApi } from '@/api'
-import type { CameraInfo, Point3D } from '@/types'
+import { resultApi, partitionApi, blockApi } from '@/api'
+import type { CameraInfo, Point3D, Block } from '@/types'
+import PartitionSelector from './PartitionSelector.vue'
 
 const props = defineProps<{
   blockId: string
@@ -59,6 +77,12 @@ const loading = ref(false)
 const downloadingPly = ref(false)
 const showCameras = ref(true)
 const showPoints = ref(true)
+
+// Partition mode state
+const viewMode = ref<'partition' | 'merged'>('merged')
+const selectedPartitionIndex = ref<number | null>(null)
+const isPartitioned = ref(false)
+const isMerged = ref(false)
 
 const stats = reactive({
   numCameras: 0,
@@ -77,19 +101,86 @@ let resizeObserver: ResizeObserver | null = null
 let lastContainerWidth = 0
 let lastContainerHeight = 0
 let initialized = false
+let ensureSizeRaf: number | null = null
+let ensureSizeFrames = 0
 
-onMounted(() => {
+onMounted(async () => {
   // ElementPlus tabs may mount while hidden -> container size can be 0.
   // Use nextTick + ResizeObserver to ensure correct canvas sizing.
   nextTick(() => {
     initThree()
-    loadData()
   })
+  
+  // Check if block is partitioned and load data
+  await checkPartitionStatus()
+  await loadData()
 })
+
+async function checkPartitionStatus() {
+  try {
+    // Fetch block info directly
+    const blockResponse = await blockApi.get(props.blockId)
+    const block = blockResponse.data
+    
+    if (block?.partition_enabled) {
+      isPartitioned.value = true
+      
+      // Check if merged
+      isMerged.value = block.current_stage === 'completed'
+      
+      // Check partition status
+      const response = await partitionApi.getStatus(props.blockId)
+      const partitions = response.data.partitions || []
+      const completedPartitions = partitions.filter((p: any) => p.status === 'COMPLETED')
+      
+      if (completedPartitions.length > 0 && !isMerged.value) {
+        // If not merged, default to partition mode and select first completed partition
+        viewMode.value = 'partition'
+        selectedPartitionIndex.value = completedPartitions[0].index
+      } else if (isMerged.value) {
+        // If merged, default to merged mode
+        viewMode.value = 'merged'
+      } else if (completedPartitions.length > 0) {
+        // Fallback: if partitions are completed but not merged, use partition mode
+        viewMode.value = 'partition'
+        selectedPartitionIndex.value = completedPartitions[0].index
+      }
+    }
+  } catch (e) {
+    console.error('Failed to check partition status:', e)
+  }
+}
+
+function handleModeChange() {
+  loadData()
+}
+
+function handlePartitionChange(partitionIndex: number | null) {
+  if (viewMode.value === 'partition') {
+    loadData()
+  }
+}
 
 onUnmounted(() => {
   dispose()
 })
+// Tab 切换/后台切前台时，可能出现 canvas 尺寸没刷新导致渲染为空
+const onVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    // 等一帧让布局稳定
+    requestAnimationFrame(() => {
+      try {
+        onWindowResize()
+        fitToView()
+        startEnsureCanvasSizedLoop()
+      } catch {
+        // ignore
+      }
+    })
+  }
+}
+
+document.addEventListener('visibilitychange', onVisibilityChange)
 
 function initThree() {
   if (!containerRef.value) return
@@ -175,6 +266,10 @@ function initThree() {
   resizeObserver.observe(container)
   
   initialized = true
+
+  // 某些浏览器/嵌入式 WebView 下，display:none -> display:block 时 ResizeObserver 可能不触发
+  // 这里补一层轻量轮询，确保 canvas 从 1x1 正确变为真实尺寸，避免“黑屏但统计数字正常”
+  startEnsureCanvasSizedLoop()
 }
 
 function animate() {
@@ -192,16 +287,85 @@ function onWindowResize() {
 
   camera.aspect = width / height
   camera.updateProjectionMatrix()
+  renderer.setPixelRatio(window.devicePixelRatio)
   renderer.setSize(width, height)
+}
+
+function startEnsureCanvasSizedLoop() {
+  // Run ~2 seconds at 60fps, or stop early once size is stable.
+  if (ensureSizeRaf) return
+  ensureSizeFrames = 0
+
+  const tick = () => {
+    ensureSizeFrames += 1
+    ensureSizeRaf = requestAnimationFrame(tick)
+
+    // Wait until three initialized
+    if (!initialized || !containerRef.value || !renderer || !camera) return
+
+    const rect = containerRef.value.getBoundingClientRect()
+    const w = Math.max(1, Math.floor(rect.width))
+    const h = Math.max(1, Math.floor(rect.height))
+
+    // If still hidden (0x0 -> coerced to 1x1), keep waiting
+    if (w <= 1 || h <= 1) return
+
+    const size = renderer.getSize(new THREE.Vector2())
+    const changed = Math.floor(size.x) !== w || Math.floor(size.y) !== h
+    if (changed) {
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+      renderer.setPixelRatio(window.devicePixelRatio)
+      renderer.setSize(w, h)
+      // If data already loaded, try to fit once
+      setTimeout(() => fitToView(), 0)
+    }
+
+    // Stop condition
+    if (!changed && ensureSizeFrames > 20) {
+      stopEnsureCanvasSizedLoop()
+      return
+    }
+    if (ensureSizeFrames > 120) {
+      stopEnsureCanvasSizedLoop()
+      return
+    }
+  }
+
+  ensureSizeRaf = requestAnimationFrame(tick)
+}
+
+function stopEnsureCanvasSizedLoop() {
+  if (ensureSizeRaf) {
+    cancelAnimationFrame(ensureSizeRaf)
+    ensureSizeRaf = null
+  }
 }
 
 async function loadData() {
   loading.value = true
   try {
-    const [camerasRes, pointsRes] = await Promise.all([
-      resultApi.getCameras(props.blockId),
-      resultApi.getPoints(props.blockId, 100000),
-    ])
+    let camerasRes, pointsRes
+    
+    if (isPartitioned.value && viewMode.value === 'partition' && selectedPartitionIndex.value !== null) {
+      // Load partition data
+      const [cameras, points] = await Promise.all([
+        partitionApi.getPartitionCameras(props.blockId, selectedPartitionIndex.value),
+        partitionApi.getPartitionPoints(props.blockId, selectedPartitionIndex.value, 100000),
+      ])
+      
+      camerasRes = { data: cameras.data }
+      pointsRes = { data: { points: points.data.points, total: points.data.total } }
+    } else {
+      // Load merged data (or regular data for non-partitioned blocks)
+      const [cameras, points] = await Promise.all([
+        resultApi.getCameras(props.blockId),
+        resultApi.getPoints(props.blockId, 100000),
+      ])
+      
+      camerasRes = cameras
+      pointsRes = points
+    }
 
     loadCameras(camerasRes.data)
     loadPoints(pointsRes.data.points)
@@ -210,8 +374,11 @@ async function loadData() {
     stats.numPoints = pointsRes.data.total
 
     fitToView()
+    // 触发一次尺寸校正（防止 tab 切换后 canvas 仍停留在 1x1）
+    startEnsureCanvasSizedLoop()
   } catch (e) {
     console.error('Failed to load data:', e)
+    ElMessage.error('加载数据失败，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -220,12 +387,19 @@ async function loadData() {
 async function downloadPly() {
   downloadingPly.value = true
   try {
-    const response = await resultApi.downloadPoints3DPly(props.blockId)
+    const response =
+      isPartitioned.value && viewMode.value === 'partition' && selectedPartitionIndex.value !== null
+        ? await partitionApi.downloadPartitionPoints3DPly(props.blockId, selectedPartitionIndex.value)
+        : await resultApi.downloadPoints3DPly(props.blockId)
     // Create blob URL and trigger download
     const url = window.URL.createObjectURL(new Blob([response.data]))
     const link = document.createElement('a')
     link.href = url
-    link.setAttribute('download', `points3D_${props.blockId}.ply`)
+    const suffix =
+      isPartitioned.value && viewMode.value === 'partition' && selectedPartitionIndex.value !== null
+        ? `_partition_${selectedPartitionIndex.value}`
+        : ''
+    link.setAttribute('download', `points3D_${props.blockId}${suffix}.ply`)
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -391,6 +565,8 @@ function fitToView() {
 }
 
 function dispose() {
+  stopEnsureCanvasSizedLoop()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (animationId) {
     cancelAnimationFrame(animationId)
   }
@@ -439,10 +615,24 @@ function formatNumber(num: number): string {
   left: 12px;
   z-index: 10;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.9);
   border-radius: 6px;
+}
+
+.mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e4e7ed;
+  margin-bottom: 4px;
+}
+
+.partition-selector-inline {
+  margin-left: 8px;
 }
 
 .viewer-container {

@@ -33,7 +33,14 @@ async def get_cameras(
             detail=f"Block not found: {block_id}"
         )
     
-    if block.status != BlockStatus.COMPLETED:
+    # For partitioned blocks, allow access if partitions are completed (even if not merged)
+    if block.partition_enabled:
+        if block.current_stage not in ("partitions_completed", "merging", "completed"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Partitions not completed yet"
+            )
+    elif block.status != BlockStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Reconstruction not completed"
@@ -46,8 +53,25 @@ async def get_cameras(
         )
     
     try:
+        # For partitioned blocks without merged result, return empty list
+        # (user should use partition-specific API instead)
+        if block.partition_enabled and block.current_stage == "partitions_completed":
+            # Check if merged result exists
+            merged_sparse = os.path.join(block.output_path, "merged", "sparse", "0")
+            if not os.path.exists(merged_sparse):
+                # No merged result, return empty (user should use partition API)
+                return []
+        
         cameras = ResultReader.read_cameras(block.output_path)
         return cameras
+    except FileNotFoundError:
+        # If no merged result and partitioned, return empty
+        if block.partition_enabled:
+            return []
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No reconstruction found"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -71,7 +95,14 @@ async def get_points(
             detail=f"Block not found: {block_id}"
         )
     
-    if block.status != BlockStatus.COMPLETED:
+    # For partitioned blocks, allow access if partitions are completed (even if not merged)
+    if block.partition_enabled:
+        if block.current_stage not in ("partitions_completed", "merging", "completed"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Partitions not completed yet"
+            )
+    elif block.status != BlockStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Reconstruction not completed"
@@ -84,8 +115,25 @@ async def get_points(
         )
     
     try:
+        # For partitioned blocks without merged result, return empty
+        # (user should use partition-specific API instead)
+        if block.partition_enabled and block.current_stage == "partitions_completed":
+            # Check if merged result exists
+            merged_sparse = os.path.join(block.output_path, "merged", "sparse", "0")
+            if not os.path.exists(merged_sparse):
+                # No merged result, return empty (user should use partition API)
+                return {"points": [], "total": 0}
+        
         points, total = ResultReader.read_points3d(block.output_path, limit=limit)
         return {"points": points, "total": total}
+    except FileNotFoundError:
+        # If no merged result and partitioned, return empty
+        if block.partition_enabled:
+            return {"points": [], "total": 0}
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No reconstruction found"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -108,7 +156,14 @@ async def get_stats(
             detail=f"Block not found: {block_id}"
         )
     
-    if block.status != BlockStatus.COMPLETED:
+    # For partitioned blocks, allow access if partitions are completed (even if not merged)
+    if block.partition_enabled:
+        if block.current_stage not in ("partitions_completed", "merging", "completed"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Partitions not completed yet"
+            )
+    elif block.status != BlockStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Reconstruction not completed"
@@ -121,10 +176,63 @@ async def get_stats(
         )
     
     # Read actual reconstruction statistics from binary files
-    try:
-        recon_stats = ResultReader.get_stats(block.output_path)
-    except Exception:
-        recon_stats = {}
+    # For partitioned blocks that are not merged yet, try to aggregate partition stats
+    recon_stats = {}
+    if block.partition_enabled and block.current_stage == "partitions_completed":
+        # Aggregate statistics from all partitions
+        try:
+            from ..services.partition_service import PartitionService
+            partitions = await PartitionService.get_partitions(block.id, db)
+            
+            total_registered_sum = 0
+            registered_unique_names = set()
+            total_points = 0
+            total_observations = 0
+            total_error = 0.0
+            total_track_length = 0
+            partition_count = 0
+            
+            for partition in partitions:
+                if partition.status == "COMPLETED":
+                    try:
+                        part_stats = ResultReader.read_partition_stats(block.output_path, partition.index)
+                        if part_stats:
+                            total_registered_sum += part_stats.get("num_registered_images", 0)
+                            total_points += part_stats.get("num_points3d", 0)
+                            total_observations += part_stats.get("num_observations", 0)
+                            total_error += part_stats.get("mean_reprojection_error", 0.0) * part_stats.get("num_points3d", 0)
+                            total_track_length += part_stats.get("mean_track_length", 0.0) * part_stats.get("num_points3d", 0)
+                            partition_count += 1
+                        # Also compute unique registered images by names (avoid overlap double counting)
+                        try:
+                            cams = ResultReader.read_partition_cameras(block.output_path, partition.index)
+                            for c in cams:
+                                registered_unique_names.add(c.image_name)
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+            
+            if partition_count > 0:
+                total_registered_unique = len(registered_unique_names) if registered_unique_names else 0
+                recon_stats = {
+                    # Default num_registered_images uses unique semantics (more intuitive)
+                    "num_registered_images": total_registered_unique or total_registered_sum,
+                    "num_registered_images_unique": total_registered_unique,
+                    "num_registered_images_sum": total_registered_sum,
+                    "num_points3d": total_points,
+                    "num_observations": total_observations,
+                    "mean_reprojection_error": (total_error / total_points) if total_points > 0 else 0.0,
+                    "mean_track_length": (total_track_length / total_points) if total_points > 0 else 0.0,
+                }
+        except Exception:
+            pass
+    
+    if not recon_stats:
+        try:
+            recon_stats = ResultReader.get_stats(block.output_path)
+        except Exception:
+            recon_stats = {}
     
     # Count total images from image directory
     num_images = 0
@@ -142,6 +250,8 @@ async def get_stats(
     merged = {
         "num_images": num_images,
         "num_registered_images": recon_stats.get("num_registered_images", 0),
+        "num_registered_images_unique": recon_stats.get("num_registered_images_unique", recon_stats.get("num_registered_images", 0)),
+        "num_registered_images_sum": recon_stats.get("num_registered_images_sum", recon_stats.get("num_registered_images", 0)),
         "num_points3d": recon_stats.get("num_points3d", 0),
         "num_observations": recon_stats.get("num_observations", 0),
         "mean_reprojection_error": recon_stats.get("mean_reprojection_error", 0.0),
@@ -172,7 +282,14 @@ async def download_points3d_ply(
             detail=f"Block not found: {block_id}"
         )
     
-    if block.status != BlockStatus.COMPLETED:
+    # For partitioned blocks, allow access if partitions are completed (even if not merged)
+    if block.partition_enabled:
+        if block.current_stage not in ("partitions_completed", "merging", "completed"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Partitions not completed yet"
+            )
+    elif block.status != BlockStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Reconstruction not completed"

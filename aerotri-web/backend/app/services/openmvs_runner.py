@@ -153,11 +153,24 @@ class OpenMVSRunner:
                     return
 
                 # Basic sanity checks: require existing sparse output
-                sparse_dir = os.path.join(block.output_path or "", "sparse", "0")
-                if not os.path.isdir(sparse_dir):
+                # Prioritize merged/sparse/0 for partitioned SfM, fallback to sparse/0
+                merged_sparse = os.path.join(block.output_path or "", "merged", "sparse", "0")
+                regular_sparse = os.path.join(block.output_path or "", "sparse", "0")
+                
+                if os.path.isdir(merged_sparse) and (
+                    os.path.exists(os.path.join(merged_sparse, "images.bin"))
+                    or os.path.exists(os.path.join(merged_sparse, "images.txt"))
+                ):
+                    sparse_dir = merged_sparse
+                elif os.path.isdir(regular_sparse) and (
+                    os.path.exists(os.path.join(regular_sparse, "images.bin"))
+                    or os.path.exists(os.path.join(regular_sparse, "images.txt"))
+                ):
+                    sparse_dir = regular_sparse
+                else:
                     block.recon_status = "FAILED"
                     block.recon_error_message = (
-                        f"Sparse output not found for reconstruction: {sparse_dir}"
+                        f"Sparse output not found for reconstruction: checked {merged_sparse} and {regular_sparse}"
                     )
                     await db.commit()
                     return
@@ -798,4 +811,27 @@ class OpenMVSRunner:
         # Prefer in-memory buffer when running
         if block_id in self._log_buffers:
             buf = self._log_buffers[block_id]
-            return list(bu
+            return list(buf)[-lines:]
+
+        # Fallback to persisted run_recon.log on disk
+        # We infer path from typical layout: <output>/recon/run_recon.log
+        base_outputs_dir = "/root/work/aerotri-web/data/outputs"
+        recon_log = Path(base_outputs_dir) / block_id / "recon" / "run_recon.log"
+        if not recon_log.is_file():
+            return None
+
+        dq: Deque[str] = deque(maxlen=lines)
+        try:
+            with open(recon_log, "r", encoding="utf-8", errors="replace") as fp:
+                for line in fp:
+                    dq.append(line.rstrip("\n"))
+        except Exception:
+            return None
+
+        return list(dq)
+
+
+# Singleton runner
+openmvs_runner = OpenMVSRunner()
+
+

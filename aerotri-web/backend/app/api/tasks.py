@@ -108,3 +108,52 @@ async def stop_task(
         stage_times=None,
         log_tail=None
     )
+
+
+@router.post("/{block_id}/merge", response_model=TaskStatus)
+async def merge_partitions(
+    block_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Start merge task for completed partitions."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}"
+        )
+    
+    if not block.partition_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Block is not in partitioned mode"
+        )
+    
+    if block.current_stage != "partitions_completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Block is not ready for merge. Current stage: {block.current_stage}"
+        )
+    
+    if block.status == BlockStatus.RUNNING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Block is already running"
+        )
+    
+    # Start the merge task
+    await task_runner.start_merge_task(block, db)
+    
+    # Refresh block to get updated status
+    await db.refresh(block)
+    
+    return TaskStatus(
+        block_id=block_id,
+        status=block.status,
+        current_stage=block.current_stage,
+        progress=block.progress or 0.0,
+        stage_times=None,
+        log_tail=None
+    )

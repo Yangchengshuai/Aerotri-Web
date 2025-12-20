@@ -20,6 +20,14 @@
           停止
         </el-button>
         <el-button
+          v-else-if="block?.current_stage === 'partitions_completed'"
+          type="success"
+          @click="handleMerge"
+        >
+          <el-icon><Connection /></el-icon>
+          合并分区结果
+        </el-button>
+        <el-button
           v-else-if="block?.status !== 'running'"
           type="primary"
           @click="handleRun"
@@ -69,6 +77,19 @@
             <ParameterSummary v-if="block" :block="block" />
           </el-card>
 
+          <!-- Partition Config Section -->
+          <PartitionConfigPanel
+            v-if="block"
+            :block-id="block.id"
+            :block-status="block.status"
+          />
+
+          <!-- Partition Status Section -->
+          <PartitionList
+            v-if="block?.partition_enabled"
+            :block-id="block.id"
+          />
+
           <!-- GPU Section -->
           <el-card class="panel-card">
             <template #header>
@@ -92,13 +113,27 @@
           </el-tab-pane>
 
           <!-- 3D Viewer Tab -->
-          <el-tab-pane label="3D 查看" name="viewer" :disabled="block?.status !== 'completed'">
-            <ThreeViewer v-if="block?.status === 'completed'" :block-id="block.id" />
+          <el-tab-pane 
+            label="3D 查看" 
+            name="viewer" 
+            :disabled="!canViewResults"
+          >
+            <ThreeViewer 
+              v-if="canViewResults" 
+              :block-id="block.id" 
+            />
           </el-tab-pane>
 
           <!-- Statistics Tab -->
-          <el-tab-pane label="统计数据" name="stats" :disabled="block?.status !== 'completed'">
-            <StatisticsView v-if="block?.status === 'completed'" :block="block" />
+          <el-tab-pane 
+            label="统计数据" 
+            name="stats" 
+            :disabled="!canViewResults"
+          >
+            <StatisticsView 
+              v-if="canViewResults" 
+              :block="block" 
+            />
           </el-tab-pane>
 
           <!-- Reconstruction Tab -->
@@ -130,7 +165,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, VideoPlay, VideoPause } from '@element-plus/icons-vue'
+import { ArrowLeft, VideoPlay, VideoPause, Connection } from '@element-plus/icons-vue'
 import { useBlocksStore } from '@/stores/blocks'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { taskApi } from '@/api'
@@ -139,6 +174,8 @@ import type { Block, ProgressMessage } from '@/types'
 import ImagePreview from '@/components/ImagePreview.vue'
 import ParameterSummary from '@/components/ParameterSummary.vue'
 import ParameterForm from '@/components/ParameterForm.vue'
+import PartitionConfigPanel from '@/components/PartitionConfigPanel.vue'
+import PartitionList from '@/components/PartitionList.vue'
 import GPUSelector from '@/components/GPUSelector.vue'
 import ProgressView from '@/components/ProgressView.vue'
 import ThreeViewer from '@/components/ThreeViewer.vue'
@@ -184,6 +221,18 @@ const statusText = computed(() => {
 
 const canRun = computed(() => {
   return block.value && ['created', 'failed', 'cancelled', 'completed'].includes(block.value.status)
+})
+
+const canViewResults = computed(() => {
+  if (!block.value) return false
+  // For partitioned blocks, allow viewing if partitions are completed (even if not merged yet)
+  if (block.value.partition_enabled) {
+    return block.value.status === 'completed' || 
+           block.value.current_stage === 'partitions_completed' ||
+           block.value.current_stage === 'merging'
+  }
+  // For non-partitioned blocks, require completed status
+  return block.value.status === 'completed'
 })
 
 // Lifecycle
@@ -237,6 +286,19 @@ async function handleStop() {
     await blocksStore.fetchBlock(blockId.value)
   } catch {
     // User cancelled
+  }
+}
+
+async function handleMerge() {
+  try {
+    await ElMessageBox.confirm('确定要合并所有分区结果吗？', '确认合并', { type: 'info' })
+    await taskApi.merge(blockId.value)
+    ElMessage.success('合并任务已提交')
+    await blocksStore.fetchBlock(blockId.value)
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message !== 'cancel') {
+      ElMessage.error(e.message || '合并失败')
+    }
   }
 }
 

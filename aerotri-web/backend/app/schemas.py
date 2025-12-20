@@ -30,12 +30,14 @@ class MatchingParams(BaseModel):
 # ============ Mapper Parameters ============
 class ColmapMapperParams(BaseModel):
     """COLMAP mapper (incremental SfM) parameters."""
+    use_pose_prior: bool = False
     ba_use_gpu: bool = True
     ba_gpu_index: int = 0
 
 
 class GlomapMapperParams(BaseModel):
     """GLOMAP mapper (global SfM) parameters."""
+    use_pose_prior: bool = False
     global_positioning_use_gpu: bool = True
     global_positioning_gpu_index: int = 0
     global_positioning_min_num_images_gpu_solver: int = 50
@@ -104,6 +106,12 @@ class BlockResponse(BaseModel):
     recon_output_path: Optional[str] = None
     recon_error_message: Optional[str] = None
     recon_statistics: Optional[dict] = None
+    # Partitioned SfM fields
+    partition_enabled: Optional[bool] = None
+    partition_strategy: Optional[str] = None
+    partition_params: Optional[dict] = None
+    sfm_pipeline_mode: Optional[str] = None
+    merge_strategy: Optional[str] = None
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     started_at: Optional[datetime]
@@ -204,6 +212,9 @@ class ReconstructionStats(BaseModel):
     """Reconstruction statistics."""
     num_images: int = 0
     num_registered_images: int = 0
+    # For partition aggregation: unique vs sum across partitions
+    num_registered_images_unique: int = 0
+    num_registered_images_sum: int = 0
     num_points3d: int = 0
     num_observations: int = 0
     mean_reprojection_error: float = 0.0
@@ -254,3 +265,52 @@ class ReconstructionLogResponse(BaseModel):
 
     block_id: str
     lines: List[str]
+
+
+# ============ Partition Schemas ============
+class PartitionConfigRequest(BaseModel):
+    """Request to configure partitions for a block."""
+    partition_enabled: bool = False
+    partition_strategy: str = "name_range_with_overlap"
+    partition_params: dict = Field(default_factory=lambda: {"partition_size": 1000, "overlap": 150})
+    sfm_pipeline_mode: str = "global_feat_match"
+    merge_strategy: str = Field(default="sim3_keep_one", pattern="^(rigid_keep_one|sim3_keep_one)$")
+
+
+class PartitionPreviewRequest(BaseModel):
+    """Request to preview partitions without saving."""
+    partition_size: int = Field(1000, ge=1)
+    overlap: int = Field(150, ge=0)
+
+
+class PartitionInfo(BaseModel):
+    """Partition information."""
+    id: Optional[str] = None
+    index: int
+    name: str
+    image_start_name: Optional[str] = None
+    image_end_name: Optional[str] = None
+    image_count: int
+    overlap_with_prev: int = 0
+    overlap_with_next: int = 0
+    status: Optional[str] = None
+    progress: Optional[float] = None
+    error_message: Optional[str] = None
+    image_names: Optional[List[str]] = None  # Only in preview
+    statistics: Optional[dict] = None  # Partition statistics (num_registered_images, num_points3d, etc.)
+
+
+class PartitionConfigResponse(BaseModel):
+    """Partition configuration response."""
+    partition_enabled: bool
+    partition_strategy: Optional[str] = None
+    partition_params: Optional[dict] = None
+    sfm_pipeline_mode: Optional[str] = None
+    merge_strategy: Optional[str] = None
+    partitions: List[PartitionInfo] = Field(default_factory=list)
+
+
+class PartitionPreviewResponse(BaseModel):
+    """Partition preview response."""
+    partitions: List[PartitionInfo]
+    total_images: int

@@ -119,7 +119,9 @@ const statusText = computed(() => {
 })
 
 const algorithmText = computed(() => {
-  return props.block.algorithm === 'glomap' ? 'GLOMAP' : 'COLMAP'
+  if (props.block.algorithm === 'glomap') return 'GLOMAP'
+  if (props.block.algorithm === 'instantsfm') return 'InstantSfM'
+  return 'COLMAP'
 })
 
 function handleCommand(command: string) {
