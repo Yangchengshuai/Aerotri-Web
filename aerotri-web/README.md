@@ -97,9 +97,11 @@ npm run test
 |------|------|--------|
 | `AEROTRI_DB_PATH` | 数据库文件路径 | `/root/work/aerotri-web/data/aerotri.db` |
 | `AEROTRI_IMAGE_ROOT` | 图像浏览根目录 | `/mnt/work_odm/chengshuai` |
-| `COLMAP_PATH` | COLMAP 可执行文件路径 | `/root/work/colmap/build_cuda/src/colmap/exe/colmap` |
-| `GLOMAP_PATH` | GLOMAP 可执行文件路径 | `/root/work/colmap/build_cuda/src/glomap/glomap` |
-| `INSTANTSFM_PATH` | InstantSfM 可执行文件路径 | 根据安装路径配置 |
+| `COLMAP_PATH` | COLMAP 可执行文件路径 | `/usr/local/bin/colmap`（可改为自编译路径，如 `/root/work/colmap3.11/colmap/build/src/colmap/exe/colmap`） |
+| `GLOMAP_PATH` | GLOMAP 可执行文件路径 | `/usr/local/bin/glomap`（可改为自编译路径，如 `/root/work/glomap/build/glomap/glomap`） |
+| `INSTANTSFM_PATH` | InstantSfM 可执行文件路径 | 根据安装路径配置（例如 `ins-sfm`） |
+| `GS_REPO_PATH` | 3DGS 训练仓库路径（包含 `train.py`） | `/root/work/gaussian-splatting` |
+| `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 gaussian-splatting 依赖与 CUDA 扩展） | （必填，例如某个 Conda/venv 中的 `python`） |
 
 ## API 文档
 
@@ -123,6 +125,17 @@ npm run test
 | `/api/blocks/{id}/partitions/status` | GET | 分区状态 |
 | `/api/blocks/{id}/partitions/{index}/result/*` | GET | 分区结果 |
 | `/api/blocks/{id}/merge` | POST | 合并分区结果 |
+| `/api/blocks/{id}/reconstruct` | POST | OpenMVS 重建（开始） |
+| `/api/blocks/{id}/reconstruction/status` | GET | OpenMVS 重建状态 |
+| `/api/blocks/{id}/reconstruction/files` | GET | OpenMVS 重建产物列表 |
+| `/api/blocks/{id}/reconstruction/download` | GET | OpenMVS 重建产物下载 |
+| `/api/blocks/{id}/reconstruction/log_tail` | GET | OpenMVS 重建日志 tail |
+| `/api/blocks/{id}/gs/train` | POST | 启动 3DGS 训练 |
+| `/api/blocks/{id}/gs/status` | GET | 3DGS 状态 |
+| `/api/blocks/{id}/gs/cancel` | POST | 取消 3DGS 训练 |
+| `/api/blocks/{id}/gs/files` | GET | 3DGS 产物列表 |
+| `/api/blocks/{id}/gs/download` | GET | 3DGS 产物下载 |
+| `/api/blocks/{id}/gs/log_tail` | GET | 3DGS 日志 tail |
 | `/ws/blocks/{id}/progress` | WebSocket | 实时进度 |
 
 ## 目录结构
@@ -166,6 +179,23 @@ aerotri-web/
    - 分区模式：可在分区视图和合并结果视图之间切换
 8. **合并分区**（如使用分区模式）: 分区完成后可手动触发合并操作
 9. **对比分析**: 创建多个 Block 使用不同算法，在对比页面分析结果
+
+## 3DGS（3D Gaussian Splatting）训练与预览（V1）
+
+### 前置条件
+
+- 必须先完成 SfM（Block 状态为 `completed`，且存在 `data/outputs/{block_id}/sparse/0`）。
+- 后端需配置 `GS_REPO_PATH`/`GS_PYTHON`（见上文环境变量）。
+
+### Web 端入口
+
+- 在 Block 详情页切换到 **“3DGS”** 标签页：可配置训练参数、选择 GPU、启动/取消训练、查看日志与产物列表。
+- 产物 `point_cloud.ply` 支持点击 **“预览”**：会在同域页面 `/visionary/index.html` 中打开。
+
+### 预览兼容性说明
+
+- 预览依赖 WebGPU，推荐 Chrome/Edge 较新版本 + 独显环境。
+- 若浏览器/驱动不支持 WebGPU，可使用“下载”将 `point_cloud.ply` 下载到本地离线查看。
 
 ## 支持的算法参数
 

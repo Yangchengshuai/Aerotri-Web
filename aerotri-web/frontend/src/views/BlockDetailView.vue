@@ -140,6 +140,11 @@
           <el-tab-pane label="重建" name="reconstruction" v-if="block">
             <ReconstructionPanel :block="block" :websocket-progress="wsProgress" />
           </el-tab-pane>
+
+          <!-- 3DGS Tab -->
+          <el-tab-pane label="3DGS" name="gs" v-if="block">
+            <GaussianSplattingPanel :block="block" />
+          </el-tab-pane>
         </el-tabs>
       </el-main>
     </div>
@@ -181,6 +186,7 @@ import ProgressView from '@/components/ProgressView.vue'
 import ThreeViewer from '@/components/ThreeViewer.vue'
 import StatisticsView from '@/components/StatisticsView.vue'
 import ReconstructionPanel from '@/components/ReconstructionPanel.vue'
+import GaussianSplattingPanel from '@/components/GaussianSplattingPanel.vue'
 
 const route = useRoute()
 const router = useRouter()

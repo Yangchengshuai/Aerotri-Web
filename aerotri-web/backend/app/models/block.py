@@ -106,6 +106,30 @@ class Block(Base):
     # JSON statistics for reconstruction (stage times, params, etc.)
     recon_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
+    # ====== 3D Gaussian Splatting (3DGS) fields ======
+    # Status of 3DGS training pipeline
+    gs_status: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        default="NOT_STARTED",
+    )
+    # Overall 3DGS training progress (0-100)
+    gs_progress: Mapped[Optional[float]] = mapped_column(
+        nullable=True,
+        default=0.0,
+    )
+    # Current coarse 3DGS stage: initializing/dataset_prepare/training/rendering/completed/...
+    gs_current_stage: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    # Root output path for 3DGS artifacts (e.g. <output_path>/gs)
+    gs_output_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Human-readable error message for 3DGS failures
+    gs_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # JSON statistics for 3DGS (stage times, params, iterations, etc.)
+    gs_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
     # ====== Partitioned SfM fields (large-scale datasets) ======
     # Whether partitioned SfM mode is enabled for this block
     partition_enabled: Mapped[bool] = mapped_column(
@@ -166,6 +190,12 @@ class Block(Base):
             "recon_output_path": self.recon_output_path,
             "recon_error_message": self.recon_error_message,
             "recon_statistics": self.recon_statistics,
+            "gs_status": self.gs_status,
+            "gs_progress": self.gs_progress,
+            "gs_current_stage": self.gs_current_stage,
+            "gs_output_path": self.gs_output_path,
+            "gs_error_message": self.gs_error_message,
+            "gs_statistics": self.gs_statistics,
             "partition_enabled": self.partition_enabled,
             "partition_strategy": self.partition_strategy,
             "partition_params": self.partition_params,

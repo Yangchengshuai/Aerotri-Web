@@ -25,6 +25,12 @@ class MatchingParams(BaseModel):
     overlap: int = 10  # For sequential matching
     use_gpu: bool = True
     gpu_index: int = 0
+    # Vocabulary tree matching
+    vocab_tree_path: Optional[str] = None
+    # Spatial matching key parameters
+    spatial_max_num_neighbors: int = 50
+    spatial_is_gps: bool = True
+    spatial_ignore_z: bool = False
 
 
 # ============ Mapper Parameters ============
@@ -106,6 +112,13 @@ class BlockResponse(BaseModel):
     recon_output_path: Optional[str] = None
     recon_error_message: Optional[str] = None
     recon_statistics: Optional[dict] = None
+    # 3D Gaussian Splatting (3DGS) fields
+    gs_status: Optional[str] = None
+    gs_progress: Optional[float] = None
+    gs_current_stage: Optional[str] = None
+    gs_output_path: Optional[str] = None
+    gs_error_message: Optional[str] = None
+    gs_statistics: Optional[dict] = None
     # Partitioned SfM fields
     partition_enabled: Optional[bool] = None
     partition_strategy: Optional[str] = None
@@ -262,6 +275,60 @@ class ReconstructionStatusResponse(BaseModel):
 
 class ReconstructionLogResponse(BaseModel):
     """Tail of reconstruction logs for a block."""
+
+    block_id: str
+    lines: List[str]
+
+
+# ============ 3DGS (Gaussian Splatting) Schemas ============
+class GSTrainParams(BaseModel):
+    """Training parameters for gaussian-splatting (server-side)."""
+
+    iterations: int = Field(7000, ge=1)
+    resolution: int = Field(2, ge=1)
+    data_device: Literal["cpu", "cuda"] = "cpu"
+    sh_degree: int = Field(3, ge=0, le=3)
+
+
+class GSTrainRequest(BaseModel):
+    """Request payload for starting 3DGS training."""
+
+    gpu_index: int = Field(0, ge=0)
+    train_params: GSTrainParams = Field(default_factory=GSTrainParams)
+
+
+class GSFileInfo(BaseModel):
+    """Information about a 3DGS output file."""
+
+    stage: str  # model | other
+    type: str  # gaussian | other
+    name: str
+    size_bytes: int
+    mtime: datetime
+    preview_supported: bool
+    download_url: str
+
+
+class GSFilesResponse(BaseModel):
+    """List of 3DGS output files."""
+
+    files: List[GSFileInfo]
+
+
+class GSStatusResponse(BaseModel):
+    """3DGS status for a block."""
+
+    block_id: str
+    gs_status: Optional[str]
+    gs_progress: Optional[float]
+    gs_current_stage: Optional[str]
+    gs_output_path: Optional[str]
+    gs_error_message: Optional[str]
+    gs_statistics: Optional[dict]
+
+
+class GSLogResponse(BaseModel):
+    """Tail of 3DGS training logs for a block."""
 
     block_id: str
     lines: List[str]

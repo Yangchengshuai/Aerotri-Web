@@ -664,6 +664,21 @@ class SFMMergeService:
         # Write merged results
         ctx.write_log_line(f"[Merge] Writing merged results to {output_sparse_dir}")
         
+        # Model ID to name mapping for text output
+        model_id_to_name = {
+            0: "SIMPLE_PINHOLE",
+            1: "PINHOLE",
+            2: "SIMPLE_RADIAL",
+            3: "RADIAL",
+            4: "OPENCV",
+            5: "OPENCV_FISHEYE",
+            6: "FULL_OPENCV",
+            7: "FOV",
+            8: "SIMPLE_RADIAL_FISHEYE",
+            9: "RADIAL_FISHEYE",
+            10: "THIN_PRISM_FISHEYE",
+        }
+        
         # Write cameras.bin
         cameras_bin_path = os.path.join(output_sparse_dir, "cameras.bin")
         with open(cameras_bin_path, "wb") as f:
@@ -677,6 +692,17 @@ class SFMMergeService:
                 f.write(struct.pack("<Q", len(params)))
                 f.write(struct.pack(f"<{len(params)}d", *params))
         
+        # Also write cameras.txt for compatibility (COLMAP sometimes has issues with binary format)
+        cameras_txt_path = os.path.join(output_sparse_dir, "cameras.txt")
+        with open(cameras_txt_path, "w", encoding="utf-8") as f:
+            f.write("# Camera list with one line of data per camera:\n")
+            f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+            f.write(f"# Number of cameras: {len(merged_cameras)}\n")
+            for cam_id, cam_data in sorted(merged_cameras.items()):
+                model_name = model_id_to_name.get(cam_data["model"], f"UNKNOWN_{cam_data['model']}")
+                params_str = " ".join(str(p) for p in cam_data["params"])
+                f.write(f"{cam_id} {model_name} {cam_data['width']} {cam_data['height']} {params_str}\n")
+        
         # Write images.bin
         images_bin_path = os.path.join(output_sparse_dir, "images.bin")
         with open(images_bin_path, "wb") as f:
@@ -689,6 +715,19 @@ class SFMMergeService:
                 f.write(img_name.encode("utf-8") + b"\x00")
                 # Write empty 2D points (simplified)
                 f.write(struct.pack("<Q", 0))
+        
+        # Also write images.txt for compatibility
+        images_txt_path = os.path.join(output_sparse_dir, "images.txt")
+        with open(images_txt_path, "w", encoding="utf-8") as f:
+            f.write("# Image list with two lines of data per image:\n")
+            f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+            f.write("#   POINTS2D[] as (X, Y, IMAGE_ID, POINT2D_IDX)\n")
+            f.write(f"# Number of images: {len(merged_images)}, mean observations per image: 0\n")
+            for img_name, img_data in sorted(merged_images.items(), key=lambda x: x[1]["image_id"]):
+                f.write(f"{img_data['image_id']} {img_data['qw']} {img_data['qx']} {img_data['qy']} {img_data['qz']} "
+                       f"{img_data['tx']} {img_data['ty']} {img_data['tz']} {img_data['camera_id']} {img_name}\n")
+                # Empty 2D points line
+                f.write("\n")
         
         # Write points3D.bin
         points_bin_path = os.path.join(output_sparse_dir, "points3D.bin")
@@ -704,6 +743,20 @@ class SFMMergeService:
                 for image_id, point2d_idx in track:
                     f.write(struct.pack("<I", image_id))
                     f.write(struct.pack("<I", point2d_idx))
+        
+        # Also write points3D.txt for compatibility
+        points_txt_path = os.path.join(output_sparse_dir, "points3D.txt")
+        with open(points_txt_path, "w", encoding="utf-8") as f:
+            f.write("# 3D point list with one line of data per point:\n")
+            f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
+            total_obs = sum(len(pt.get("track", [])) for pt in merged_points.values())
+            mean_track = (total_obs / len(merged_points)) if merged_points else 0.0
+            f.write(f"# Number of points: {len(merged_points)}, mean track length: {mean_track:.1f}\n")
+            for pt_id, pt_data in sorted(merged_points.items()):
+                track = pt_data.get("track", [])
+                track_str = " ".join(f"{img_id} {pt2d_idx}" for img_id, pt2d_idx in track)
+                f.write(f"{pt_id} {pt_data['x']} {pt_data['y']} {pt_data['z']} "
+                       f"{pt_data['r']} {pt_data['g']} {pt_data['b']} {pt_data['error']} {track_str}\n")
 
         # Write merged stats sidecar for reprojection error (InstantSfM ERROR often 0 in merged bin-only output)
         try:

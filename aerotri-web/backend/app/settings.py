@@ -44,6 +44,12 @@ OPENMVS_TEXTURE = Path(
     )
 )
 
+# ===== 3D Gaussian Splatting (gaussian-splatting) configuration =====
+# Path to the gaussian-splatting repository root (contains train.py)
+GS_REPO_PATH = Path(os.getenv("GS_REPO_PATH", "/root/work/gaussian-splatting"))
+# Python interpreter to run gaussian-splatting (should be a prepared conda/venv with CUDA extensions)
+GS_PYTHON = os.getenv("GS_PYTHON", "")
+
 
 def ensure_executable(path: Path) -> Path:
     """Return path and allow callers to validate existence/executable bit.

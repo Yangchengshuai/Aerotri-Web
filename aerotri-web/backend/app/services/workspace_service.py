@@ -65,12 +65,26 @@ class WorkspaceService:
 
     @staticmethod
     def safe_resolve_child(base_dir: str, child_name: str) -> Path:
-        """Resolve a child path safely (prevents path traversal)."""
+        """Resolve a child path safely (prevents path traversal).
+
+        Important:
+        - Do NOT call `.resolve()` on the child path, because working dirs may contain
+          symlinks/hardlinks to source images outside the working directory.
+        - We only validate the *name* and then join it to base_dir.
+        """
         if not child_name or "/" in child_name or "\\" in child_name:
             raise ValueError("Invalid file name")
+
+        # Normalize base dir only
         base = Path(base_dir).resolve()
-        child = (base / child_name).resolve()
-        if base != child and base not in child.parents:
-            raise ValueError("Path traversal detected")
+
+        # Join without following symlinks; later code can use .exists() to validate target.
+        child = base / child_name
+
+        # Extra defense: disallow names that try to escape via ".."
+        # (Even though we already reject "/" and "\\", keep this for clarity.)
+        if child_name in (".", "..") or ".." in Path(child_name).parts:
+            raise ValueError("Invalid file name")
+
         return child
 

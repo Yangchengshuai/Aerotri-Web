@@ -1,6 +1,6 @@
 ## colmap_glomap 项目总览
 
-本仓库用于汇总 **COLMAP/GLOMAP 源码**、**InstantSfM（快速全局式 SfM）**、**OpenMVS 重建工具链** 与配套的 **AeroTri Web（网页端空三与重建工具）**。
+本仓库用于汇总 **COLMAP/GLOMAP 源码**、**COLMAP 3.11 自编译版本**、**GLOMAP 上游源码镜像**、**Ceres-Solver 数值优化库**、**InstantSfM（快速全局式 SfM）**、**OpenMVS 重建工具链** 与配套的 **AeroTri Web（网页端空三与重建工具）** 以及 **3DGS（3D Gaussian Splatting）训练/预览集成**。
 
 - **COLMAP**：增量式 SfM（空三）与 MVS 工具链（本仓库内路径：`colmap/`）
 - **InstantSfM**：基于 COLMAP 的快速全局式 SfM 算法（本仓库内路径：`instantsfm/`，通过 `ins-sfm` 命令调用）
@@ -14,11 +14,16 @@
 ```
 work/
 ├── colmap/                 # COLMAP 源码（已脱离子仓库形式，作为普通目录提交）
+├── colmap3.11/             # COLMAP 3.11 源码及本地构建目录（仅源码纳入版本控制）
+├── ceres-solver/           # Ceres-Solver 数值优化库源码（仅源码纳入版本控制）
+├── glomap/                 # GLOMAP 上游源码镜像（作为独立目录提交）
 ├── instantsfm/             # InstantSfM 源码/环境（通过 ins-sfm 命令调用）
 ├── openMVS/                # OpenMVS 源码与构建目录（仅源码纳入版本控制）
-├── aerotri-web/            # Web 应用：FastAPI 后端 + Vue3 前端
+├── aerotri-web/            # Web 应用：FastAPI 后端 + Vue3 前端 + 3DGS/WebGPU 可视化
 └── docs/                   # 本项目说明/使用/开发文档
 ```
+
+> 说明：`ceres-solver/`、`colmap3.11/`、`glomap/` 目录中的 **源码** 会随仓库提交，内部的 `build*/`、`CMakeFiles/` 等编译中间文件通过根目录 `.gitignore` 统一忽略，不会进入版本控制。
 
 ## 文档
 
@@ -47,6 +52,11 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 针对已完成的 SfM 结果，可发起稠密重建 / 网格 / 纹理流水线（OpenMVS）
   - 后端在 Block 上维护独立的重建状态字段（`recon_status`、`recon_progress`、`recon_current_stage` 等）
   - 前端在「重建」页签中展示进度、阶段与输出文件列表，支持下载重建产物
+- 3DGS（3D Gaussian Splatting）训练与预览
+  - 后端封装 3DGS 训练任务（通过 `GS_REPO_PATH` / `GS_PYTHON` 调用外部仓库）
+  - Block 维度维护独立的 3DGS 状态字段（`gs_status`、`gs_progress`、`gs_current_stage` 等），支持任务恢复
+  - 前端在「3DGS」页签中配置训练参数、选择 GPU、查看日志与产物列表
+  - 内置基于 WebGPU 的 `visionary` 预览页，可在线预览导出的 `point_cloud.ply`
 
 ## 快速开始（AeroTri Web）
 

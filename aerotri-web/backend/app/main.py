@@ -3,12 +3,15 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api import api_router
 from .ws import progress_router
 from .models.database import init_db
 from .services.task_runner import task_runner
+from .services.openmvs_runner import openmvs_runner
+from .services.gs_runner import gs_runner
 
 
 @asynccontextmanager
@@ -23,6 +26,10 @@ async def lifespan(app: FastAPI):
     
     # Recover orphaned tasks from previous session
     await task_runner.recover_orphaned_tasks()
+    # Recover orphaned reconstruction tasks
+    await openmvs_runner.recover_orphaned_reconstructions()
+    # Recover orphaned 3DGS training tasks
+    await gs_runner.recover_orphaned_gs_tasks()
     
     yield
     
@@ -45,6 +52,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip middleware (important for large JSON payloads like point clouds)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # API routes
 app.include_router(api_router, prefix="/api")

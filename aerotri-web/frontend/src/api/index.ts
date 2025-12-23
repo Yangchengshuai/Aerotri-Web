@@ -9,6 +9,7 @@ import type {
   Point3D,
   BlockStatistics,
   ReconFileInfo,
+  GSFileInfo,
 } from '@/types'
 
 const api = axios.create({
@@ -88,9 +89,11 @@ export const resultApi = {
   getCameras: (blockId: string) =>
     api.get<CameraInfo[]>(`/blocks/${blockId}/result/cameras`),
   
-  getPoints: (blockId: string, limit = 100000) =>
+  // Points payload can be very large (tens of MB). Allow overriding timeout per call.
+  getPoints: (blockId: string, limit = 100000, timeout: number = 0) =>
     api.get<{ points: Point3D[], total: number }>(`/blocks/${blockId}/result/points`, {
-      params: { limit }
+      params: { limit },
+      timeout,
     }),
   
   getStats: (blockId: string) =>
@@ -136,6 +139,42 @@ export const reconstructionApi = {
         params: { lines },
       },
     ),
+}
+
+// 3DGS API
+export const gsApi = {
+  train: (
+    blockId: string,
+    payload: {
+      gpu_index: number
+      train_params: {
+        iterations: number
+        resolution: number
+        data_device: 'cpu' | 'cuda'
+        sh_degree: number
+      }
+    },
+  ) => api.post(`/blocks/${blockId}/gs/train`, payload),
+
+  status: (blockId: string) =>
+    api.get<{
+      block_id: string
+      gs_status: string | null
+      gs_progress: number | null
+      gs_current_stage: string | null
+      gs_output_path: string | null
+      gs_error_message: string | null
+      gs_statistics: Record<string, unknown> | null
+    }>(`/blocks/${blockId}/gs/status`),
+
+  cancel: (blockId: string) => api.post(`/blocks/${blockId}/gs/cancel`, {}),
+
+  files: (blockId: string) => api.get<{ files: GSFileInfo[] }>(`/blocks/${blockId}/gs/files`),
+
+  logTail: (blockId: string, lines = 200) =>
+    api.get<{ block_id: string; lines: string[] }>(`/blocks/${blockId}/gs/log_tail`, {
+      params: { lines },
+    }),
 }
 
 // Partition API
@@ -221,9 +260,10 @@ export const partitionApi = {
   getPartitionCameras: (blockId: string, partitionIndex: number) =>
     api.get<CameraInfo[]>(`/blocks/${blockId}/partitions/${partitionIndex}/result/cameras`),
 
-  getPartitionPoints: (blockId: string, partitionIndex: number, limit = 100000) =>
+  getPartitionPoints: (blockId: string, partitionIndex: number, limit = 100000, timeout: number = 0) =>
     api.get<{ points: Point3D[], total: number }>(`/blocks/${blockId}/partitions/${partitionIndex}/result/points`, {
-      params: { limit }
+      params: { limit },
+      timeout,
     }),
 
   getPartitionStats: (blockId: string, partitionIndex: number) =>

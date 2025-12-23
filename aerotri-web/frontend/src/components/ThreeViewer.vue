@@ -21,6 +21,19 @@
       
       <el-checkbox v-model="showCameras">显示相机</el-checkbox>
       <el-checkbox v-model="showPoints">显示点云</el-checkbox>
+      <div v-if="showCameras" class="camera-size-control">
+        <span class="control-label">相机大小</span>
+        <el-slider
+          v-model="cameraSizeMultiplier"
+          :min="0.1"
+          :max="5.0"
+          :step="0.1"
+          :show-tooltip="true"
+          :format-tooltip="(val: number) => `${val.toFixed(1)}x`"
+          @change="updateCameraSizes"
+          style="width: 120px;"
+        />
+      </div>
       <el-button size="small" @click="fitToView">
         <el-icon><Aim /></el-icon>
         居中
@@ -59,13 +72,29 @@
 </template>
 
 <script setup lang="ts">
+/**
+ * ThreeViewer Component
+ * 
+ * This component renders 3D cameras and point clouds from COLMAP/GLOMAP reconstruction results.
+ * 
+ * Key features:
+ * - Outlier camera filtering using IQR method to handle GPS-based global coordinates
+ * - Dynamic camera size calculation based on valid camera distribution
+ * - User-adjustable camera size multiplier (0.1x - 5.0x)
+ * - Yellow camera frustums with adjustable thickness
+ * - Robust error handling and canvas sizing for tab visibility changes
+ * 
+ * Note: Currently only loads camera data to reduce memory usage. Point cloud rendering
+ * is reserved for future use (loadPoints function is intentionally unused).
+ */
 import { ref, onMounted, onUnmounted, watch, reactive, nextTick } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Aim, Refresh, Loading, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import axios from 'axios'
 import { resultApi, partitionApi, blockApi } from '@/api'
-import type { CameraInfo, Point3D, Block } from '@/types'
+import type { CameraInfo, Point3D } from '@/types'
 import PartitionSelector from './PartitionSelector.vue'
 
 const props = defineProps<{
@@ -77,6 +106,8 @@ const loading = ref(false)
 const downloadingPly = ref(false)
 const showCameras = ref(true)
 const showPoints = ref(true)
+const cameraSizeMultiplier = ref(1.0) // 用户可调节的相机大小倍数
+let baseCameraScale = 0.2 // 基础相机尺寸（会根据场景自动计算）
 
 // Partition mode state
 const viewMode = ref<'partition' | 'merged'>('merged')
@@ -103,6 +134,7 @@ let lastContainerHeight = 0
 let initialized = false
 let ensureSizeRaf: number | null = null
 let ensureSizeFrames = 0
+const initError = ref<string | null>(null)
 
 onMounted(async () => {
   // ElementPlus tabs may mount while hidden -> container size can be 0.
@@ -155,7 +187,7 @@ function handleModeChange() {
   loadData()
 }
 
-function handlePartitionChange(partitionIndex: number | null) {
+function handlePartitionChange(_partitionIndex: number | null) {
   if (viewMode.value === 'partition') {
     loadData()
   }
@@ -184,7 +216,6 @@ document.addEventListener('visibilitychange', onVisibilityChange)
 
 function initThree() {
   if (!containerRef.value) return
-
   const container = containerRef.value
   const rect = container.getBoundingClientRect()
   const width = Math.max(1, Math.floor(rect.width))
@@ -199,14 +230,22 @@ function initThree() {
   camera.position.set(10, 10, 10)
   camera.up.set(0, 1, 0) // Ensure Y is up
 
-  // Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true })
-  renderer.setSize(width, height)
-  renderer.setPixelRatio(window.devicePixelRatio)
-  renderer.domElement.style.display = 'block'
-  renderer.domElement.style.width = '100%'
-  renderer.domElement.style.height = '100%'
-  container.appendChild(renderer.domElement)
+  // Renderer (guard WebGL context creation failures)
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setSize(width, height)
+    renderer.setPixelRatio(window.devicePixelRatio)
+    renderer.domElement.style.display = 'block'
+    renderer.domElement.style.width = '100%'
+    renderer.domElement.style.height = '100%'
+    container.appendChild(renderer.domElement)
+  } catch (err: any) {
+    console.error('Failed to create WebGL renderer:', err)
+    initError.value =
+      '浏览器禁用或不支持 WebGL，无法渲染 3D 视图。请开启硬件加速或更换支持 WebGL 的浏览器/运行环境。'
+    ElMessage.error(initError.value)
+    return
+  }
 
   // Controls
   controls = new OrbitControls(camera, renderer.domElement)
@@ -343,42 +382,63 @@ function stopEnsureCanvasSizedLoop() {
 }
 
 async function loadData() {
+  if (!initialized) {
+    // 如果 WebGL 初始化失败，提前终止并给出提示
+    if (initError.value) {
+      ElMessage.error(initError.value)
+    }
+    return
+  }
   loading.value = true
   try {
-    let camerasRes, pointsRes
-    
-    if (isPartitioned.value && viewMode.value === 'partition' && selectedPartitionIndex.value !== null) {
-      // Load partition data
-      const [cameras, points] = await Promise.all([
-        partitionApi.getPartitionCameras(props.blockId, selectedPartitionIndex.value),
-        partitionApi.getPartitionPoints(props.blockId, selectedPartitionIndex.value, 100000),
-      ])
-      
-      camerasRes = { data: cameras.data }
-      pointsRes = { data: { points: points.data.points, total: points.data.total } }
-    } else {
-      // Load merged data (or regular data for non-partitioned blocks)
-      const [cameras, points] = await Promise.all([
-        resultApi.getCameras(props.blockId),
-        resultApi.getPoints(props.blockId, 100000),
-      ])
-      
-      camerasRes = cameras
-      pointsRes = points
+    let camerasData: CameraInfo[] = []
+    let numPointsTotal = 0
+
+    // 只加载相机和统计信息，不再加载点云采样数据。
+    try {
+      if (isPartitioned.value && viewMode.value === 'partition' && selectedPartitionIndex.value !== null) {
+        const [cameras, statsRes] = await Promise.all([
+          partitionApi.getPartitionCameras(props.blockId, selectedPartitionIndex.value),
+          partitionApi.getPartitionStats(props.blockId, selectedPartitionIndex.value),
+        ])
+        camerasData = cameras.data
+        numPointsTotal = (statsRes.data as any).num_points3d ?? 0
+      } else {
+        const [cameras, statsRes] = await Promise.all([
+          resultApi.getCameras(props.blockId),
+          resultApi.getStats(props.blockId),
+        ])
+        camerasData = cameras.data
+        numPointsTotal = (statsRes.data as any).num_points3d ?? 0
+      }
+    } catch (e) {
+      console.error('Failed to load cameras/stats:', e)
+      if (axios.isAxiosError(e)) {
+        const status = e.response?.status
+        const detail = (e.response?.data as any)?.detail
+        const msg =
+          e.code === 'ECONNABORTED'
+            ? '加载相机/统计数据超时，请稍后重试（可检查网络/反向代理限制）'
+            : status
+              ? `加载相机/统计数据失败（HTTP ${status}${detail ? `: ${detail}` : ''}）`
+              : `加载相机/统计数据失败${e.message ? `：${e.message}` : ''}`
+        ElMessage.error(msg)
+      } else {
+        ElMessage.error('加载相机/统计数据失败，请稍后重试')
+      }
+      return
     }
 
-    loadCameras(camerasRes.data)
-    loadPoints(pointsRes.data.points)
+    // 渲染相机；点云组清空（不请求点云）
+    loadCameras(camerasData)
+    pointsGroup.clear()
 
-    stats.numCameras = camerasRes.data.length
-    stats.numPoints = pointsRes.data.total
+    stats.numCameras = camerasData.length
+    stats.numPoints = numPointsTotal
 
     fitToView()
     // 触发一次尺寸校正（防止 tab 切换后 canvas 仍停留在 1x1）
     startEnsureCanvasSizedLoop()
-  } catch (e) {
-    console.error('Failed to load data:', e)
-    ElMessage.error('加载数据失败，请稍后重试')
   } finally {
     loading.value = false
   }
@@ -416,54 +476,145 @@ async function downloadPly() {
 function loadCameras(cameras: CameraInfo[]) {
   camerasGroup.clear()
 
-  // Calculate average distance between cameras to guess scene scale
-  // for appropriately sizing camera frustums
-  let scale = 0.2 // Default fallback
-  if (cameras.length > 1) {
-      const getPos = (cam: CameraInfo) => {
-          const q = new THREE.Quaternion(cam.qx, cam.qy, cam.qz, cam.qw)
-          const rot = new THREE.Matrix4().makeRotationFromQuaternion(q)
-          const pos = new THREE.Vector3(-cam.tx, -cam.ty, -cam.tz)
-          pos.applyMatrix4(rot.transpose())
-          return pos
-      }
-      
-      const p1 = getPos(cameras[0])
-      // Find the closest neighbor to camera 0 to avoid using a far-away camera
-      let minDist = Infinity
-      
-      // Check first 10 cameras
-      for(let i=1; i < Math.min(cameras.length, 10); i++) {
-          const p2 = getPos(cameras[i])
-          const d = p1.distanceTo(p2)
-          if (d > 0 && d < minDist) minDist = d
-      }
-      
-      if (minDist !== Infinity) {
-          scale = minDist * 0.3 // Camera frustum size approx 1/3 of inter-camera distance
-      }
-      // Clamp scale to reasonable bounds [0.01, 5.0]
-      scale = Math.max(0.01, Math.min(scale, 5.0))
+  if (cameras.length === 0) return
+
+  // Pre-compute all camera positions
+  const positions: THREE.Vector3[] = []
+  const getPos = (cam: CameraInfo) => {
+    const q = new THREE.Quaternion(cam.qx, cam.qy, cam.qz, cam.qw)
+    const rot = new THREE.Matrix4().makeRotationFromQuaternion(q)
+    const pos = new THREE.Vector3(-cam.tx, -cam.ty, -cam.tz)
+    pos.applyMatrix4(rot.transpose())
+    return pos
   }
 
   cameras.forEach((cam) => {
-    const frustum = createCameraFrustum(scale)
-    
-    // Apply rotation from quaternion
+    const p = getPos(cam)
+    positions.push(p)
+  })
+
+  // Filter out outlier cameras using IQR (Interquartile Range) method
+  // Compute distances from center for each axis
+  const center = new THREE.Vector3()
+  positions.forEach(p => center.add(p))
+  center.divideScalar(positions.length)
+
+  const distances: number[] = []
+  positions.forEach(p => {
+    distances.push(p.distanceTo(center))
+  })
+
+  // Sort distances to compute quartiles
+  distances.sort((a, b) => a - b)
+  const q1Idx = Math.floor(distances.length * 0.25)
+  const q3Idx = Math.floor(distances.length * 0.75)
+  const q1 = distances[q1Idx]
+  const q3 = distances[q3Idx]
+  const iqr = q3 - q1
+  const lowerBound = q1 - 1.5 * iqr
+  const upperBound = q3 + 1.5 * iqr
+
+  // Filter valid cameras (within IQR bounds)
+  const validCameras: CameraInfo[] = []
+  const validPositions: THREE.Vector3[] = []
+  cameras.forEach((cam, idx) => {
+    const dist = distances[idx]
+    if (dist >= lowerBound && dist <= upperBound) {
+      validCameras.push(cam)
+      validPositions.push(positions[idx])
+    }
+  })
+
+  if (validCameras.length === 0) {
+    // Fallback: use all cameras if filtering removes everything
+    validCameras.push(...cameras)
+    validPositions.push(...positions)
+  }
+
+  // Compute extent from valid cameras only
+  let minX = Infinity, minY = Infinity, minZ = Infinity
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
+  validPositions.forEach(p => {
+    if (p.x < minX) minX = p.x
+    if (p.y < minY) minY = p.y
+    if (p.z < minZ) minZ = p.z
+    if (p.x > maxX) maxX = p.x
+    if (p.y > maxY) maxY = p.y
+    if (p.z > maxZ) maxZ = p.z
+  })
+
+  // Calculate scale based on valid cameras only
+  let scale = 0.2 // Default fallback
+  if (validPositions.length > 1) {
+    // 1) Based on nearest neighbor distance (use smaller coefficient to avoid clustering)
+    const p1 = validPositions[0]
+    let minDist = Infinity
+    // Check more neighbors for better estimation
+    for (let i = 1; i < Math.min(validPositions.length, 50); i++) {
+      const d = p1.distanceTo(validPositions[i])
+      if (d > 0 && d < minDist) minDist = d
+    }
+    if (minDist !== Infinity) {
+      scale = minDist * 0.15 // Reduced from 0.3 to 0.15 to make cameras smaller
+    }
+
+    // 2) Based on extent of valid cameras (use even smaller percentage)
+    const extentX = maxX - minX
+    const extentY = maxY - minY
+    const extentZ = maxZ - minZ
+    const maxExtent = Math.max(extentX, extentY, extentZ)
+    if (Number.isFinite(maxExtent) && maxExtent > 0) {
+      const extentBased = maxExtent * 0.001 // 约为有效场景尺寸的 0.1%（进一步减小）
+      // Use the smaller of the two scales to avoid clustering
+      if (extentBased < scale) {
+        scale = extentBased
+      }
+    }
+  }
+
+  // Store base scale for user multiplier
+  baseCameraScale = Math.max(0.01, scale)
+
+  // Only render valid cameras (filter out outliers)
+  // Note: validCameras and validPositions are already aligned by index from the filtering loop above
+  validCameras.forEach((cam, validIdx) => {
+    const frustum = createCameraFrustum(baseCameraScale)
+
+    // Apply rotation from quaternion (COLMAP format: qw, qx, qy, qz)
     const quaternion = new THREE.Quaternion(cam.qx, cam.qy, cam.qz, cam.qw)
     frustum.quaternion.copy(quaternion)
-    
-    // Calculate camera position: C = -R^T * t
-    const rotation = new THREE.Matrix4().makeRotationFromQuaternion(quaternion)
-    const position = new THREE.Vector3(-cam.tx, -cam.ty, -cam.tz)
-    position.applyMatrix4(rotation.transpose())
-    frustum.position.copy(position)
 
-    frustum.userData = { camera: cam }
+    // Use precomputed position from validPositions (already aligned with validCameras)
+    frustum.position.copy(validPositions[validIdx])
+
+    // Apply initial user multiplier via scale
+    frustum.scale.set(cameraSizeMultiplier.value, cameraSizeMultiplier.value, cameraSizeMultiplier.value)
+
+    frustum.userData = { camera: cam, isOutlier: false }
     camerasGroup.add(frustum)
+  })
+
+  // Log filtering info for debugging
+  if (cameras.length !== validCameras.length) {
+    console.log(`Filtered ${cameras.length - validCameras.length} outlier cameras out of ${cameras.length} total`)
+  }
+}
+
+function updateCameraSizes() {
+  if (!camerasGroup || camerasGroup.children.length === 0) return
+  
+  // Simply scale all existing frustums using the multiplier
+  const scaleFactor = cameraSizeMultiplier.value
+  camerasGroup.children.forEach((child) => {
+    if (child instanceof THREE.Group) {
+      child.scale.set(scaleFactor, scaleFactor, scaleFactor)
+    }
   })
 }
 
+// Reserved function for future point cloud rendering
+// Currently not used as we only load camera data to reduce memory usage
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function loadPoints(points: Point3D[]) {
   pointsGroup.clear()
 
@@ -525,7 +676,13 @@ function createCameraFrustum(scale: number = 0.3): THREE.Object3D {
   
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   
-  const material = new THREE.LineBasicMaterial({ color: 0xff3333, opacity: 0.5, transparent: true })
+  // 黄色加粗线条
+  const material = new THREE.LineBasicMaterial({ 
+    color: 0xffff00, // 黄色
+    linewidth: 3, // 加粗（注意：linewidth 在某些渲染器可能不支持，但 Three.js 会尽量应用）
+    opacity: 0.8, 
+    transparent: true 
+  })
   const lines = new THREE.LineSegments(geometry, material)
   group.add(lines)
   
@@ -633,6 +790,19 @@ function formatNumber(num: number): string {
 
 .partition-selector-inline {
   margin-left: 8px;
+}
+
+.camera-size-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.control-label {
+  font-size: 12px;
+  color: #606266;
+  white-space: nowrap;
 }
 
 .viewer-container {

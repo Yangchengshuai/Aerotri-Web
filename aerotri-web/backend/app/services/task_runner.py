@@ -19,16 +19,24 @@ from .workspace_service import WorkspaceService
 # COLMAP/GLOMAP executable paths
 COLMAP_PATH = os.environ.get(
     "COLMAP_PATH", 
-    "/root/work/colmap/build_cuda/src/colmap/exe/colmap"
+    # "/root/work/colmap/build_cuda/src/colmap/exe/colmap"
+    "/usr/local/bin/colmap"
+    # "/root/work/colmap3.11/colmap/build/src/colmap/exe/colmap" # 新编译 3.11 版本
 )
 GLOMAP_PATH = os.environ.get(
     "GLOMAP_PATH",
-    "/root/work/colmap/build_cuda/src/glomap/glomap"
+    # "/root/work/colmap/build_cuda/src/glomap/glomap"
+    "/usr/local/bin/glomap"
+    # "/root/work/glomap/build/glomap/glomap" # 新编译 glomap 版本
 )
 INSTANTSFM_PATH = os.environ.get(
     "INSTANTSFM_PATH",
     "ins-sfm"  # Use conda environment's ins-sfm command
 )
+
+# Library paths for runtime dependencies
+# Note: CERES_LIB_PATH contains all required libraries including absl
+CERES_LIB_PATH = "/root/opt/ceres-2.3-cuda/lib"
 
 
 class TaskContext:
@@ -513,13 +521,34 @@ class TaskRunner:
             "--image_path", image_path,
             "--ImageReader.single_camera", str(params.get("single_camera", 0)),
             "--ImageReader.camera_model", params.get("camera_model", "SIMPLE_RADIAL"),
-            "--FeatureExtraction.use_gpu", str(params.get("use_gpu", 1)),
-            "--FeatureExtraction.gpu_index", str(gpu_index),
+            "--SiftExtraction.use_gpu", str(params.get("use_gpu", 1)),
+            "--SiftExtraction.gpu_index", str(gpu_index),
             "--SiftExtraction.max_image_size", str(params.get("max_image_size", 2640)),
             "--SiftExtraction.max_num_features", str(params.get("max_num_features", 12000)),
         ]
         
-        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        try:
+            await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        except RuntimeError as e:
+            # Check if feature extraction actually completed despite SIGSEGV on exit
+            if "exited with code" in str(e) and os.path.exists(database_path):
+                import sqlite3
+                try:
+                    conn = sqlite3.connect(database_path)
+                    cursor = conn.execute("SELECT COUNT(*) FROM images")
+                    image_count = cursor.fetchone()[0]
+                    cursor = conn.execute("SELECT COUNT(*) FROM keypoints")
+                    keypoint_count = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    if image_count > 0 and keypoint_count > 0:
+                        ctx.write_log_line(f"Feature extraction completed despite exit error. Found {image_count} images, {keypoint_count} keypoints.")
+                        # Continue execution - output is valid
+                        return
+                except Exception:
+                    pass
+            # Re-raise if output validation failed
+            raise
     
     async def _run_matching(
         self,
@@ -539,25 +568,70 @@ class TaskRunner:
                 COLMAP_PATH, "sequential_matcher",
                 "--database_path", database_path,
                 "--SequentialMatching.overlap", str(params.get("overlap", 10)),
-                "--FeatureMatching.use_gpu", str(params.get("use_gpu", 1)),
-                "--FeatureMatching.gpu_index", str(gpu_index),
+                "--SiftMatching.use_gpu", str(params.get("use_gpu", 1)),
+                "--SiftMatching.gpu_index", str(gpu_index),
             ]
         elif method == "exhaustive":
             cmd = [
                 COLMAP_PATH, "exhaustive_matcher",
                 "--database_path", database_path,
-                "--FeatureMatching.use_gpu", str(params.get("use_gpu", 1)),
-                "--FeatureMatching.gpu_index", str(gpu_index),
+                "--SiftMatching.use_gpu", str(params.get("use_gpu", 1)),
+                "--SiftMatching.gpu_index", str(gpu_index),
             ]
-        else:  # vocab_tree
+        elif method == "spatial":
+            # Spatial matching based on image GPS/pose priors
+            spatial_max_num_neighbors = params.get("spatial_max_num_neighbors", 50)
+            spatial_is_gps = params.get("spatial_is_gps", True)
+            spatial_ignore_z = params.get("spatial_ignore_z", False)
+            cmd = [
+                COLMAP_PATH, "spatial_matcher",
+                "--database_path", database_path,
+                "--SpatialMatching.max_num_neighbors", str(spatial_max_num_neighbors),
+                "--SpatialMatching.is_gps", "1" if spatial_is_gps else "0",
+                "--SpatialMatching.ignore_z", "1" if spatial_ignore_z else "0",
+                "--SiftMatching.use_gpu", str(params.get("use_gpu", 1)),
+                "--SiftMatching.gpu_index", str(gpu_index),
+            ]
+        elif method == "vocab_tree":
+            # Vocabulary tree matching requires a vocab tree file
+            vocab_tree_path = params.get("vocab_tree_path") or os.environ.get(
+                "COLMAP_VOCAB_TREE_PATH", ""
+            )
+            if not vocab_tree_path:
+                raise RuntimeError(
+                    "vocab_tree matching requires 'vocab_tree_path' in matching_params "
+                    "or environment variable COLMAP_VOCAB_TREE_PATH"
+                )
             cmd = [
                 COLMAP_PATH, "vocab_tree_matcher",
                 "--database_path", database_path,
-                "--FeatureMatching.use_gpu", str(params.get("use_gpu", 1)),
-                "--FeatureMatching.gpu_index", str(gpu_index),
+                "--VocabTreeMatching.vocab_tree_path", vocab_tree_path,
+                "--SiftMatching.use_gpu", str(params.get("use_gpu", 1)),
+                "--SiftMatching.gpu_index", str(gpu_index),
             ]
+        else:
+            raise RuntimeError(f"Unknown matching method: {method}")
         
-        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        try:
+            await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        except RuntimeError as e:
+            # Check if matching actually completed despite SIGSEGV on exit
+            if "exited with code" in str(e) and os.path.exists(database_path):
+                import sqlite3
+                try:
+                    conn = sqlite3.connect(database_path)
+                    cursor = conn.execute("SELECT COUNT(*) FROM matches")
+                    match_count = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    if match_count > 0:
+                        ctx.write_log_line(f"Matching completed despite exit error. Found {match_count} matches.")
+                        # Continue execution - output is valid
+                        return
+                except Exception:
+                    pass
+            # Re-raise if output validation failed
+            raise
     
     async def _run_colmap_mapper(
         self,
@@ -612,7 +686,6 @@ class TaskRunner:
                 return 1 if v else 0
             return 1 if int(v) != 0 else 0
 
-        use_pose_prior = _b(params.get("use_pose_prior", 0), 0)
         cmd = [
             GLOMAP_PATH, "mapper",
             "--database_path", database_path,
@@ -621,13 +694,8 @@ class TaskRunner:
             "--output_format", "bin",
             "--GlobalPositioning.use_gpu", str(_b(params.get("global_positioning_use_gpu", 1), 1)),
             "--GlobalPositioning.gpu_index", str(gpu_index),
-            "--GlobalPositioning.min_num_images_gpu_solver", 
-                str(params.get("global_positioning_min_num_images_gpu_solver", 50)),
             "--BundleAdjustment.use_gpu", str(_b(params.get("bundle_adjustment_use_gpu", 1), 1)),
             "--BundleAdjustment.gpu_index", str(gpu_index),
-            "--BundleAdjustment.min_num_images_gpu_solver",
-                str(params.get("bundle_adjustment_min_num_images_gpu_solver", 50)),
-            "--PosePrior.use_prior_position", str(use_pose_prior),
         ]
         
         await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
@@ -650,6 +718,22 @@ class TaskRunner:
         import sqlite3
         
         ctx.write_log_line(f"Creating partition database with {len(partition_image_names)} images...")
+        
+        # Helper function to batch process IDs to avoid SQLite's "too many SQL variables" limit
+        # SQLite default limit is 999, we use 900 to be safe
+        MAX_SQL_VARIABLES = 900
+        
+        def batch_process_ids(id_list, process_func):
+            """Process a list of IDs in batches to avoid SQL variable limit.
+            
+            Args:
+                id_list: List of IDs to process
+                process_func: Function that takes a batch of IDs and processes them
+            """
+            id_list = list(id_list)
+            for i in range(0, len(id_list), MAX_SQL_VARIABLES):
+                batch = id_list[i:i + MAX_SQL_VARIABLES]
+                process_func(batch)
         
         # Create a set for fast lookup
         partition_image_set = set(partition_image_names)
@@ -690,8 +774,15 @@ class TaskRunner:
         # Get image IDs for partition images
         partition_image_ids = set()
         image_id_to_name = {}
+        
+        # Convert partition image names to basenames for matching
+        # Database may store full/relative paths, but partition names are just filenames
+        partition_image_basenames = {os.path.basename(name) for name in partition_image_set}
+        
         for row in global_conn.execute("SELECT image_id, name FROM images"):
-            if row['name'] in partition_image_set:
+            # Extract basename from database path (may contain relative path)
+            db_basename = os.path.basename(row['name'])
+            if db_basename in partition_image_basenames:
                 partition_image_ids.add(row['image_id'])
                 image_id_to_name[row['image_id']] = row['name']
         
@@ -700,11 +791,14 @@ class TaskRunner:
         if not partition_image_ids:
             raise RuntimeError("No matching images found in global database")
         
-        # Copy only cameras used by partition images
+        # Copy only cameras used by partition images (batch process to avoid SQL variable limit)
         used_camera_ids = set()
-        placeholders = ','.join('?' * len(partition_image_ids))
-        for row in global_conn.execute(f"SELECT DISTINCT camera_id FROM images WHERE image_id IN ({placeholders})", list(partition_image_ids)):
-            used_camera_ids.add(row['camera_id'])
+        def process_camera_batch(batch):
+            placeholders = ','.join('?' * len(batch))
+            for row in global_conn.execute(f"SELECT DISTINCT camera_id FROM images WHERE image_id IN ({placeholders})", batch):
+                used_camera_ids.add(row['camera_id'])
+        
+        batch_process_ids(partition_image_ids, process_camera_batch)
         
         if used_camera_ids:
             # Check which columns exist in cameras table
@@ -724,14 +818,18 @@ class TaskRunner:
                     select_camera_columns.append(col)
                     insert_camera_columns.append(col)
             
-            camera_placeholders = ','.join('?' * len(used_camera_ids))
-            select_camera_sql = f"SELECT {', '.join(select_camera_columns)} FROM cameras WHERE camera_id IN ({camera_placeholders})"
             insert_camera_placeholders = ', '.join(['?'] * len(insert_camera_columns))
             insert_camera_sql = f"INSERT INTO cameras ({', '.join(insert_camera_columns)}) VALUES ({insert_camera_placeholders})"
             
-            for row in global_conn.execute(select_camera_sql, list(used_camera_ids)):
-                values = [row[col] for col in insert_camera_columns]
-                partition_conn.execute(insert_camera_sql, values)
+            # Copy cameras (batch process to avoid SQL variable limit, though usually not needed for cameras)
+            def process_camera_insert_batch(batch):
+                camera_placeholders = ','.join('?' * len(batch))
+                select_camera_sql = f"SELECT {', '.join(select_camera_columns)} FROM cameras WHERE camera_id IN ({camera_placeholders})"
+                for row in global_conn.execute(select_camera_sql, batch):
+                    values = [row[col] for col in insert_camera_columns]
+                    partition_conn.execute(insert_camera_sql, values)
+            
+            batch_process_ids(used_camera_ids, process_camera_insert_batch)
         
         # Check which columns exist in images table
         images_columns = []
@@ -751,28 +849,40 @@ class TaskRunner:
                 select_image_columns.append(col)
                 insert_image_columns.append(col)
         
-        select_image_sql = f"SELECT {', '.join(select_image_columns)} FROM images WHERE image_id IN ({placeholders})"
         insert_image_placeholders = ', '.join(['?'] * len(insert_image_columns))
         insert_image_sql = f"INSERT INTO images ({', '.join(insert_image_columns)}) VALUES ({insert_image_placeholders})"
         
-        # Copy only partition images
-        for row in global_conn.execute(select_image_sql, list(partition_image_ids)):
-            values = [row[col] for col in insert_image_columns]
-            partition_conn.execute(insert_image_sql, values)
+        # Copy only partition images (batch process to avoid SQL variable limit)
+        def process_image_batch(batch):
+            placeholders = ','.join('?' * len(batch))
+            select_image_sql = f"SELECT {', '.join(select_image_columns)} FROM images WHERE image_id IN ({placeholders})"
+            for row in global_conn.execute(select_image_sql, batch):
+                values = [row[col] for col in insert_image_columns]
+                partition_conn.execute(insert_image_sql, values)
         
-        # Copy keypoints for partition images
-        for row in global_conn.execute(f"SELECT image_id, rows, cols, data FROM keypoints WHERE image_id IN ({placeholders})", list(partition_image_ids)):
-            partition_conn.execute(
-                "INSERT INTO keypoints (image_id, rows, cols, data) VALUES (?, ?, ?, ?)",
-                (row['image_id'], row['rows'], row['cols'], row['data'])
-            )
+        batch_process_ids(partition_image_ids, process_image_batch)
         
-        # Copy descriptors for partition images
-        for row in global_conn.execute(f"SELECT image_id, rows, cols, data FROM descriptors WHERE image_id IN ({placeholders})", list(partition_image_ids)):
-            partition_conn.execute(
-                "INSERT INTO descriptors (image_id, rows, cols, data) VALUES (?, ?, ?, ?)",
-                (row['image_id'], row['rows'], row['cols'], row['data'])
-            )
+        # Copy keypoints for partition images (batch process to avoid SQL variable limit)
+        def process_keypoints_batch(batch):
+            placeholders = ','.join('?' * len(batch))
+            for row in global_conn.execute(f"SELECT image_id, rows, cols, data FROM keypoints WHERE image_id IN ({placeholders})", batch):
+                partition_conn.execute(
+                    "INSERT INTO keypoints (image_id, rows, cols, data) VALUES (?, ?, ?, ?)",
+                    (row['image_id'], row['rows'], row['cols'], row['data'])
+                )
+        
+        batch_process_ids(partition_image_ids, process_keypoints_batch)
+        
+        # Copy descriptors for partition images (batch process to avoid SQL variable limit)
+        def process_descriptors_batch(batch):
+            placeholders = ','.join('?' * len(batch))
+            for row in global_conn.execute(f"SELECT image_id, rows, cols, data FROM descriptors WHERE image_id IN ({placeholders})", batch):
+                partition_conn.execute(
+                    "INSERT INTO descriptors (image_id, rows, cols, data) VALUES (?, ?, ?, ?)",
+                    (row['image_id'], row['rows'], row['cols'], row['data'])
+                )
+        
+        batch_process_ids(partition_image_ids, process_descriptors_batch)
         
         # Get all pair_ids that involve partition images
         # COLMAP pair_id = image_id1 * 2147483647 + image_id2
@@ -783,20 +893,27 @@ class TaskRunner:
                     pair_id = image_id1 * 2147483647 + image_id2
                     valid_pair_ids.add(pair_id)
         
-        # Copy matches only for partition image pairs
+        # Copy matches only for partition image pairs (batch process to avoid SQL variable limit)
         if valid_pair_ids:
-            pair_placeholders = ','.join('?' * len(valid_pair_ids))
-            for row in global_conn.execute(f"SELECT pair_id, rows, cols, data FROM matches WHERE pair_id IN ({pair_placeholders})", list(valid_pair_ids)):
-                partition_conn.execute(
-                    "INSERT INTO matches (pair_id, rows, cols, data) VALUES (?, ?, ?, ?)",
-                    (row['pair_id'], row['rows'], row['cols'], row['data'])
-                )
+            def process_matches_batch(batch):
+                pair_placeholders = ','.join('?' * len(batch))
+                for row in global_conn.execute(f"SELECT pair_id, rows, cols, data FROM matches WHERE pair_id IN ({pair_placeholders})", batch):
+                    partition_conn.execute(
+                        "INSERT INTO matches (pair_id, rows, cols, data) VALUES (?, ?, ?, ?)",
+                        (row['pair_id'], row['rows'], row['cols'], row['data'])
+                    )
             
-            for row in global_conn.execute(f"SELECT pair_id, rows, cols, data, config, F, E, H FROM two_view_geometries WHERE pair_id IN ({pair_placeholders})", list(valid_pair_ids)):
-                partition_conn.execute(
-                    "INSERT INTO two_view_geometries (pair_id, rows, cols, data, config, F, E, H) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (row['pair_id'], row['rows'], row['cols'], row['data'], row['config'], row['F'], row['E'], row['H'])
-                )
+            batch_process_ids(valid_pair_ids, process_matches_batch)
+            
+            def process_two_view_geometries_batch(batch):
+                pair_placeholders = ','.join('?' * len(batch))
+                for row in global_conn.execute(f"SELECT pair_id, rows, cols, data, config, F, E, H FROM two_view_geometries WHERE pair_id IN ({pair_placeholders})", batch):
+                    partition_conn.execute(
+                        "INSERT INTO two_view_geometries (pair_id, rows, cols, data, config, F, E, H) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (row['pair_id'], row['rows'], row['cols'], row['data'], row['config'], row['F'], row['E'], row['H'])
+                    )
+            
+            batch_process_ids(valid_pair_ids, process_two_view_geometries_batch)
         
         # Copy feature_name if exists
         try:
@@ -920,7 +1037,7 @@ class TaskRunner:
         base_cmd_parts = [
             "source /root/miniconda3/etc/profile.d/conda.sh",
             "conda activate instantsfm",
-            f"export LD_LIBRARY_PATH=/opt/ceres-2.3.0-cuda-cudss/lib:$LD_LIBRARY_PATH",
+            f"export LD_LIBRARY_PATH={CERES_LIB_PATH}:$LD_LIBRARY_PATH",
             f"export CUDA_VISIBLE_DEVICES={effective_gpu_index}",
             f"{INSTANTSFM_PATH} --data_path {data_path} --manual_config_name {manual_config}"
         ]
@@ -948,6 +1065,13 @@ class TaskRunner:
             cmd: Command and arguments
             ctx: Task context
         """
+        # Prepare environment variables with library paths
+        env = os.environ.copy()
+        # Add Ceres library path (contains all required libraries including absl)
+        current_ld_path = env.get("LD_LIBRARY_PATH", "")
+        if CERES_LIB_PATH not in current_ld_path:
+            env["LD_LIBRARY_PATH"] = f"{CERES_LIB_PATH}:{current_ld_path}" if current_ld_path else CERES_LIB_PATH
+        
         # Increase limit to handle long progress lines (GLOMAP/COLMAP uses \r for progress)
         # Default limit is 64KB, we set it to 10MB to handle very long progress outputs
         process = await asyncio.create_subprocess_exec(
@@ -955,6 +1079,7 @@ class TaskRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             limit=10 * 1024 * 1024,  # 10MB buffer limit
+            env=env,  # Pass environment with library paths
         )
         ctx.process = process
 
@@ -1011,8 +1136,41 @@ class TaskRunner:
                     })
         
         await process.wait()
-        
+
+        # 处理非 0 退出码。
+        # 注意：COLMAP / GLOMAP 在处理完成后，退出阶段存在已知的 SIGSEGV 问题（returncode 为负数，通常是 -11）。
+        # 如果确认输出结果是有效的（例如 mapper 阶段已经生成 sparse 结果），则将其视为成功而不是失败，
+        # 避免前端把已完成的任务标记为“失败”。
         if process.returncode != 0 and not ctx.cancelled:
+            # 先针对由信号导致的异常退出进行处理（returncode < 0）
+            if process.returncode < 0:
+                # Signal received (e.g., SIGSEGV = -11)
+                ctx.write_log_line(f"Warning: Process terminated with signal {abs(process.returncode)}")
+
+                # 对 GLOMAP / COLMAP mapper 阶段做特殊处理：
+                # 如果已经成功导出了 sparse 结果（空三完成），则视为成功。
+                if coarse_stage == "mapping":
+                    try:
+                        async with AsyncSessionLocal() as s:
+                            result = await s.execute(select(Block).where(Block.id == block_id))
+                            block = result.scalar_one_or_none()
+
+                        if block and block.output_path:
+                            sparse_path = os.path.join(block.output_path, "sparse")
+                            # 只要 sparse 目录存在且非空，就认为空三结果已写出
+                            if os.path.isdir(sparse_path) and any(os.scandir(sparse_path)):
+                                ctx.write_log_line(
+                                    "Detected valid sparse output after signal termination; "
+                                    "treating mapper stage as SUCCESS despite non-zero exit code."
+                                )
+                                return
+                    except Exception as e:
+                        # 验证逻辑失败时不要中断主流程，只记录告警并继续按错误处理
+                        ctx.write_log_line(
+                            f"Warning: Failed to validate sparse output after signal termination: {e}"
+                        )
+
+            # 走到这里说明需要把任务视为失败
             raise RuntimeError(f"Process exited with code {process.returncode}")
 
     @staticmethod

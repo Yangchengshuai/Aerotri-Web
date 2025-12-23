@@ -1,0 +1,47 @@
+--- a/glomap/controllers/track_retriangulation.cc
++++ b/glomap/controllers/track_retriangulation.cc
+@@ -9,6 +9,7 @@
+ #include <colmap/scene/database_cache.h>
+ 
+ #include <set>
++#include <stdexcept>
+ 
+ namespace glomap {
+ 
+@@ -17,8 +18,25 @@ bool RetriangulateTracks(const TriangulatorOptions& options,
+                          std::unordered_map<camera_t, Image>& images,
+                          std::unordered_map<track_t, Track>& tracks) {
+   // Following code adapted from COLMAP
+-  auto database_cache =
+-      colmap::DatabaseCache::Create(database,
++  std::shared_ptr<colmap::DatabaseCache> database_cache;
++  
++  try {
++    std::cout << "Creating database cache..." << std::endl;
++    database_cache = colmap::DatabaseCache::Create(database,
+                                     options.min_num_matches,
+                                     false,  // ignore_watermarks
+                                     {}      // reconstruct all possible images
+       );
++    std::cout << "Database cache created successfully." << std::endl;
++  } catch (const std::exception& e) {
++    std::cerr << "ERROR: Failed to create database cache: " << e.what() << std::endl;
++    std::cerr << "This may be due to corrupted pose priors in the database." << std::endl;
++    std::cerr << "Suggestion: Try cleaning the database or skipping retriangulation." << std::endl;
++    return false;
++  } catch (...) {
++    std::cerr << "ERROR: Unknown exception occurred while creating database cache." << std::endl;
++    std::cerr << "This may be due to corrupted pose priors in the database." << std::endl;
++    std::cerr << "Suggestion: Try cleaning the database or skipping retriangulation." << std::endl;
++    return false;
++  }
++  
++  if (!database_cache) {
++    std::cerr << "ERROR: Database cache is null after creation." << std::endl;
++    return false;
++  }
+ 
+   // Check whether the image is in the database cache. If not, set the image
+   // as not registered to avoid memory error.
+
+

@@ -42,8 +42,24 @@ colmap/.git.bak-colmap_glomap_upload/
 
 # Other local folders under /root/work that are not part of deliverables
 .claude/
-glomap/
 hloc-glomap/
+
+# Ceres-solver / COLMAP 3.11 / GLOMAP local build artifacts (keep source, ignore builds)
+ceres-solver/build*/
+ceres-solver/**/CMakeFiles/
+ceres-solver/**/CMakeCache.txt
+ceres-solver/**/Makefile
+ceres-solver/**/cmake_install.cmake
+colmap3.11/**/build*/
+colmap3.11/**/CMakeFiles/
+colmap3.11/**/CMakeCache.txt
+colmap3.11/**/Makefile
+colmap3.11/**/cmake_install.cmake
+glomap/build*/
+glomap/**/CMakeFiles/
+glomap/**/CMakeCache.txt
+glomap/**/Makefile
+glomap/**/cmake_install.cmake
 
 # OpenMVS build artifacts and dependencies
 openMVS/build/

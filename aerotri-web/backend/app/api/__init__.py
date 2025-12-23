@@ -6,6 +6,7 @@ from .gpu import router as gpu_router
 from .images import router as images_router
 from .partitions import router as partitions_router
 from .reconstruction import router as reconstruction_router
+from .gs import router as gs_router
 from .results import router as results_router
 from .tasks import router as tasks_router
 
@@ -19,3 +20,4 @@ api_router.include_router(gpu_router, prefix="/gpu", tags=["gpu"])
 api_router.include_router(tasks_router, prefix="/blocks", tags=["tasks"])
 api_router.include_router(results_router, prefix="/blocks", tags=["results"])
 api_router.include_router(reconstruction_router, tags=["reconstruction"])
+api_router.include_router(gs_router, tags=["gs"])

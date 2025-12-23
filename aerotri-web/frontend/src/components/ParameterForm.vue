@@ -17,6 +17,7 @@
           <el-option label="序列匹配 (Sequential)" value="sequential" />
           <el-option label="穷举匹配 (Exhaustive)" value="exhaustive" />
           <el-option label="词汇树匹配 (Vocab Tree)" value="vocab_tree" />
+          <el-option label="空间匹配 (Spatial)" value="spatial" />
         </el-select>
       </el-form-item>
 
@@ -84,6 +85,47 @@
         </el-text>
       </el-form-item>
 
+      <!-- Vocab Tree parameters -->
+      <el-form-item
+        label="词汇树路径"
+        v-if="formData.matching_method === 'vocab_tree'"
+      >
+        <el-input
+          v-model="formData.matching_params.vocab_tree_path"
+          placeholder="例如：/path/to/vocab_tree.bin，留空则使用服务器默认配置（如有）"
+          clearable
+        />
+      </el-form-item>
+
+      <!-- Spatial matching parameters -->
+      <template v-if="formData.matching_method === 'spatial'">
+        <el-form-item label="最大邻居数">
+          <el-input-number
+            v-model="formData.matching_params.spatial_max_num_neighbors"
+            :min="1"
+            :max="200"
+            :step="1"
+          />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            每张影像匹配的空间最近邻影像数量
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="坐标类型为 GPS">
+          <el-switch v-model="formData.matching_params.spatial_is_gps" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            勾选表示使用经纬度/GPS 坐标进行空间最近邻搜索
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="忽略高度 (Z)">
+          <el-switch v-model="formData.matching_params.spatial_ignore_z" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            对只有平面精度的航测数据，可忽略高度分量，只按平面距离匹配
+          </el-text>
+        </el-form-item>
+      </template>
+
       <!-- Mapper Parameters -->
       <el-divider content-position="left">Mapper 参数</el-divider>
 
@@ -110,14 +152,6 @@
 
         <el-form-item label="GlobalPositioning GPU">
           <el-switch v-model="formData.mapper_params.global_positioning_use_gpu" />
-        </el-form-item>
-
-        <el-form-item label="GPU Solver 最小图像数">
-          <el-input-number
-            v-model="formData.mapper_params.global_positioning_min_num_images_gpu_solver"
-            :min="1"
-            :max="100"
-          />
         </el-form-item>
 
         <el-form-item label="BundleAdjustment GPU">
@@ -262,16 +296,18 @@ const defaultMatchingParams: MatchingParams = {
   overlap: 10,
   use_gpu: true,
   gpu_index: 0,
+  vocab_tree_path: undefined,
+  spatial_max_num_neighbors: 50,
+  spatial_is_gps: true,
+  spatial_ignore_z: false,
 }
 
 const defaultGlomapParams: GlomapMapperParams = {
   use_pose_prior: false,
   global_positioning_use_gpu: true,
   global_positioning_gpu_index: 0,
-  global_positioning_min_num_images_gpu_solver: 50,
   bundle_adjustment_use_gpu: true,
   bundle_adjustment_gpu_index: 0,
-  bundle_adjustment_min_num_images_gpu_solver: 50,
 }
 
 const defaultColmapParams: ColmapMapperParams = {

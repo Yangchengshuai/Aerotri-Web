@@ -55,6 +55,13 @@ async def init_db():
                 ("recon_output_path", "TEXT"),
                 ("recon_error_message", "TEXT"),
                 ("recon_statistics", "JSON"),
+                # 3D Gaussian Splatting (3DGS) fields
+                ("gs_status", "VARCHAR(32)"),
+                ("gs_progress", "FLOAT"),
+                ("gs_current_stage", "VARCHAR(100)"),
+                ("gs_output_path", "TEXT"),
+                ("gs_error_message", "TEXT"),
+                ("gs_statistics", "JSON"),
                 # Partitioned SfM fields
                 ("partition_enabled", "BOOLEAN"),
                 ("partition_strategy", "VARCHAR(64)"),

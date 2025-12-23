@@ -55,8 +55,8 @@ async def start_reconstruct(
             detail="Reconstruction is already running for this block.",
         )
 
-    # For now we use GPU index 0; this can be extended to reuse SfM GPU config.
-    gpu_index = 0
+    # Default to CUDA device 7 for OpenMVS reconstruction; can be extended to reuse SfM GPU config.
+    gpu_index = 7
 
     await openmvs_runner.start_reconstruction(
         block=block,

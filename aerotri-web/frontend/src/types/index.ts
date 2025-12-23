@@ -1,7 +1,7 @@
 // Block types
 export type BlockStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type AlgorithmType = 'colmap' | 'glomap' | 'instantsfm'
-export type MatchingMethod = 'sequential' | 'exhaustive' | 'vocab_tree'
+export type MatchingMethod = 'sequential' | 'exhaustive' | 'vocab_tree' | 'spatial'
 
 export interface FeatureParams {
   use_gpu: boolean
@@ -14,9 +14,17 @@ export interface FeatureParams {
 
 export interface MatchingParams {
   method: MatchingMethod
+  // Sequential matching
   overlap: number
+  // Common GPU options
   use_gpu: boolean
   gpu_index: number
+  // Vocabulary tree matching
+  vocab_tree_path?: string
+  // Spatial matching parameters
+  spatial_max_num_neighbors?: number
+  spatial_is_gps?: boolean
+  spatial_ignore_z?: boolean
 }
 
 export interface ColmapMapperParams {
@@ -31,10 +39,8 @@ export interface GlomapMapperParams {
   use_pose_prior?: boolean
   global_positioning_use_gpu: boolean
   global_positioning_gpu_index: number
-  global_positioning_min_num_images_gpu_solver: number
   bundle_adjustment_use_gpu: boolean
   bundle_adjustment_gpu_index: number
-  bundle_adjustment_min_num_images_gpu_solver: number
 }
 
 export interface InstantsfmMapperParams {
@@ -73,6 +79,13 @@ export interface Block {
   recon_output_path?: string | null
   recon_error_message?: string | null
   recon_statistics?: Record<string, unknown> | null
+  // 3DGS fields
+  gs_status?: string | null
+  gs_progress?: number | null
+  gs_current_stage?: string | null
+  gs_output_path?: string | null
+  gs_error_message?: string | null
+  gs_statistics?: Record<string, unknown> | null
   // Partition fields
   partition_enabled?: boolean
   current_stage?: string | null
@@ -112,6 +125,24 @@ export interface ReconstructionState {
   progress: number
   currentStage: string | null
   files: ReconFileInfo[]
+}
+
+// 3DGS types
+export interface GSFileInfo {
+  stage: string
+  type: string
+  name: string
+  size_bytes: number
+  mtime: string
+  preview_supported: boolean
+  download_url: string
+}
+
+export interface GSState {
+  status: 'NOT_STARTED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  progress: number
+  currentStage: string | null
+  files: GSFileInfo[]
 }
 
 // Image types
