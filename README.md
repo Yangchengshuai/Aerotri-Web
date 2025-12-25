@@ -39,6 +39,8 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
 - SfM 空三重建
   - 支持 COLMAP（增量式）、GLOMAP（全局式）与 InstantSfM（快速全局式）管线
   - **Pose Prior 支持**: COLMAP/GLOMAP 支持使用 EXIF GPS 位置先验加速重建
+  - **GLOMAP mapper_resume**: 支持基于已有 COLMAP 结果进行 GLOMAP 全局优化，创建优化版本
+  - **版本管理**: 支持查看和管理同一 Block 的不同版本（原始结果 + GLOMAP 优化版本）
   - **分区 SfM 功能**: 支持大规模数据集的分区重建和合并
     - 分区配置：可配置分区大小、重叠区域、SfM 流水线模式
     - 分区管理：查看分区状态、进度和独立结果
@@ -48,10 +50,13 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 支持从后端按需抽样加载点云，以及一键下载完整 `points3D.ply` 点云文件
   - **分区模式支持**: 可在分区视图和合并结果视图之间切换
   - **分区统计**: 支持查看各分区的统计信息和合并后的聚合统计
+  - **版本切换**: 支持在 3D 视图中切换不同版本的结果（原始 + GLOMAP 优化版本）
 - OpenMVS 重建流水线（实验特性）
   - 针对已完成的 SfM 结果，可发起稠密重建 / 网格 / 纹理流水线（OpenMVS）
   - 后端在 Block 上维护独立的重建状态字段（`recon_status`、`recon_progress`、`recon_current_stage` 等）
   - 前端在「重建」页签中展示进度、阶段与输出文件列表，支持下载重建产物
+  - 改进：修复去畸变阶段的异常退出处理，即使程序异常退出但输出文件已生成也视为成功
+  - 改进：自动配置 Ceres 库路径到 LD_LIBRARY_PATH，解决运行时库依赖问题
 - 3DGS（3D Gaussian Splatting）训练与预览
   - 后端封装 3DGS 训练任务（通过 `GS_REPO_PATH` / `GS_PYTHON` 调用外部仓库）
   - Block 维度维护独立的 3DGS 状态字段（`gs_status`、`gs_progress`、`gs_current_stage` 等），支持任务恢复
