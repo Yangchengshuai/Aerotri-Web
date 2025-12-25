@@ -36,6 +36,13 @@
           <el-icon><VideoPlay /></el-icon>
           运行空三
         </el-button>
+          <el-button
+            v-if="canResumeGlomap"
+            type="warning"
+            @click="openResumeDialog"
+          >
+            使用 GLOMAP 继续优化
+          </el-button>
       </div>
     </el-header>
 
@@ -163,6 +170,52 @@
         @cancel="showParamsDialog = false"
       />
     </el-dialog>
+
+    <!-- Resume GLOMAP Dialog -->
+    <el-dialog
+      v-model="showResumeDialog"
+      title="继续优化"
+      width="600px"
+      destroy-on-close
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      >
+        将基于当前空三结果执行一轮 GLOMAP mapper_resume 全局优化
+      </el-alert>
+      
+      <el-form label-width="140px">
+        <el-form-item label="输入 COLMAP 目录">
+          <el-input
+            v-model="resumeInputPath"
+            placeholder="留空将自动使用当前空三结果的输出路径"
+            clearable
+          />
+          <el-text type="info" size="small" style="display: block; margin-top: 4px">
+            包含 cameras.bin/txt, images.bin/txt, points3D.bin/txt 的 COLMAP 稀疏重建目录
+          </el-text>
+        </el-form-item>
+        
+        <el-form-item label="GPU 索引">
+          <el-input-number
+            v-model="selectedGpuIndex"
+            :min="0"
+            :max="15"
+            :step="1"
+          />
+        </el-form-item>
+      </el-form>
+      
+      <template #footer>
+        <el-button @click="showResumeDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleGlomapResume" :loading="false">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -197,6 +250,8 @@ const block = computed(() => blocksStore.currentBlock)
 
 const activeTab = ref('progress')
 const showParamsDialog = ref(false)
+const showResumeDialog = ref(false)
+const resumeInputPath = ref('')
 const selectedGpuIndex = ref(0)
 const imageTotal = ref(0)
 
@@ -239,6 +294,13 @@ const canViewResults = computed(() => {
   }
   // For non-partitioned blocks, require completed status
   return block.value.status === 'completed'
+})
+
+// When GLOMAP is used and a first reconstruction has completed, allow starting mapper_resume
+const canResumeGlomap = computed(() => {
+  if (!block.value) return false
+  if (block.value.status !== 'completed') return false
+  return block.value.algorithm === 'glomap'
 })
 
 // Lifecycle
@@ -305,6 +367,49 @@ async function handleMerge() {
     if (e instanceof Error && e.message !== 'cancel') {
       ElMessage.error(e.message || '合并失败')
     }
+  }
+}
+
+function openResumeDialog() {
+  if (!block.value) return
+  // Set default input path
+  resumeInputPath.value = block.value.output_path 
+    ? `${block.value.output_path}/sparse/0`
+    : ''
+  showResumeDialog.value = true
+}
+
+async function handleGlomapResume() {
+  if (!block.value) return
+  
+  try {
+    // Use user-specified path or default
+    const inputPath = resumeInputPath.value.trim() || null
+    
+    const response = await taskApi.glomapMapperResume(blockId.value, {
+      gpu_index: selectedGpuIndex.value,
+      glomap_params: block.value.mapper_params || {},
+      input_colmap_path: inputPath,
+    })
+    
+    // Show success message with child block info
+    const childBlockId = response.data.block_id
+    const logPath = `/root/work/aerotri-web/data/outputs/${childBlockId}/run.log`
+    
+    ElMessage.success({
+      message: `GLOMAP 优化任务已提交\n子任务 ID: ${childBlockId}\n日志路径: ${logPath}`,
+      duration: 5000,
+      showClose: true,
+    })
+    
+    showResumeDialog.value = false
+    
+    // Navigate to child block page
+    router.push({ name: 'BlockDetail', params: { id: childBlockId } })
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '提交 GLOMAP 优化失败')
+  } finally {
+    await blocksStore.fetchBlock(blockId.value)
   }
 }
 

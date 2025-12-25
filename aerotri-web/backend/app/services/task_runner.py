@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.block import Block, BlockStatus, AlgorithmType, MatchingMethod
+from ..models.block import Block, BlockStatus, AlgorithmType, MatchingMethod, GlomapMode
 from ..models.database import AsyncSessionLocal
 from .log_parser import LogParser
 from .workspace_service import WorkspaceService
@@ -49,6 +49,7 @@ class TaskContext:
         self.log_buffer: deque = deque(maxlen=1000)
         self.log_file_path: Optional[str] = None
         self._log_fp = None
+        self._global_log_fp = None  # Additional log file for partitioned mode
         self.started_at: Optional[datetime] = None
         self.current_stage: Optional[str] = None
         self.progress: float = 0.0
@@ -70,15 +71,21 @@ class TaskContext:
             if self._log_fp:
                 self._log_fp.flush()
                 self._log_fp.close()
+            if self._global_log_fp:
+                self._global_log_fp.flush()
+                self._global_log_fp.close()
         except Exception:
             pass
         finally:
             self._log_fp = None
+            self._global_log_fp = None
 
     def write_log_line(self, line: str):
         try:
             if self._log_fp:
                 self._log_fp.write(line + "\n")
+            if self._global_log_fp:
+                self._global_log_fp.write(line + "\n")
         except Exception:
             pass
 
@@ -273,6 +280,11 @@ class TaskRunner:
                     if not block:
                         raise RuntimeError(f"Block not found: {block_id}")
 
+                    # Special pipeline: GLOMAP mapper_resume only (no feature/matching stages)
+                    if getattr(block, "glomap_mode", None) == GlomapMode.MAPPER_RESUME:
+                        await self._run_glomap_resume_pipeline(block, gpu_index, ctx, db)
+                        return
+
                     database_path = os.path.join(block.output_path or "", "database.db")
                     sparse_path = os.path.join(block.output_path or "", "sparse")
                     os.makedirs(sparse_path, exist_ok=True)
@@ -449,20 +461,23 @@ class TaskRunner:
             log_file_path: Optional log file path (defaults to run_global.log)
         """
         if log_file_path:
-            # Switch log file for global stage
-            ctx.close_log_file()
-            ctx.open_log_file(os.path.dirname(log_file_path))
-            ctx.log_file_path = log_file_path
-            # Reopen with correct path
+            # For partitioned mode, we want to write to both the main log and the global log
+            # Keep the main log file open for frontend compatibility
+            # Also write to global log for detailed tracking
             try:
                 os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
-                ctx._log_fp = open(log_file_path, "a", buffering=1, encoding="utf-8", errors="replace")
+                # Open global log file in addition to main log
+                # The main log file (_log_fp) remains open, we'll write to both
+                ctx._global_log_fp = open(log_file_path, "a", buffering=1, encoding="utf-8", errors="replace")
             except Exception:
-                ctx._log_fp = None
+                ctx._global_log_fp = None
+        else:
+            ctx._global_log_fp = None
         
         # Stage 1: Feature extraction
-        ctx.current_stage = "global_feature"
-        block.current_stage = "global_feature"
+        # Use frontend-recognizable stage names: "feature_extraction" instead of "global_feature"
+        ctx.current_stage = "feature_extraction"
+        block.current_stage = "feature_extraction"
         block.current_detail = None
         block.progress = 0.0
         await db.commit()
@@ -475,14 +490,15 @@ class TaskRunner:
             ctx,
             db,
             block.id,
-            coarse_stage="global_feature",
+            coarse_stage="feature_extraction",  # Use standard stage name for frontend compatibility
         )
         if ctx.cancelled:
             return
         
         # Stage 2: Feature matching
-        ctx.current_stage = "global_matching"
-        block.current_stage = "global_matching"
+        # Use frontend-recognizable stage names: "matching" instead of "global_matching"
+        ctx.current_stage = "matching"
+        block.current_stage = "matching"
         block.current_detail = None
         block.progress = 50.0
         await db.commit()
@@ -494,12 +510,12 @@ class TaskRunner:
             ctx,
             db,
             block.id,
-            coarse_stage="global_matching",
+            coarse_stage="matching",  # Use standard stage name for frontend compatibility
         )
         if ctx.cancelled:
             return
         
-        block.current_stage = "global_completed"
+        block.current_stage = "matching"  # Keep as "matching" until partition mapping starts
         block.progress = 100.0
         await db.commit()
     
@@ -686,6 +702,18 @@ class TaskRunner:
                 return 1 if v else 0
             return 1 if int(v) != 0 else 0
 
+        def _add_param_if_set(cmd_list, param_key, glomap_flag, param_type=str):
+            """Add parameter to command if it exists and is not None."""
+            if param_key in params and params[param_key] is not None:
+                if param_type == bool:
+                    cmd_list.extend([glomap_flag, str(_b(params[param_key]))])
+                elif param_type == int:
+                    cmd_list.extend([glomap_flag, str(int(params[param_key]))])
+                elif param_type == float:
+                    cmd_list.extend([glomap_flag, str(float(params[param_key]))])
+                else:
+                    cmd_list.extend([glomap_flag, str(params[param_key])])
+
         cmd = [
             GLOMAP_PATH, "mapper",
             "--database_path", database_path,
@@ -698,8 +726,322 @@ class TaskRunner:
             "--BundleAdjustment.gpu_index", str(gpu_index),
         ]
         
+        # Iteration parameters (only add if explicitly set, otherwise GLOMAP uses defaults)
+        _add_param_if_set(cmd, "ba_iteration_num", "--ba_iteration_num", int)
+        _add_param_if_set(cmd, "retriangulation_iteration_num", "--retriangulation_iteration_num", int)
+        
+        # Track Establishment parameters
+        _add_param_if_set(cmd, "track_establishment_min_num_tracks_per_view", "--TrackEstablishment.min_num_tracks_per_view", int)
+        _add_param_if_set(cmd, "track_establishment_min_num_view_per_track", "--TrackEstablishment.min_num_view_per_track", int)
+        _add_param_if_set(cmd, "track_establishment_max_num_view_per_track", "--TrackEstablishment.max_num_view_per_track", int)
+        _add_param_if_set(cmd, "track_establishment_max_num_tracks", "--TrackEstablishment.max_num_tracks", int)
+        
+        # Global Positioning parameters
+        _add_param_if_set(cmd, "global_positioning_optimize_positions", "--GlobalPositioning.optimize_positions", bool)
+        _add_param_if_set(cmd, "global_positioning_optimize_points", "--GlobalPositioning.optimize_points", bool)
+        _add_param_if_set(cmd, "global_positioning_optimize_scales", "--GlobalPositioning.optimize_scales", bool)
+        _add_param_if_set(cmd, "global_positioning_thres_loss_function", "--GlobalPositioning.thres_loss_function", float)
+        _add_param_if_set(cmd, "global_positioning_max_num_iterations", "--GlobalPositioning.max_num_iterations", int)
+        
+        # Bundle Adjustment parameters
+        _add_param_if_set(cmd, "bundle_adjustment_optimize_rotations", "--BundleAdjustment.optimize_rotations", bool)
+        _add_param_if_set(cmd, "bundle_adjustment_optimize_translation", "--BundleAdjustment.optimize_translation", bool)
+        _add_param_if_set(cmd, "bundle_adjustment_optimize_intrinsics", "--BundleAdjustment.optimize_intrinsics", bool)
+        _add_param_if_set(cmd, "bundle_adjustment_optimize_principal_point", "--BundleAdjustment.optimize_principal_point", bool)
+        _add_param_if_set(cmd, "bundle_adjustment_optimize_points", "--BundleAdjustment.optimize_points", bool)
+        _add_param_if_set(cmd, "bundle_adjustment_thres_loss_function", "--BundleAdjustment.thres_loss_function", float)
+        _add_param_if_set(cmd, "bundle_adjustment_max_num_iterations", "--BundleAdjustment.max_num_iterations", int)
+        
+        # Triangulation parameters
+        _add_param_if_set(cmd, "triangulation_complete_max_reproj_error", "--Triangulation.complete_max_reproj_error", float)
+        _add_param_if_set(cmd, "triangulation_merge_max_reproj_error", "--Triangulation.merge_max_reproj_error", float)
+        _add_param_if_set(cmd, "triangulation_min_angle", "--Triangulation.min_angle", float)
+        _add_param_if_set(cmd, "triangulation_min_num_matches", "--Triangulation.min_num_matches", int)
+        
+        # Inlier Thresholds parameters
+        _add_param_if_set(cmd, "thresholds_max_angle_error", "--Thresholds.max_angle_error", float)
+        _add_param_if_set(cmd, "thresholds_max_reprojection_error", "--Thresholds.max_reprojection_error", float)
+        _add_param_if_set(cmd, "thresholds_min_triangulation_angle", "--Thresholds.min_triangulation_angle", float)
+        _add_param_if_set(cmd, "thresholds_max_epipolar_error_E", "--Thresholds.max_epipolar_error_E", float)
+        _add_param_if_set(cmd, "thresholds_max_epipolar_error_F", "--Thresholds.max_epipolar_error_F", float)
+        _add_param_if_set(cmd, "thresholds_max_epipolar_error_H", "--Thresholds.max_epipolar_error_H", float)
+        _add_param_if_set(cmd, "thresholds_min_inlier_num", "--Thresholds.min_inlier_num", float)
+        _add_param_if_set(cmd, "thresholds_min_inlier_ratio", "--Thresholds.min_inlier_ratio", float)
+        _add_param_if_set(cmd, "thresholds_max_rotation_error", "--Thresholds.max_rotation_error", float)
+        
         await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
     
+    async def _run_glomap_mapper_resume(
+        self,
+        input_path: str,
+        output_path: str,
+        params: dict,
+        gpu_index: int,
+        ctx: TaskContext,
+        db: AsyncSession,
+        block_id: str,
+        coarse_stage: str,
+    ):
+        """Run GLOMAP mapper_resume on existing COLMAP reconstruction."""
+        def _b(v, default: int = 0) -> int:
+            if v is None:
+                return default
+            if isinstance(v, bool):
+                return 1 if v else 0
+            return 1 if int(v) != 0 else 0
+
+        def _add_param_if_set(cmd_list, param_key, glomap_flag, param_type=str, source_params=None):
+            """Add parameter to command if it exists and is not None."""
+            params_to_check = source_params if source_params is not None else params
+            if param_key in params_to_check and params_to_check[param_key] is not None:
+                if param_type == bool:
+                    cmd_list.extend([glomap_flag, str(_b(params_to_check[param_key]))])
+                elif param_type == int:
+                    cmd_list.extend([glomap_flag, str(int(params_to_check[param_key]))])
+                elif param_type == float:
+                    cmd_list.extend([glomap_flag, str(float(params_to_check[param_key]))])
+                else:
+                    cmd_list.extend([glomap_flag, str(params_to_check[param_key])])
+
+        cmd = [
+            GLOMAP_PATH,
+            "mapper_resume",
+            "--input_path",
+            input_path,
+            "--output_path",
+            output_path,
+            "--output_format",
+            "bin",
+        ]
+
+        # Filter out unsupported skip flags for mapper_resume mode
+        # mapper_resume only supports: skip_global_positioning, skip_bundle_adjustment, skip_pruning
+        # Other skip flags are forced to true and not registered as options
+        unsupported_skip_flags = {
+            "skip_preprocessing",
+            "skip_view_graph_calibration",
+            "skip_relative_pose_estimation",
+            "skip_rotation_averaging",
+            "skip_track_establishment",
+            "skip_retriangulation",
+        }
+        # Create a filtered params dict excluding unsupported skip flags
+        filtered_params = {k: v for k, v in params.items() if k not in unsupported_skip_flags} if params else {}
+
+        # Optional GPU-related parameters (if supported by current GLOMAP build)
+        if filtered_params:
+            if "global_positioning_use_gpu" in filtered_params:
+                cmd += [
+                    "--GlobalPositioning.use_gpu",
+                    str(_b(filtered_params.get("global_positioning_use_gpu", 1), 1)),
+                ]
+            if "bundle_adjustment_use_gpu" in filtered_params:
+                cmd += [
+                    "--BundleAdjustment.use_gpu",
+                    str(_b(filtered_params.get("bundle_adjustment_use_gpu", 1), 1)),
+                ]
+        elif params:
+            # Fallback to original params if filtered_params is empty but params exists
+            if "global_positioning_use_gpu" in params:
+                cmd += [
+                    "--GlobalPositioning.use_gpu",
+                    str(_b(params.get("global_positioning_use_gpu", 1), 1)),
+                ]
+            if "bundle_adjustment_use_gpu" in params:
+                cmd += [
+                    "--BundleAdjustment.use_gpu",
+                    str(_b(params.get("bundle_adjustment_use_gpu", 1), 1)),
+                ]
+        
+        # Process parameters using filtered_params to exclude unsupported skip flags
+        params_to_use = filtered_params if filtered_params else params
+        if params_to_use:
+            
+            # Iteration parameters
+            _add_param_if_set(cmd, "ba_iteration_num", "--ba_iteration_num", int, params_to_use)
+            _add_param_if_set(cmd, "retriangulation_iteration_num", "--retriangulation_iteration_num", int, params_to_use)
+
+            # Skip-stage flags for mapper_resume mode
+            # Note: mapper_resume mode only supports these skip flags (see AddGlobalMapperResumeOptions):
+            # - skip_global_positioning
+            # - skip_bundle_adjustment
+            # - skip_pruning
+            # Other skip flags (preprocessing, view_graph_calibration, etc.) are forced to true
+            # and are not registered as options, so we should not pass them
+            skip_flags_mapper_resume = [
+                ("skip_global_positioning", "--skip_global_positioning"),
+                ("skip_bundle_adjustment", "--skip_bundle_adjustment"),
+                ("skip_pruning", "--skip_pruning"),
+            ]
+            for key, flag in skip_flags_mapper_resume:
+                v = params_to_use.get(key)
+                if v is True or (isinstance(v, int) and v != 0):
+                    # GLOMAP requires boolean options to have explicit values: on/off, yes/no, 1/0, true/false
+                    cmd.extend([flag, "1"])
+                elif v is False or (isinstance(v, int) and v == 0):
+                    # Explicitly set to false
+                    cmd.extend([flag, "0"])
+            
+            # Global Positioning parameters
+            _add_param_if_set(cmd, "global_positioning_optimize_positions", "--GlobalPositioning.optimize_positions", bool, params_to_use)
+            _add_param_if_set(cmd, "global_positioning_optimize_points", "--GlobalPositioning.optimize_points", bool, params_to_use)
+            _add_param_if_set(cmd, "global_positioning_optimize_scales", "--GlobalPositioning.optimize_scales", bool, params_to_use)
+            _add_param_if_set(cmd, "global_positioning_thres_loss_function", "--GlobalPositioning.thres_loss_function", float, params_to_use)
+            _add_param_if_set(cmd, "global_positioning_max_num_iterations", "--GlobalPositioning.max_num_iterations", int, params_to_use)
+            
+            # Bundle Adjustment parameters
+            _add_param_if_set(cmd, "bundle_adjustment_optimize_rotations", "--BundleAdjustment.optimize_rotations", bool, params_to_use)
+            _add_param_if_set(cmd, "bundle_adjustment_optimize_translation", "--BundleAdjustment.optimize_translation", bool, params_to_use)
+            _add_param_if_set(cmd, "bundle_adjustment_optimize_intrinsics", "--BundleAdjustment.optimize_intrinsics", bool, params_to_use)
+            _add_param_if_set(cmd, "bundle_adjustment_optimize_principal_point", "--BundleAdjustment.optimize_principal_point", bool, params_to_use)
+            _add_param_if_set(cmd, "bundle_adjustment_optimize_points", "--BundleAdjustment.optimize_points", bool, params_to_use)
+            _add_param_if_set(cmd, "bundle_adjustment_thres_loss_function", "--BundleAdjustment.thres_loss_function", float, params_to_use)
+            _add_param_if_set(cmd, "bundle_adjustment_max_num_iterations", "--BundleAdjustment.max_num_iterations", int, params_to_use)
+            
+            # Triangulation parameters
+            _add_param_if_set(cmd, "triangulation_complete_max_reproj_error", "--Triangulation.complete_max_reproj_error", float, params_to_use)
+            _add_param_if_set(cmd, "triangulation_merge_max_reproj_error", "--Triangulation.merge_max_reproj_error", float, params_to_use)
+            _add_param_if_set(cmd, "triangulation_min_angle", "--Triangulation.min_angle", float, params_to_use)
+            _add_param_if_set(cmd, "triangulation_min_num_matches", "--Triangulation.min_num_matches", int, params_to_use)
+            
+            # Inlier Thresholds parameters
+            _add_param_if_set(cmd, "thresholds_max_angle_error", "--Thresholds.max_angle_error", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_max_reprojection_error", "--Thresholds.max_reprojection_error", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_min_triangulation_angle", "--Thresholds.min_triangulation_angle", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_max_epipolar_error_E", "--Thresholds.max_epipolar_error_E", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_max_epipolar_error_F", "--Thresholds.max_epipolar_error_F", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_max_epipolar_error_H", "--Thresholds.max_epipolar_error_H", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_min_inlier_num", "--Thresholds.min_inlier_num", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_min_inlier_ratio", "--Thresholds.min_inlier_ratio", float, params_to_use)
+            _add_param_if_set(cmd, "thresholds_max_rotation_error", "--Thresholds.max_rotation_error", float, params_to_use)
+
+        ctx.write_log_line(f"Executing command: {' '.join(cmd)}")
+        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+
+    async def _run_glomap_resume_pipeline(
+        self,
+        block: Block,
+        gpu_index: int,
+        ctx: TaskContext,
+        db: AsyncSession,
+    ):
+        """Pipeline for pure GLOMAP mapper_resume optimization."""
+        from sqlalchemy import select as _select  # local import to avoid circular hints
+
+        # Write initial log message
+        ctx.write_log_line("=" * 80)
+        ctx.write_log_line(f"Starting GLOMAP mapper_resume optimization for block {block.id}")
+        ctx.write_log_line(f"Input COLMAP path: {getattr(block, 'input_colmap_path', None)}")
+        ctx.write_log_line(f"Output path: {block.output_path}")
+        ctx.write_log_line("=" * 80)
+
+        # Basic validation
+        input_colmap_path = getattr(block, "input_colmap_path", None)
+        if not input_colmap_path or not os.path.isdir(input_colmap_path):
+            error_msg = f"Invalid COLMAP input path for mapper_resume: {input_colmap_path!r}"
+            block.status = BlockStatus.FAILED
+            block.error_message = error_msg
+            block.current_stage = "failed"
+            block.progress = 0.0
+            block.completed_at = datetime.utcnow()
+            await db.commit()
+            ctx.write_log_line(f"ERROR: {error_msg}")
+            return
+
+        # Check that essential COLMAP files exist in input path
+        ctx.write_log_line(f"Validating COLMAP input files in: {input_colmap_path}")
+        required_files = ("cameras", "images", "points3D")
+        found_files = []
+        for stem in required_files:
+            bin_path = os.path.join(input_colmap_path, f"{stem}.bin")
+            txt_path = os.path.join(input_colmap_path, f"{stem}.txt")
+            if os.path.exists(bin_path):
+                found_files.append(f"{stem}.bin")
+            elif os.path.exists(txt_path):
+                found_files.append(f"{stem}.txt")
+        
+        if not found_files:
+            error_msg = (
+                f"mapper_resume input_path does not contain COLMAP cameras/images/points3D files: {input_colmap_path}"
+            )
+            block.status = BlockStatus.FAILED
+            block.error_message = error_msg
+            block.current_stage = "failed"
+            block.progress = 0.0
+            block.completed_at = datetime.utcnow()
+            await db.commit()
+            ctx.write_log_line(f"ERROR: {error_msg}")
+            return
+        
+        ctx.write_log_line(f"Found COLMAP files: {', '.join(found_files)}")
+
+        # Prepare output sparse directory for optimized result
+        output_root = block.output_path or f"/root/work/aerotri-web/data/outputs/{block.id}"
+        os.makedirs(output_root, exist_ok=True)
+        sparse_path = os.path.join(output_root, "sparse")
+        os.makedirs(sparse_path, exist_ok=True)
+
+        ctx.write_log_line(f"Output directory prepared: {sparse_path}")
+
+        # Persist the resolved paths on block for later inspection/statistics
+        block.output_path = output_root
+        block.output_colmap_path = sparse_path
+        await db.commit()
+
+        # Single-stage timing
+        stage_times = {}
+        stage_start = datetime.now()
+        ctx.current_stage = "mapping_resume"
+        block.current_stage = "mapping_resume"
+        block.current_detail = None
+        block.progress = 0.0
+        await db.commit()
+
+        # Merge mapper/glomap params (glomap_params has higher priority)
+        params = {}
+        if block.mapper_params:
+            params.update(block.mapper_params)
+        if getattr(block, "glomap_params", None):
+            params.update(block.glomap_params or {})
+        
+        ctx.write_log_line(f"GLOMAP parameters: {params}")
+        ctx.write_log_line("Starting GLOMAP mapper_resume command...")
+
+        await self._run_glomap_mapper_resume(
+            input_colmap_path,
+            sparse_path,
+            params,
+            gpu_index,
+            ctx,
+            db,
+            block.id,
+            coarse_stage="mapping_resume",
+        )
+        if ctx.cancelled:
+            return
+
+        stage_times["mapping_resume"] = (datetime.now() - stage_start).total_seconds()
+
+        # Mark as completed
+        block.status = BlockStatus.COMPLETED
+        block.completed_at = datetime.utcnow()
+        block.current_stage = "completed"
+        block.current_detail = None
+        block.progress = 100.0
+        block.statistics = {
+            "stage_times": stage_times,
+            "total_time": sum(stage_times.values()),
+            "algorithm_params": {
+                "algorithm": block.algorithm.value,
+                "glomap_mode": getattr(block, "glomap_mode", None).value
+                if getattr(block, "glomap_mode", None)
+                else None,
+                "mapper_params": block.mapper_params,
+                "glomap_params": getattr(block, "glomap_params", None),
+            },
+        }
+        await db.commit()
+
     def _create_partition_database(
         self,
         global_database_path: str,
@@ -1138,37 +1480,78 @@ class TaskRunner:
         await process.wait()
 
         # 处理非 0 退出码。
-        # 注意：COLMAP / GLOMAP 在处理完成后，退出阶段存在已知的 SIGSEGV 问题（returncode 为负数，通常是 -11）。
+        # 注意：COLMAP / GLOMAP / InstantSfM 在处理完成后，退出阶段存在已知的 SIGSEGV/Abort 问题（returncode 为负数，通常是 -11 或 -6）。
         # 如果确认输出结果是有效的（例如 mapper 阶段已经生成 sparse 结果），则将其视为成功而不是失败，
-        # 避免前端把已完成的任务标记为“失败”。
+        # 避免前端把已完成的任务标记为"失败"。
         if process.returncode != 0 and not ctx.cancelled:
-            # 先针对由信号导致的异常退出进行处理（returncode < 0）
+            # 记录退出信息
             if process.returncode < 0:
-                # Signal received (e.g., SIGSEGV = -11)
+                # Signal received (e.g., SIGSEGV = -11, SIGABRT = -6)
                 ctx.write_log_line(f"Warning: Process terminated with signal {abs(process.returncode)}")
+            else:
+                # Non-zero exit code
+                ctx.write_log_line(f"Warning: Process exited with code {process.returncode}")
 
-                # 对 GLOMAP / COLMAP mapper 阶段做特殊处理：
-                # 如果已经成功导出了 sparse 结果（空三完成），则视为成功。
-                if coarse_stage == "mapping":
-                    try:
-                        async with AsyncSessionLocal() as s:
-                            result = await s.execute(select(Block).where(Block.id == block_id))
-                            block = result.scalar_one_or_none()
+            # 对 GLOMAP / COLMAP / InstantSfM mapper / mapper_resume 阶段做特殊处理：
+            # 如果已经成功导出了 sparse 结果（空三完成），则视为成功。
+            if coarse_stage in ("mapping", "mapping_resume"):
+                try:
+                    async with AsyncSessionLocal() as s:
+                        result = await s.execute(select(Block).where(Block.id == block_id))
+                        block = result.scalar_one_or_none()
 
-                        if block and block.output_path:
-                            sparse_path = os.path.join(block.output_path, "sparse")
-                            # 只要 sparse 目录存在且非空，就认为空三结果已写出
-                            if os.path.isdir(sparse_path) and any(os.scandir(sparse_path)):
-                                ctx.write_log_line(
-                                    "Detected valid sparse output after signal termination; "
-                                    "treating mapper stage as SUCCESS despite non-zero exit code."
-                                )
-                                return
-                    except Exception as e:
-                        # 验证逻辑失败时不要中断主流程，只记录告警并继续按错误处理
-                        ctx.write_log_line(
-                            f"Warning: Failed to validate sparse output after signal termination: {e}"
-                        )
+                    if block and block.output_path:
+                        # 检查 COLMAP/GLOMAP 标准输出路径：sparse/
+                        sparse_path = os.path.join(block.output_path, "sparse")
+                        
+                        # 检查 InstantSfM 标准输出路径：sparse/0/
+                        instantsfm_sparse_path = os.path.join(block.output_path, "sparse", "0")
+                        
+                        # 验证函数：检查目录是否存在且包含必要的重建文件
+                        def validate_sparse_output(sparse_dir):
+                            """验证 sparse 输出目录是否包含有效的重建结果"""
+                            if not os.path.isdir(sparse_dir):
+                                return False
+                            
+                            # 检查是否包含 COLMAP 重建文件（.bin 或 .txt 格式）
+                            required_files = ["cameras", "images", "points3D"]
+                            found_files = []
+                            for stem in required_files:
+                                bin_path = os.path.join(sparse_dir, f"{stem}.bin")
+                                txt_path = os.path.join(sparse_dir, f"{stem}.txt")
+                                if os.path.exists(bin_path) or os.path.exists(txt_path):
+                                    found_files.append(stem)
+                            
+                            # 至少需要找到 cameras 和 images 文件（points3D 可能为空）
+                            return len(found_files) >= 2
+                        
+                        # 检查标准 sparse 路径（COLMAP/GLOMAP）
+                        if validate_sparse_output(sparse_path):
+                            ctx.write_log_line(
+                                f"Detected valid sparse output at {sparse_path} after non-zero exit; "
+                                "treating mapper stage as SUCCESS despite non-zero exit code."
+                            )
+                            return
+                        
+                        # 检查 InstantSfM sparse/0/ 路径
+                        if validate_sparse_output(instantsfm_sparse_path):
+                            ctx.write_log_line(
+                                f"Detected valid InstantSfM sparse output at {instantsfm_sparse_path} after non-zero exit; "
+                                "treating mapper stage as SUCCESS despite non-zero exit code."
+                            )
+                            return
+                        
+                        # 如果 sparse 目录存在但验证失败，记录详细信息
+                        if os.path.isdir(sparse_path):
+                            ctx.write_log_line(
+                                f"Warning: sparse directory exists at {sparse_path} but validation failed. "
+                                "Contents may be incomplete."
+                            )
+                except Exception as e:
+                    # 验证逻辑失败时不要中断主流程，只记录告警并继续按错误处理
+                    ctx.write_log_line(
+                        f"Warning: Failed to validate sparse output after non-zero exit: {e}"
+                    )
 
             # 走到这里说明需要把任务视为失败
             raise RuntimeError(f"Process exited with code {process.returncode}")
@@ -1341,6 +1724,11 @@ class TaskRunner:
                 stage_times = {}
                 
                 # Stage 1: Global feature extraction + matching
+                # Immediately update stage to "feature_extraction" so frontend shows correct status
+                block.current_stage = "feature_extraction"
+                block.progress = 0.0
+                await db.commit()
+                
                 stage_start = datetime.now()
                 global_log_path = os.path.join(output_path, "run_global.log")
                 await self._run_global_feature_and_matching(

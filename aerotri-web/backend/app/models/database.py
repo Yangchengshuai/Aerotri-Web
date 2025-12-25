@@ -68,6 +68,13 @@ async def init_db():
                 ("partition_params", "JSON"),
                 ("sfm_pipeline_mode", "VARCHAR(64)"),
                 ("merge_strategy", "VARCHAR(64)"),
+                # GLOMAP-specific fields (mapper vs mapper_resume and versioning)
+                ("glomap_mode", "VARCHAR(32)"),
+                ("parent_block_id", "VARCHAR(36)"),
+                ("input_colmap_path", "TEXT"),
+                ("output_colmap_path", "TEXT"),
+                ("version_index", "INTEGER"),
+                ("glomap_params", "JSON"),
             ]
 
             for col, col_type in migrations:

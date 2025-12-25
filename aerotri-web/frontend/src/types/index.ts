@@ -41,6 +41,53 @@ export interface GlomapMapperParams {
   global_positioning_gpu_index: number
   bundle_adjustment_use_gpu: boolean
   bundle_adjustment_gpu_index: number
+  // Skip stage flags for GLOMAP mapper
+  skip_preprocessing?: boolean
+  skip_view_graph_calibration?: boolean
+  skip_relative_pose_estimation?: boolean
+  skip_rotation_averaging?: boolean
+  skip_track_establishment?: boolean
+  skip_global_positioning?: boolean
+  skip_bundle_adjustment?: boolean
+  skip_retriangulation?: boolean
+  skip_pruning?: boolean
+  // Iteration parameters
+  ba_iteration_num?: number
+  retriangulation_iteration_num?: number
+  // Track Establishment parameters
+  track_establishment_min_num_tracks_per_view?: number
+  track_establishment_min_num_view_per_track?: number
+  track_establishment_max_num_view_per_track?: number
+  track_establishment_max_num_tracks?: number
+  // Global Positioning parameters
+  global_positioning_optimize_positions?: boolean
+  global_positioning_optimize_points?: boolean
+  global_positioning_optimize_scales?: boolean
+  global_positioning_thres_loss_function?: number
+  global_positioning_max_num_iterations?: number
+  // Bundle Adjustment parameters
+  bundle_adjustment_optimize_rotations?: boolean
+  bundle_adjustment_optimize_translation?: boolean
+  bundle_adjustment_optimize_intrinsics?: boolean
+  bundle_adjustment_optimize_principal_point?: boolean
+  bundle_adjustment_optimize_points?: boolean
+  bundle_adjustment_thres_loss_function?: number
+  bundle_adjustment_max_num_iterations?: number
+  // Triangulation parameters
+  triangulation_complete_max_reproj_error?: number
+  triangulation_merge_max_reproj_error?: number
+  triangulation_min_angle?: number
+  triangulation_min_num_matches?: number
+  // Inlier Thresholds parameters
+  thresholds_max_angle_error?: number
+  thresholds_max_reprojection_error?: number
+  thresholds_min_triangulation_angle?: number
+  thresholds_max_epipolar_error_E?: number
+  thresholds_max_epipolar_error_F?: number
+  thresholds_max_epipolar_error_H?: number
+  thresholds_min_inlier_num?: number
+  thresholds_min_inlier_ratio?: number
+  thresholds_max_rotation_error?: number
 }
 
 export interface InstantsfmMapperParams {
@@ -88,7 +135,6 @@ export interface Block {
   gs_statistics?: Record<string, unknown> | null
   // Partition fields
   partition_enabled?: boolean
-  current_stage?: string | null
   created_at: string
   updated_at: string
   started_at: string | null

@@ -75,6 +75,32 @@ export const taskApi = {
   
   merge: (blockId: string) =>
     api.post<TaskStatus>(`/blocks/${blockId}/merge`),
+
+  glomapMapperResume: (
+    blockId: string,
+    payload: {
+      gpu_index?: number
+      input_colmap_path?: string | null
+      glomap_params?: Record<string, unknown> | null
+    },
+  ) =>
+    api.post<TaskStatus>(`/blocks/${blockId}/glomap/mapper_resume`, payload),
+
+  versions: (blockId: string) =>
+    api.get<{
+      versions: Array<{
+        id: string
+        name: string
+        status: string
+        glomap_mode: string | null
+        parent_block_id: string | null
+        version_index: number | null
+        output_path: string | null
+        output_colmap_path: string | null
+        created_at: string | null
+        completed_at: string | null
+      }>
+    }>(`/blocks/${blockId}/versions`),
 }
 
 // Filesystem API

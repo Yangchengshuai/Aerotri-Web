@@ -157,6 +157,686 @@
         <el-form-item label="BundleAdjustment GPU">
           <el-switch v-model="formData.mapper_params.bundle_adjustment_use_gpu" />
         </el-form-item>
+
+        <el-collapse v-model="glomapActiveNames" style="margin-top: 16px">
+          <!-- 跳过阶段 -->
+          <el-collapse-item name="skip_stages" title="跳过阶段（Skip Stages）">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+        >
+          这些参数控制 GLOMAP mapper 是否跳过某些处理阶段。对于 mapper_resume 模式，部分阶段会被强制跳过。
+        </el-alert>
+
+        <el-form-item label="跳过预处理">
+          <el-switch v-model="(formData.mapper_params as any).skip_preprocessing" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过特征提取和匹配的预处理阶段
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过视图图校准">
+          <el-switch v-model="(formData.mapper_params as any).skip_view_graph_calibration" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过视图图校准阶段
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过相对位姿估计">
+          <el-switch v-model="(formData.mapper_params as any).skip_relative_pose_estimation" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过相对位姿估计阶段
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过旋转平均">
+          <el-switch v-model="(formData.mapper_params as any).skip_rotation_averaging" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过全局旋转平均阶段
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过轨迹建立">
+          <el-switch v-model="(formData.mapper_params as any).skip_track_establishment" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过特征轨迹建立阶段
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过全局定位">
+          <el-switch v-model="(formData.mapper_params as any).skip_global_positioning" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过全局位置估计阶段（mapper_resume 模式可用）
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过束调整">
+          <el-switch v-model="(formData.mapper_params as any).skip_bundle_adjustment" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过 Bundle Adjustment 优化阶段（mapper_resume 模式可用）
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过重三角化">
+          <el-switch v-model="(formData.mapper_params as any).skip_retriangulation" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过重三角化阶段
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="跳过剪枝">
+          <el-switch v-model="(formData.mapper_params as any).skip_pruning" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            跳过结果剪枝阶段（mapper_resume 模式可用，默认 true）
+          </el-text>
+        </el-form-item>
+          </el-collapse-item>
+
+          <!-- 迭代参数 -->
+          <el-collapse-item name="iteration_params" title="迭代参数（Iteration Parameters）">
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">ba_iteration_num</div>
+                </div>
+              </template>
+              <div class="param-control">
+          <el-input-number
+            v-model="(formData.mapper_params as any).ba_iteration_num"
+            :min="1"
+            :max="10"
+            :step="1"
+            :placeholder="3"
+          />
+                <el-text type="info" size="small" class="param-desc">
+            Bundle Adjustment 迭代次数（留空使用默认值：3）
+          </el-text>
+              </div>
+        </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">retriangulation_iteration_num</div>
+                </div>
+              </template>
+              <div class="param-control">
+          <el-input-number
+            v-model="(formData.mapper_params as any).retriangulation_iteration_num"
+            :min="1"
+            :max="10"
+            :step="1"
+            :placeholder="1"
+          />
+                <el-text type="info" size="small" class="param-desc">
+            重三角化迭代次数（留空使用默认值：1）
+          </el-text>
+              </div>
+            </el-form-item>
+          </el-collapse-item>
+
+          <!-- 轨迹建立 -->
+          <el-collapse-item name="track_establishment" title="轨迹建立（Track Establishment）">
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">TrackEstablishment.min_num_tracks_per_view</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).track_establishment_min_num_tracks_per_view"
+                  :min="-1"
+                  :max="10000"
+                  :step="1"
+                  :placeholder="-1"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  每个视图的最小轨迹数（-1 表示不限制）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">TrackEstablishment.min_num_view_per_track</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).track_establishment_min_num_view_per_track"
+                  :min="2"
+                  :max="100"
+                  :step="1"
+                  :placeholder="3"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  每个轨迹的最小视图数（默认：3）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">TrackEstablishment.max_num_view_per_track</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).track_establishment_max_num_view_per_track"
+                  :min="2"
+                  :max="1000"
+                  :step="10"
+                  :placeholder="100"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  每个轨迹的最大视图数（默认：100）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">TrackEstablishment.max_num_tracks</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).track_establishment_max_num_tracks"
+                  :min="1000"
+                  :max="100000000"
+                  :step="1000000"
+                  :placeholder="10000000"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  最大轨迹数（默认：10000000）
+                </el-text>
+              </div>
+            </el-form-item>
+          </el-collapse-item>
+
+          <!-- 全局定位 -->
+          <el-collapse-item name="global_positioning" title="全局定位（Global Positioning）">
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">GlobalPositioning.optimize_positions</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).global_positioning_optimize_positions" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化相机位置（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">GlobalPositioning.optimize_points</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).global_positioning_optimize_points" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化3D点（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">GlobalPositioning.optimize_scales</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).global_positioning_optimize_scales" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化尺度（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">GlobalPositioning.thres_loss_function</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).global_positioning_thres_loss_function"
+                  :min="1e-3"
+                  :max="10"
+                  :step="0.1"
+                  :precision="3"
+                  :placeholder="0.1"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  Huber 损失函数阈值（默认：0.1）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">GlobalPositioning.max_num_iterations</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).global_positioning_max_num_iterations"
+                  :min="10"
+                  :max="1000"
+                  :step="10"
+                  :placeholder="100"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  优化器最大迭代次数（默认：100）
+                </el-text>
+              </div>
+            </el-form-item>
+          </el-collapse-item>
+
+          <!-- 束调整 -->
+          <el-collapse-item name="bundle_adjustment" title="束调整（Bundle Adjustment）">
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.optimize_rotations</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).bundle_adjustment_optimize_rotations" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化相机旋转（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.optimize_translation</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).bundle_adjustment_optimize_translation" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化相机平移（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.optimize_intrinsics</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).bundle_adjustment_optimize_intrinsics" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化相机内参（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.optimize_principal_point</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).bundle_adjustment_optimize_principal_point" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化主点（默认：false）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.optimize_points</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-switch v-model="(formData.mapper_params as any).bundle_adjustment_optimize_points" />
+                <el-text type="info" size="small" class="param-desc">
+                  是否优化3D点（默认：true）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.thres_loss_function</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).bundle_adjustment_thres_loss_function"
+                  :min="0.1"
+                  :max="10"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="1.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  Huber 损失函数阈值（默认：1.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">BundleAdjustment.max_num_iterations</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).bundle_adjustment_max_num_iterations"
+                  :min="50"
+                  :max="1000"
+                  :step="50"
+                  :placeholder="200"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  优化器最大迭代次数（默认：200）
+                </el-text>
+              </div>
+            </el-form-item>
+          </el-collapse-item>
+
+          <!-- 重三角化 -->
+          <el-collapse-item name="triangulation" title="重三角化（Retriangulation）">
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Triangulation.complete_max_reproj_error</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).triangulation_complete_max_reproj_error"
+                  :min="1"
+                  :max="50"
+                  :step="1"
+                  :precision="1"
+                  :placeholder="15.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  完成三角化的最大重投影误差（像素，默认：15.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Triangulation.merge_max_reproj_error</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).triangulation_merge_max_reproj_error"
+                  :min="1"
+                  :max="50"
+                  :step="1"
+                  :precision="1"
+                  :placeholder="15.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  合并轨迹的最大重投影误差（像素，默认：15.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Triangulation.min_angle</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).triangulation_min_angle"
+                  :min="0.1"
+                  :max="10"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="1.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  最小三角化角度（度，默认：1.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Triangulation.min_num_matches</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).triangulation_min_num_matches"
+                  :min="5"
+                  :max="100"
+                  :step="1"
+                  :placeholder="15"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  三角化所需的最小匹配数（默认：15）
+                </el-text>
+              </div>
+            </el-form-item>
+          </el-collapse-item>
+
+          <!-- 内点阈值 -->
+          <el-collapse-item name="thresholds" title="内点阈值（Inlier Thresholds）">
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.max_angle_error</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_max_angle_error"
+                  :min="0.1"
+                  :max="10"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="1.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  全局定位的最大角度误差（度，默认：1.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.max_reprojection_error</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_max_reprojection_error"
+                  :min="1e-3"
+                  :max="1"
+                  :step="1e-3"
+                  :precision="3"
+                  :placeholder="0.01"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  束调整的最大重投影误差（默认：0.01）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.min_triangulation_angle</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_min_triangulation_angle"
+                  :min="0.1"
+                  :max="10"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="1.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  三角化的最小角度（度，默认：1.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.max_epipolar_error_E</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_max_epipolar_error_E"
+                  :min="0.1"
+                  :max="10"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="1.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  本质矩阵的最大对极误差（默认：1.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.max_epipolar_error_F</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_max_epipolar_error_F"
+                  :min="0.1"
+                  :max="20"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="4.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  基础矩阵的最大对极误差（默认：4.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.max_epipolar_error_H</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_max_epipolar_error_H"
+                  :min="0.1"
+                  :max="20"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="4.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  单应矩阵的最大对极误差（默认：4.0）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.min_inlier_num</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_min_inlier_num"
+                  :min="5"
+                  :max="500"
+                  :step="5"
+                  :placeholder="30"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  图像对的最小内点数（默认：30）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.min_inlier_ratio</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_min_inlier_ratio"
+                  :min="0.01"
+                  :max="1"
+                  :step="0.01"
+                  :precision="2"
+                  :placeholder="0.25"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  图像对的最小内点比例（默认：0.25）
+                </el-text>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <template #label>
+                <div class="param-label">
+                  <div class="param-name">Thresholds.max_rotation_error</div>
+                </div>
+              </template>
+              <div class="param-control">
+                <el-input-number
+                  v-model="(formData.mapper_params as any).thresholds_max_rotation_error"
+                  :min="0.1"
+                  :max="90"
+                  :step="0.1"
+                  :precision="1"
+                  :placeholder="10.0"
+                />
+                <el-text type="info" size="small" class="param-desc">
+                  旋转平均的最大旋转误差（度，默认：10.0）
+                </el-text>
+              </div>
+        </el-form-item>
+          </el-collapse-item>
+        </el-collapse>
       </template>
 
       <template v-else-if="formData.algorithm === 'instantsfm'">
@@ -269,7 +949,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import type { Block, FeatureParams, MatchingParams, GlomapMapperParams, ColmapMapperParams, InstantsfmMapperParams } from '@/types'
 
 const props = defineProps<{
@@ -280,6 +960,9 @@ const emit = defineEmits<{
   (e: 'save', params: Partial<Block>): void
   (e: 'cancel'): void
 }>()
+
+// Collapse panel active names for GLOMAP parameters (default: all collapsed)
+const glomapActiveNames = ref<string[]>([])
 
 // Default parameters
 const defaultFeatureParams: FeatureParams = {
@@ -308,6 +991,55 @@ const defaultGlomapParams: GlomapMapperParams = {
   global_positioning_gpu_index: 0,
   bundle_adjustment_use_gpu: true,
   bundle_adjustment_gpu_index: 0,
+  // Skip stage flags (defaults match GLOMAP option_manager.cc)
+  skip_preprocessing: false,
+  skip_view_graph_calibration: false,
+  skip_relative_pose_estimation: false,
+  skip_rotation_averaging: false,
+  skip_track_establishment: false,
+  skip_global_positioning: false,
+  skip_bundle_adjustment: false,
+  skip_retriangulation: false,
+  skip_pruning: true,
+  // Iteration parameters
+  ba_iteration_num: undefined,
+  retriangulation_iteration_num: undefined,
+  // Track Establishment parameters (defaults from track_establishment.h)
+  track_establishment_min_num_tracks_per_view: undefined, // -1 (use undefined to let GLOMAP use default)
+  track_establishment_min_num_view_per_track: undefined, // 3
+  track_establishment_max_num_view_per_track: undefined, // 100
+  track_establishment_max_num_tracks: undefined, // 10000000
+  // Global Positioning parameters (defaults from global_positioning.h)
+  // For boolean params with default=true, set to true so switch shows correct state
+  global_positioning_optimize_positions: true, // GLOMAP default: true
+  global_positioning_optimize_points: true, // GLOMAP default: true
+  global_positioning_optimize_scales: true, // GLOMAP default: true
+  global_positioning_thres_loss_function: undefined, // 0.1
+  global_positioning_max_num_iterations: undefined, // 100
+  // Bundle Adjustment parameters (defaults from bundle_adjustment.h)
+  // For boolean params with default=true, set to true so switch shows correct state
+  bundle_adjustment_optimize_rotations: true, // GLOMAP default: true
+  bundle_adjustment_optimize_translation: true, // GLOMAP default: true
+  bundle_adjustment_optimize_intrinsics: true, // GLOMAP default: true
+  bundle_adjustment_optimize_principal_point: false, // GLOMAP default: false
+  bundle_adjustment_optimize_points: true, // GLOMAP default: true
+  bundle_adjustment_thres_loss_function: undefined, // 1.0
+  bundle_adjustment_max_num_iterations: undefined, // 200
+  // Triangulation parameters (defaults from track_retriangulation.h)
+  triangulation_complete_max_reproj_error: undefined, // 15.0
+  triangulation_merge_max_reproj_error: undefined, // 15.0
+  triangulation_min_angle: undefined, // 1.0
+  triangulation_min_num_matches: undefined, // 15
+  // Inlier Thresholds parameters (defaults from types.h)
+  thresholds_max_angle_error: undefined, // 1.0
+  thresholds_max_reprojection_error: undefined, // 0.01
+  thresholds_min_triangulation_angle: undefined, // 1.0
+  thresholds_max_epipolar_error_E: undefined, // 1.0
+  thresholds_max_epipolar_error_F: undefined, // 4.0
+  thresholds_max_epipolar_error_H: undefined, // 4.0
+  thresholds_min_inlier_num: undefined, // 30
+  thresholds_min_inlier_ratio: undefined, // 0.25
+  thresholds_max_rotation_error: undefined, // 10.0
 }
 
 const defaultColmapParams: ColmapMapperParams = {
@@ -381,5 +1113,84 @@ function handleSave() {
   margin-top: 24px;
   padding-top: 16px;
   border-top: 1px solid #e4e7ed;
+}
+
+/* 参数标签样式 - 英文参数名显示 */
+.param-label {
+  width: 100%;
+  min-width: 280px;
+  padding-right: 16px;
+}
+
+.param-name {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* 参数控制区域样式 */
+.param-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.param-desc {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: #909399;
+}
+
+/* 针对 GLOMAP 参数区域的特殊样式 */
+.glomap-params-collapse :deep(.el-collapse-item__content) {
+  padding: 16px 0;
+}
+
+.glomap-params-collapse :deep(.el-collapse-item__content .el-form-item) {
+  margin-bottom: 20px;
+}
+
+.glomap-params-collapse :deep(.el-collapse-item__content .el-form-item__label) {
+  width: auto !important;
+  min-width: 300px;
+  max-width: 350px;
+  padding-right: 16px;
+  line-height: 1.5;
+  text-align: left;
+  vertical-align: top;
+  padding-top: 0;
+}
+
+.glomap-params-collapse :deep(.el-collapse-item__content .el-form-item__content) {
+  flex: 1;
+  min-width: 0;
+  margin-left: 0 !important;
+}
+
+/* 响应式调整 */
+@media (max-width: 1200px) {
+  .param-label {
+    min-width: 240px;
+  }
+  
+  .glomap-params-collapse :deep(.el-collapse-item__content .el-form-item__label) {
+    min-width: 240px;
+    max-width: 280px;
+  }
+  
+  .param-control {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .param-desc {
+    white-space: normal;
+  }
 }
 </style>

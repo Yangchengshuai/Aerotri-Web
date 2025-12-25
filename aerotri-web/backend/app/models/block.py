@@ -24,6 +24,13 @@ class AlgorithmType(str, enum.Enum):
     INSTANTSFM = "instantsfm"  # InstantSfM (Fast Global SfM)
 
 
+class GlomapMode(str, enum.Enum):
+    """GLOMAP running mode."""
+
+    MAPPER = "mapper"  # From database & images
+    MAPPER_RESUME = "mapper_resume"  # From existing COLMAP sparse model
+
+
 class MatchingMethod(str, enum.Enum):
     """Feature matching method."""
     SEQUENTIAL = "sequential"
@@ -69,6 +76,24 @@ class Block(Base):
     feature_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     matching_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     mapper_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # GLOMAP-specific fields (for mapper vs mapper_resume and versioning)
+    glomap_mode: Mapped[Optional[GlomapMode]] = mapped_column(
+        Enum(GlomapMode),
+        nullable=True,
+    )
+    # Parent block for resume/optimization tasks (e.g. mapper_resume versions)
+    parent_block_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        nullable=True,
+    )
+    # Explicit COLMAP-style input/output paths for optimization runs
+    input_colmap_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    output_colmap_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Version index within a family (V0 = original, V1 = first resume, ...)
+    version_index: Mapped[Optional[int]] = mapped_column(nullable=True)
+    # Raw GLOMAP parameters snapshot (especially for mapper_resume)
+    glomap_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
     # Processing statistics
     statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -179,6 +204,12 @@ class Block(Base):
             "feature_params": self.feature_params,
             "matching_params": self.matching_params,
             "mapper_params": self.mapper_params,
+            "glomap_mode": self.glomap_mode.value if self.glomap_mode else None,
+            "parent_block_id": self.parent_block_id,
+            "input_colmap_path": self.input_colmap_path,
+            "output_colmap_path": self.output_colmap_path,
+            "version_index": self.version_index,
+            "glomap_params": self.glomap_params,
             "statistics": self.statistics,
             "current_stage": self.current_stage,
             "current_detail": self.current_detail,

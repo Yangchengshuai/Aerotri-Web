@@ -46,6 +46,23 @@
         <el-icon><Download /></el-icon>
         下载完整点云
       </el-button>
+      <!-- Version selector -->
+      <div v-if="versions.length > 0" class="version-selector">
+        <span class="control-label">结果版本</span>
+        <el-select
+          v-model="selectedVersionId"
+          size="small"
+          style="min-width: 220px"
+          @change="handleVersionChange"
+        >
+          <el-option
+            v-for="v in versions"
+            :key="v.id"
+            :label="v.label"
+            :value="v.id"
+          />
+        </el-select>
+      </div>
     </div>
 
     <!-- 3D Canvas -->
@@ -93,7 +110,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Aim, Refresh, Loading, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
-import { resultApi, partitionApi, blockApi } from '@/api'
+import { resultApi, partitionApi, blockApi, taskApi } from '@/api'
 import type { CameraInfo, Point3D } from '@/types'
 import PartitionSelector from './PartitionSelector.vue'
 
@@ -114,6 +131,17 @@ const viewMode = ref<'partition' | 'merged'>('merged')
 const selectedPartitionIndex = ref<number | null>(null)
 const isPartitioned = ref(false)
 const isMerged = ref(false)
+
+// Version management (original + mapper_resume runs)
+const versions = ref<
+  Array<{
+    id: string
+    label: string
+    status: string
+    version_index: number | null
+  }>
+>([])
+const selectedVersionId = ref<string | null>(null)
 
 const stats = reactive({
   numCameras: 0,
@@ -145,8 +173,43 @@ onMounted(async () => {
   
   // Check if block is partitioned and load data
   await checkPartitionStatus()
+  await loadVersions()
   await loadData()
 })
+
+async function loadVersions() {
+  try {
+    const res = await taskApi.versions(props.blockId)
+    const raw = res.data.versions || []
+    versions.value = raw.map((v: any) => {
+      const isRoot = v.version_index == null
+      const labelBase = isRoot ? 'V0 原始结果' : `V${v.version_index} GLOMAP 优化`
+      const statusSuffix =
+        v.status === 'completed'
+          ? ''
+          : v.status === 'running'
+          ? '（运行中）'
+          : v.status === 'failed'
+          ? '（失败）'
+          : ''
+      return {
+        id: v.id,
+        label: statusSuffix ? `${labelBase} ${statusSuffix}` : labelBase,
+        status: v.status,
+        version_index: v.version_index,
+      }
+    })
+    // 默认选中当前 block 所在版本
+    const current = versions.value.find((v) => v.id === props.blockId)
+    selectedVersionId.value = current?.id ?? versions.value[0]?.id ?? null
+  } catch (e) {
+    console.error('Failed to load versions:', e)
+  }
+}
+
+function handleVersionChange() {
+  loadData()
+}
 
 async function checkPartitionStatus() {
   try {
@@ -404,9 +467,10 @@ async function loadData() {
         camerasData = cameras.data
         numPointsTotal = (statsRes.data as any).num_points3d ?? 0
       } else {
+        const targetId = selectedVersionId.value || props.blockId
         const [cameras, statsRes] = await Promise.all([
-          resultApi.getCameras(props.blockId),
-          resultApi.getStats(props.blockId),
+          resultApi.getCameras(targetId),
+          resultApi.getStats(targetId),
         ])
         camerasData = cameras.data
         numPointsTotal = (statsRes.data as any).num_points3d ?? 0

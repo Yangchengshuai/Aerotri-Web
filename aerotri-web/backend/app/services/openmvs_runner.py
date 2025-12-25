@@ -27,7 +27,7 @@ from ..settings import (
     OPENMVS_REFINE,
     OPENMVS_TEXTURE,
 )
-from .task_runner import task_runner
+from .task_runner import task_runner, CERES_LIB_PATH
 
 
 class OpenMVSProcessError(Exception):
@@ -1113,6 +1113,15 @@ class OpenMVSRunner:
         pretty_cmd = " ".join(shlex.quote(str(x)) for x in cmd)
         buffer = self._log_buffers.setdefault(block_id, deque(maxlen=1000))
 
+        # Prepare environment variables with library paths
+        process_env = os.environ.copy()
+        if env is not None:
+            process_env.update(env)
+        # Add Ceres library path (contains all required libraries including absl)
+        current_ld_path = process_env.get("LD_LIBRARY_PATH", "")
+        if CERES_LIB_PATH not in current_ld_path:
+            process_env["LD_LIBRARY_PATH"] = f"{CERES_LIB_PATH}:{current_ld_path}" if current_ld_path else CERES_LIB_PATH
+
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
             log_fp.write(f"[CMD] {pretty_cmd}\n")
@@ -1122,7 +1131,7 @@ class OpenMVSRunner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=cwd,
-                env=env,
+                env=process_env,
                 limit=10 * 1024 * 1024,
             )
             # Register process for cancellation
@@ -1169,6 +1178,59 @@ class OpenMVSRunner:
                     buffer.append(cancel_msg)
                     log_fp.write(cancel_msg + "\n")
                     return
+                
+                # 对于去畸变阶段，即使程序异常退出（如 SIGSEGV），如果输出文件已生成，也视为成功
+                # 注意：COLMAP image_undistorter 在处理完成后，退出阶段存在已知的 SIGSEGV 问题
+                if stage == "undistort":
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            result = await db.execute(select(Block).where(Block.id == block_id))
+                            block = result.scalar_one_or_none()
+                            
+                            if block and block.recon_output_path:
+                                dense_dir = os.path.join(block.recon_output_path, "dense")
+                                
+                                # 验证去畸变输出是否已生成
+                                # 检查 images 目录和 cameras 文件
+                                images_dir = os.path.join(dense_dir, "images")
+                                cameras_bin_candidates = [
+                                    os.path.join(dense_dir, "cameras.bin"),
+                                    os.path.join(dense_dir, "cameras.txt"),
+                                    os.path.join(dense_dir, "sparse", "cameras.bin"),
+                                    os.path.join(dense_dir, "sparse", "cameras.txt"),
+                                ]
+                                
+                                # 检查是否有图像文件
+                                has_images = False
+                                if os.path.isdir(images_dir):
+                                    image_files = [
+                                        f for f in os.listdir(images_dir)
+                                        if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                                    ]
+                                    has_images = len(image_files) > 0
+                                
+                                # 检查是否有 cameras 文件
+                                has_cameras = any(
+                                    os.path.exists(p) and os.path.getsize(p) > 0 
+                                    for p in cameras_bin_candidates
+                                )
+                                
+                                # 如果输出文件已生成，视为成功
+                                if has_images and has_cameras:
+                                    success_msg = (
+                                        f"[SUCCESS] Undistort stage completed successfully "
+                                        f"despite non-zero exit code {process.returncode}. "
+                                        f"Output files validated at {dense_dir}"
+                                    )
+                                    buffer.append(success_msg)
+                                    log_fp.write(success_msg + "\n")
+                                    return
+                    except Exception as e:
+                        # 验证逻辑失败时不要中断主流程，只记录告警并继续按错误处理
+                        warning_msg = f"[WARNING] Failed to validate undistort output after non-zero exit: {e}"
+                        buffer.append(warning_msg)
+                        log_fp.write(warning_msg + "\n")
+                
                 recent_logs = buffer[-30:]
                 raise OpenMVSProcessError(stage, process.returncode, recent_logs)
 

@@ -43,13 +43,60 @@ class ColmapMapperParams(BaseModel):
 
 class GlomapMapperParams(BaseModel):
     """GLOMAP mapper (global SfM) parameters."""
-    use_pose_prior: bool = False
-    global_positioning_use_gpu: bool = True
-    global_positioning_gpu_index: int = 0
-    global_positioning_min_num_images_gpu_solver: int = 50
-    bundle_adjustment_use_gpu: bool = True
-    bundle_adjustment_gpu_index: int = 0
-    bundle_adjustment_min_num_images_gpu_solver: int = 50
+    use_pose_prior: Optional[bool] = None
+    global_positioning_use_gpu: Optional[bool] = None
+    global_positioning_gpu_index: Optional[int] = None
+    global_positioning_min_num_images_gpu_solver: Optional[int] = None
+    bundle_adjustment_use_gpu: Optional[bool] = None
+    bundle_adjustment_gpu_index: Optional[int] = None
+    bundle_adjustment_min_num_images_gpu_solver: Optional[int] = None
+    # Skip stage flags
+    skip_preprocessing: Optional[bool] = None
+    skip_view_graph_calibration: Optional[bool] = None
+    skip_relative_pose_estimation: Optional[bool] = None
+    skip_rotation_averaging: Optional[bool] = None
+    skip_track_establishment: Optional[bool] = None
+    skip_global_positioning: Optional[bool] = None
+    skip_bundle_adjustment: Optional[bool] = None
+    skip_retriangulation: Optional[bool] = None
+    skip_pruning: Optional[bool] = None
+    # Iteration parameters
+    ba_iteration_num: Optional[int] = None
+    retriangulation_iteration_num: Optional[int] = None
+    # Track Establishment parameters
+    track_establishment_min_num_tracks_per_view: Optional[int] = None
+    track_establishment_min_num_view_per_track: Optional[int] = None
+    track_establishment_max_num_view_per_track: Optional[int] = None
+    track_establishment_max_num_tracks: Optional[int] = None
+    # Global Positioning parameters
+    global_positioning_optimize_positions: Optional[bool] = None
+    global_positioning_optimize_points: Optional[bool] = None
+    global_positioning_optimize_scales: Optional[bool] = None
+    global_positioning_thres_loss_function: Optional[float] = None
+    global_positioning_max_num_iterations: Optional[int] = None
+    # Bundle Adjustment parameters
+    bundle_adjustment_optimize_rotations: Optional[bool] = None
+    bundle_adjustment_optimize_translation: Optional[bool] = None
+    bundle_adjustment_optimize_intrinsics: Optional[bool] = None
+    bundle_adjustment_optimize_principal_point: Optional[bool] = None
+    bundle_adjustment_optimize_points: Optional[bool] = None
+    bundle_adjustment_thres_loss_function: Optional[float] = None
+    bundle_adjustment_max_num_iterations: Optional[int] = None
+    # Triangulation parameters
+    triangulation_complete_max_reproj_error: Optional[float] = None
+    triangulation_merge_max_reproj_error: Optional[float] = None
+    triangulation_min_angle: Optional[float] = None
+    triangulation_min_num_matches: Optional[int] = None
+    # Inlier Thresholds parameters
+    thresholds_max_angle_error: Optional[float] = None
+    thresholds_max_reprojection_error: Optional[float] = None
+    thresholds_min_triangulation_angle: Optional[float] = None
+    thresholds_max_epipolar_error_E: Optional[float] = None
+    thresholds_max_epipolar_error_F: Optional[float] = None
+    thresholds_max_epipolar_error_H: Optional[float] = None
+    thresholds_min_inlier_num: Optional[float] = None
+    thresholds_min_inlier_ratio: Optional[float] = None
+    thresholds_max_rotation_error: Optional[float] = None
 
 
 class InstantsfmMapperParams(BaseModel):
@@ -101,6 +148,12 @@ class BlockResponse(BaseModel):
     feature_params: Optional[dict]
     matching_params: Optional[dict]
     mapper_params: Optional[dict]
+    glomap_mode: Optional[str] = None
+    parent_block_id: Optional[str] = None
+    input_colmap_path: Optional[str] = None
+    output_colmap_path: Optional[str] = None
+    version_index: Optional[int] = None
+    glomap_params: Optional[dict] = None
     statistics: Optional[dict]
     current_stage: Optional[str]
     progress: Optional[float]
@@ -180,6 +233,16 @@ class GPUListResponse(BaseModel):
 class TaskSubmit(BaseModel):
     """Task submission request."""
     gpu_index: int = 0
+
+
+class GlomapResumeRequest(BaseModel):
+    """Request payload for starting a GLOMAP mapper_resume optimization."""
+
+    gpu_index: int = 0
+    # Optional explicit COLMAP input path; if omitted, derive from parent block output.
+    input_colmap_path: Optional[str] = None
+    # GLOMAP-specific parameters (e.g. skip_* flags, gpu toggles)
+    glomap_params: Optional[dict] = None
 
 
 class TaskStatus(BaseModel):
