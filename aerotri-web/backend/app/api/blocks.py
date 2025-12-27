@@ -110,8 +110,9 @@ async def update_block(
     update_data = block_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if value is not None:
+            # Handle Pydantic models (convert to dict)
             if hasattr(value, 'model_dump'):
-                value = value.model_dump()
+                value = value.model_dump(exclude_unset=True)
             setattr(block, field, value)
     
     await db.commit()

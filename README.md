@@ -45,12 +45,17 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
     - 分区配置：可配置分区大小、重叠区域、SfM 流水线模式
     - 分区管理：查看分区状态、进度和独立结果
     - 分区合并：支持多种合并策略（rigid_keep_one, sim3_keep_one）
+  - **参数优化**: 
+    - 默认相机模型从 `SIMPLE_RADIAL` 改为 `OPENCV`
+    - 默认最大特征数从 `12000` 提升至 `15000`
+    - 空间匹配自动检测坐标类型（GPS/笛卡尔），移除手动 `spatial_is_gps` 参数
 - 结果浏览与分析
   - 三维视图中展示相机轨迹与稀疏点云
   - 支持从后端按需抽样加载点云，以及一键下载完整 `points3D.ply` 点云文件
   - **分区模式支持**: 可在分区视图和合并结果视图之间切换
   - **分区统计**: 支持查看各分区的统计信息和合并后的聚合统计
   - **版本切换**: 支持在 3D 视图中切换不同版本的结果（原始 + GLOMAP 优化版本）
+  - **相机选择与交互**: 支持双击选择相机、查看相机详情、删除相机
 - OpenMVS 重建流水线（实验特性）
   - 针对已完成的 SfM 结果，可发起稠密重建 / 网格 / 纹理流水线（OpenMVS）
   - 后端在 Block 上维护独立的重建状态字段（`recon_status`、`recon_progress`、`recon_current_stage` 等）
@@ -62,6 +67,14 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - Block 维度维护独立的 3DGS 状态字段（`gs_status`、`gs_progress`、`gs_current_stage` 等），支持任务恢复
   - 前端在「3DGS」页签中配置训练参数、选择 GPU、查看日志与产物列表
   - 内置基于 WebGPU 的 `visionary` 预览页，可在线预览导出的 `point_cloud.ply`
+  - **自动相机模型检测与去畸变**: 训练前自动检测相机模型，如非 PINHOLE/SIMPLE_PINHOLE 则自动运行 COLMAP image_undistorter
+  - **RTX 5090 支持**: 自动配置 CUDA 架构以支持 RTX 5090（Blackwell sm_120）
+- InstantSfM 实时可视化
+  - 支持启用实时可视化功能，通过 WebSocket 实时显示优化过程、相机位姿和点云
+  - 前端提供实时可视化查看器，可在任务运行期间查看优化进度
+- 相机选择与交互
+  - 3D 视图中支持双击选择相机，查看相机详情信息
+  - 支持删除选中的相机，实时更新 3D 场景
 
 ## 快速开始（AeroTri Web）
 

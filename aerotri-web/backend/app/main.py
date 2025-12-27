@@ -7,7 +7,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api import api_router
-from .ws import progress_router
+from .ws import progress_router, visualization_router
 from .models.database import init_db
 from .services.task_runner import task_runner
 from .services.openmvs_runner import openmvs_runner
@@ -61,6 +61,7 @@ app.include_router(api_router, prefix="/api")
 
 # WebSocket routes
 app.include_router(progress_router)
+app.include_router(visualization_router)
 
 
 @app.get("/")

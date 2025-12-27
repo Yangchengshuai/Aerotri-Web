@@ -84,6 +84,9 @@
             <ParameterSummary v-if="block" :block="block" />
           </el-card>
 
+          <!-- Camera List Section (only show when results are available) -->
+          <CameraList v-if="canViewResults" />
+
           <!-- Partition Config Section -->
           <PartitionConfigPanel
             v-if="block"
@@ -119,16 +122,30 @@
             />
           </el-tab-pane>
 
+          <!-- Real-time Visualization Tab (InstantSfM only, when running) -->
+          <el-tab-pane 
+            label="实时可视化" 
+            name="realtime" 
+            v-if="block && block.algorithm === 'instantsfm' && block.status === 'running'"
+          >
+            <InstantSfMRealtimeViewer 
+              v-if="block"
+              :block-id="block.id" 
+            />
+          </el-tab-pane>
+
           <!-- 3D Viewer Tab -->
           <el-tab-pane 
             label="3D 查看" 
             name="viewer" 
             :disabled="!canViewResults"
           >
-            <ThreeViewer 
-              v-if="canViewResults" 
-              :block-id="block.id" 
-            />
+            <div class="viewer-wrapper" v-if="canViewResults">
+              <ThreeViewer 
+                :block-id="block.id" 
+              />
+              <CameraDetailPanel />
+            </div>
           </el-tab-pane>
 
           <!-- Statistics Tab -->
@@ -219,6 +236,13 @@
   </div>
 </template>
 
+<style scoped>
+.viewer-wrapper {
+  position: relative;
+  height: 100%;
+}
+</style>
+
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -237,9 +261,12 @@ import PartitionList from '@/components/PartitionList.vue'
 import GPUSelector from '@/components/GPUSelector.vue'
 import ProgressView from '@/components/ProgressView.vue'
 import ThreeViewer from '@/components/ThreeViewer.vue'
+import InstantSfMRealtimeViewer from '@/components/InstantSfMRealtimeViewer.vue'
 import StatisticsView from '@/components/StatisticsView.vue'
 import ReconstructionPanel from '@/components/ReconstructionPanel.vue'
 import GaussianSplattingPanel from '@/components/GaussianSplattingPanel.vue'
+import CameraList from '@/components/CameraList.vue'
+import CameraDetailPanel from '@/components/CameraDetailPanel.vue'
 
 const route = useRoute()
 const router = useRouter()

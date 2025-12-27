@@ -22,8 +22,8 @@ export interface MatchingParams {
   // Vocabulary tree matching
   vocab_tree_path?: string
   // Spatial matching parameters
+  // Note: COLMAP automatically detects GPS vs Cartesian coordinates from database
   spatial_max_num_neighbors?: number
-  spatial_is_gps?: boolean
   spatial_ignore_z?: boolean
 }
 
@@ -98,6 +98,8 @@ export interface InstantsfmMapperParams {
   num_iteration_bundle_adjustment: number
   bundle_adjustment_max_iterations: number
   bundle_adjustment_function_tolerance: number
+  enable_visualization?: boolean
+  visualization_port?: number | null
   global_positioning_max_iterations: number
   global_positioning_function_tolerance: number
   min_num_matches: number
@@ -257,6 +259,9 @@ export interface CameraInfo {
   ty: number
   tz: number
   num_points: number
+  x?: number | null
+  y?: number | null
+  z?: number | null
 }
 
 export interface Point3D {
@@ -277,4 +282,13 @@ export interface ProgressMessage {
   stage: string
   progress: number
   message: string
+}
+
+// Real-time visualization types
+export interface RealtimeUpdate {
+  step: number
+  stepName: string
+  cameras: CameraInfo[]
+  points: Point3D[]
+  timestamp: number
 }

@@ -27,6 +27,12 @@ from ..models.block import Block
 from ..models.database import AsyncSessionLocal
 from ..settings import GS_PYTHON, GS_REPO_PATH
 
+# Import COLMAP_PATH from task_runner
+try:
+    from .task_runner import COLMAP_PATH
+except ImportError:
+    COLMAP_PATH = os.environ.get("COLMAP_PATH", "/usr/local/bin/colmap")
+
 
 class GSProcessError(Exception):
     """Exception raised when gaussian-splatting training fails."""
@@ -56,6 +62,80 @@ def _list_image_files(images_dir: str) -> List[str]:
         if lower.endswith((".jpg", ".jpeg", ".png")):
             out.append(name)
     return out
+
+
+def _check_camera_model(sparse0_dir: str) -> Optional[str]:
+    """Check camera model in COLMAP sparse reconstruction.
+    
+    Returns:
+        Camera model string (e.g., "OPENCV", "PINHOLE", "SIMPLE_PINHOLE") or None if cannot determine.
+    """
+    import struct
+    
+    # Try to read cameras.bin first
+    cameras_bin = os.path.join(sparse0_dir, "cameras.bin")
+    if os.path.exists(cameras_bin):
+        try:
+            with open(cameras_bin, "rb") as f:
+                num_cameras = struct.unpack("<Q", f.read(8))[0]
+                if num_cameras > 0:
+                    # Read first camera
+                    camera_id = struct.unpack("<I", f.read(4))[0]
+                    model_id = struct.unpack("<I", f.read(4))[0]
+                    width = struct.unpack("<Q", f.read(8))[0]
+                    height = struct.unpack("<Q", f.read(8))[0]
+                    num_params = struct.unpack("<Q", f.read(8))[0]
+                    
+                    # Skip params (we only need model_id)
+                    # Params are doubles (8 bytes each)
+                    # Note: num_params should be small (typically 1-8), but we read it as uint64
+                    # So we need to convert to int safely
+                    try:
+                        num_params_int = int(num_params)
+                        if 0 < num_params_int < 100:  # Sanity check
+                            f.read(8 * num_params_int)
+                    except (ValueError, OverflowError):
+                        # If num_params is invalid, just skip (we already have model_id)
+                        pass
+                    
+                    # Map model_id to model name
+                    # COLMAP model IDs: 0=SIMPLE_PINHOLE, 1=PINHOLE, 2=SIMPLE_RADIAL, 3=RADIAL, 4=OPENCV, etc.
+                    model_map = {
+                        0: "SIMPLE_PINHOLE",
+                        1: "PINHOLE",
+                        2: "SIMPLE_RADIAL",
+                        3: "RADIAL",
+                        4: "OPENCV",
+                        5: "OPENCV_FISHEYE",
+                        6: "FULL_OPENCV",
+                        7: "FOV",
+                        8: "SIMPLE_RADIAL_FISHEYE",
+                        9: "RADIAL_FISHEYE",
+                        10: "THIN_PRISM_FISHEYE",
+                    }
+                    return model_map.get(model_id, "UNKNOWN")
+        except Exception as e:
+            # Log error for debugging but don't fail
+            import traceback
+            print(f"[_check_camera_model] Error reading cameras.bin: {e}")
+            traceback.print_exc()
+            pass
+    
+    # Fallback: try to read cameras.txt
+    cameras_txt = os.path.join(sparse0_dir, "cameras.txt")
+    if os.path.exists(cameras_txt):
+        try:
+            with open(cameras_txt, "r") as f:
+                for line in f:
+                    if line.strip() and not line.startswith("#"):
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            # Format: CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
+                            return parts[1]  # MODEL
+        except Exception:
+            pass
+    
+    return None
 
 
 def _validate_sparse0(sparse0_dir: str) -> Tuple[bool, str]:
@@ -185,34 +265,194 @@ class GSRunner:
             )
         )
 
-    def _prepare_dataset(self, block: Block, dataset_dir: str) -> Tuple[str, str]:
+    def _prepare_dataset(self, block: Block, dataset_dir: str, log_func=None) -> Tuple[str, str]:
+        """Prepare dataset for 3DGS training.
+        
+        Args:
+            block: Block instance
+            dataset_dir: Dataset directory to prepare
+            log_func: Optional logging function (for async context)
+        
+        Returns:
+            Tuple of (images_source_path, sparse0_source_path)
+        """
         images_src = block.working_image_path or block.image_path
         sparse0_src = os.path.join(block.output_path or "", "sparse", "0")
 
         os.makedirs(dataset_dir, exist_ok=True)
 
-        # images: symlink the whole directory to avoid heavy per-file linking
-        images_link = os.path.join(dataset_dir, "images")
-        if os.path.lexists(images_link):
-            os.unlink(images_link)
-        os.symlink(images_src, images_link)
+        # Check camera model - 3DGS only supports PINHOLE or SIMPLE_PINHOLE
+        camera_model = _check_camera_model(sparse0_src)
+        
+        # Default to undistorting if we can't determine the model (safer)
+        # Only skip undistortion if we're certain it's PINHOLE or SIMPLE_PINHOLE
+        needs_undistort = True  # Default: do undistortion
+        if camera_model in ("PINHOLE", "SIMPLE_PINHOLE"):
+            needs_undistort = False
+        
+        if log_func:
+            if camera_model:
+                log_func(f"[GSRunner] Detected camera model: {camera_model}")
+            else:
+                log_func(f"[GSRunner] Could not determine camera model, will attempt undistortion")
+            if needs_undistort:
+                if camera_model:
+                    log_func(f"[GSRunner] Camera model {camera_model} requires undistortion. Running COLMAP image_undistorter...")
+                else:
+                    log_func(f"[GSRunner] Running COLMAP image_undistorter to ensure PINHOLE model...")
+        
+        if needs_undistort:
+            # Need to undistort: use COLMAP image_undistorter
+            # This will create undistorted images and PINHOLE camera model
+            undistorted_dir = os.path.join(dataset_dir, "undistorted")
+            os.makedirs(undistorted_dir, exist_ok=True)
+            
+            # Run COLMAP image_undistorter
+            cmd = [
+                COLMAP_PATH,
+                "image_undistorter",
+                "--image_path", images_src,
+                "--input_path", sparse0_src,
+                "--output_path", undistorted_dir,
+                "--output_type", "COLMAP",
+            ]
+            
+            import subprocess
+            if log_func:
+                log_func(f"[GSRunner] Running: {' '.join(cmd)}")
+            
+            # Set up environment with library paths (same as task_runner)
+            env = os.environ.copy()
+            # Add Ceres library path (contains all required libraries including absl)
+            from .task_runner import CERES_LIB_PATH
+            current_ld_path = env.get("LD_LIBRARY_PATH", "")
+            if CERES_LIB_PATH not in current_ld_path:
+                env["LD_LIBRARY_PATH"] = f"{CERES_LIB_PATH}:{current_ld_path}" if current_ld_path else CERES_LIB_PATH
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=dataset_dir,
+                env=env,
+            )
+            
+            # After undistortion, check output (even if return code is non-zero)
+            # COLMAP image_undistorter has known SIGSEGV issues but may still produce valid output
+            undistorted_images = os.path.join(undistorted_dir, "images")
+            undistorted_sparse_candidates = [
+                os.path.join(undistorted_dir, "sparse", "0"),  # Standard path
+                os.path.join(undistorted_dir, "sparse"),       # Alternative path
+            ]
+            
+            # Check if output was actually generated
+            has_images = os.path.exists(undistorted_images) and len(_list_image_files(undistorted_images)) > 0
+            has_sparse = False
+            actual_sparse = None
+            
+            for candidate in undistorted_sparse_candidates:
+                if os.path.exists(candidate):
+                    cameras_file = os.path.join(candidate, "cameras.bin")
+                    if os.path.exists(cameras_file):
+                        has_sparse = True
+                        actual_sparse = candidate
+                        break
+            
+            if result.returncode != 0:
+                # Even with non-zero return code, check if output was generated
+                if has_images and has_sparse:
+                    # Output exists, treat as success (known COLMAP SIGSEGV issue)
+                    if log_func:
+                        log_func(
+                            f"[GSRunner] Image undistortion completed (output validated despite exit code {result.returncode})"
+                        )
+                else:
+                    # True failure: no output generated
+                    error_msg = result.stderr[:500] if result.stderr else result.stdout[:500] if result.stdout else "Unknown error"
+                    if log_func:
+                        log_func(f"[GSRunner] COLMAP image_undistorter failed: {error_msg}")
+                    raise RuntimeError(
+                        f"COLMAP image_undistorter failed (camera model: {camera_model}). "
+                        f"Error: {error_msg}"
+                    )
+            else:
+                # Return code is 0, but still verify output exists
+                if not has_images or not has_sparse:
+                    raise RuntimeError(
+                        f"COLMAP image_undistorter returned success but did not produce expected output. "
+                        f"Expected images at {undistorted_images} and sparse at one of {undistorted_sparse_candidates}"
+                    )
+                if log_func:
+                    log_func(f"[GSRunner] Image undistortion completed successfully")
+            
+            # Standardize directory structure: ensure we use sparse/0
+            target_sparse = os.path.join(undistorted_dir, "sparse", "0")
+            if actual_sparse != target_sparse:
+                # Move files from sparse/ to sparse/0/
+                os.makedirs(target_sparse, exist_ok=True)
+                for f in ["cameras.bin", "images.bin", "points3D.bin"]:
+                    src = os.path.join(actual_sparse, f)
+                    dst = os.path.join(target_sparse, f)
+                    if os.path.exists(src) and not os.path.exists(dst):
+                        shutil.move(src, dst)
+                        if log_func:
+                            log_func(f"[GSRunner] Moved {f} from sparse/ to sparse/0/")
+                actual_sparse = target_sparse
+            
+            # Final verification
+            if not os.path.exists(undistorted_images) or not os.path.exists(actual_sparse):
+                raise RuntimeError(
+                    f"COLMAP image_undistorter did not produce expected output. "
+                    f"Expected: {undistorted_images} and {actual_sparse}"
+                )
+            
+            # Link to undistorted images and sparse
+            images_link = os.path.join(dataset_dir, "images")
+            if os.path.lexists(images_link):
+                os.unlink(images_link)
+            os.symlink(undistorted_images, images_link)
+            
+            sparse_dir = os.path.join(dataset_dir, "sparse")
+            os.makedirs(sparse_dir, exist_ok=True)
+            sparse0_link = os.path.join(sparse_dir, "0")
+            if os.path.lexists(sparse0_link):
+                os.unlink(sparse0_link)
+            os.symlink(actual_sparse, sparse0_link)
+            
+            # Update source paths for return value
+            images_src = undistorted_images
+            sparse0_src = actual_sparse
+        else:
+            # No undistortion needed: use original images and sparse
+            images_link = os.path.join(dataset_dir, "images")
+            if os.path.lexists(images_link):
+                os.unlink(images_link)
+            os.symlink(images_src, images_link)
 
-        # sparse/0: symlink the folder
-        sparse_dir = os.path.join(dataset_dir, "sparse")
-        os.makedirs(sparse_dir, exist_ok=True)
-        sparse0_link = os.path.join(sparse_dir, "0")
-        if os.path.lexists(sparse0_link):
-            os.unlink(sparse0_link)
-        os.symlink(sparse0_src, sparse0_link)
+            sparse_dir = os.path.join(dataset_dir, "sparse")
+            os.makedirs(sparse_dir, exist_ok=True)
+            sparse0_link = os.path.join(sparse_dir, "0")
+            if os.path.lexists(sparse0_link):
+                os.unlink(sparse0_link)
+            os.symlink(sparse0_src, sparse0_link)
 
         # validations
-        images = _list_image_files(images_src)
+        final_images_dir = images_src if needs_undistort else (block.working_image_path or block.image_path)
+        images = _list_image_files(final_images_dir)
         if not images:
-            raise ValueError(f"No images found under: {images_src}")
+            raise ValueError(f"No images found under: {final_images_dir}")
 
         ok, msg = _validate_sparse0(sparse0_src)
         if not ok:
             raise ValueError(msg)
+        
+        # Verify camera model after processing
+        final_camera_model = _check_camera_model(sparse0_src)
+        if final_camera_model and final_camera_model not in ("PINHOLE", "SIMPLE_PINHOLE"):
+            raise RuntimeError(
+                f"Camera model after processing is still {final_camera_model}, "
+                "but 3DGS requires PINHOLE or SIMPLE_PINHOLE"
+            )
 
         return images_src, sparse0_src
 
@@ -251,7 +491,7 @@ class GSRunner:
                 await db.commit()
 
                 t0 = time.time()
-                self._prepare_dataset(block, dataset_dir)
+                self._prepare_dataset(block, dataset_dir, log_func=log)
                 stage_times["dataset_prepare"] = time.time() - t0
 
                 os.makedirs(model_dir, exist_ok=True)
@@ -279,10 +519,17 @@ class GSRunner:
 
                 env = os.environ.copy()
                 env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+                
+                # Set CUDA architecture for RTX 5090 (Blackwell sm_120) if not already set
+                # This ensures CUDA kernels are available for sm_120
+                if "TORCH_CUDA_ARCH_LIST" not in env:
+                    env["TORCH_CUDA_ARCH_LIST"] = "12.0"
+                    log(f"[GSRunner] Set TORCH_CUDA_ARCH_LIST=12.0 for RTX 5090 (sm_120) support")
 
                 log(f"[GSRunner] cwd={str(GS_REPO_PATH)}")
                 log(f"[GSRunner] cmd={' '.join(args)}")
                 log(f"[GSRunner] CUDA_VISIBLE_DEVICES={env.get('CUDA_VISIBLE_DEVICES')}")
+                log(f"[GSRunner] TORCH_CUDA_ARCH_LIST={env.get('TORCH_CUDA_ARCH_LIST', 'not set')}")
 
                 proc = await asyncio.create_subprocess_exec(
                     *args,

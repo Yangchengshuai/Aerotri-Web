@@ -15,6 +15,7 @@ pynvml==11.5.0
 
 # WebSocket
 websockets==12.0
+aiohttp==3.13.2
 
 # Utils
 pydantic==2.5.3

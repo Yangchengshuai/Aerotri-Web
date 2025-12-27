@@ -1,188 +1,104 @@
-"""Pydantic schemas for API request/response validation."""
+"""Pydantic schemas for API request/response models."""
 from datetime import datetime
-from typing import Optional, List, Literal
-
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
-from .models.block import BlockStatus, AlgorithmType, MatchingMethod
+from .models import BlockStatus, AlgorithmType, MatchingMethod
 
 
-# ============ Feature Extraction Parameters ============
+# ===== Block Schemas =====
+
 class FeatureParams(BaseModel):
     """Feature extraction parameters."""
-    use_gpu: bool = True
-    gpu_index: int = 0
-    max_image_size: int = 2640
-    max_num_features: int = 12000
-    camera_model: str = "SIMPLE_RADIAL"
-    single_camera: bool = True
+    pass  # Can be extended with specific feature params
 
 
-# ============ Matching Parameters ============
 class MatchingParams(BaseModel):
     """Feature matching parameters."""
-    method: MatchingMethod = MatchingMethod.SEQUENTIAL
-    overlap: int = 10  # For sequential matching
-    use_gpu: bool = True
-    gpu_index: int = 0
+    method: Optional[str] = None
+    # Sequential matching
+    overlap: Optional[int] = None
+    # Common GPU options
+    use_gpu: Optional[bool] = None
+    gpu_index: Optional[int] = None
     # Vocabulary tree matching
     vocab_tree_path: Optional[str] = None
-    # Spatial matching key parameters
-    spatial_max_num_neighbors: int = 50
-    spatial_is_gps: bool = True
-    spatial_ignore_z: bool = False
+    # Spatial matching parameters
+    spatial_max_num_neighbors: Optional[int] = None
+    spatial_ignore_z: Optional[bool] = None
+    
+    class Config:
+        extra = "allow"  # Allow extra fields for backward compatibility
 
 
-# ============ Mapper Parameters ============
-class ColmapMapperParams(BaseModel):
-    """COLMAP mapper (incremental SfM) parameters."""
-    use_pose_prior: bool = False
-    ba_use_gpu: bool = True
-    ba_gpu_index: int = 0
-
-
-class GlomapMapperParams(BaseModel):
-    """GLOMAP mapper (global SfM) parameters."""
-    use_pose_prior: Optional[bool] = None
-    global_positioning_use_gpu: Optional[bool] = None
-    global_positioning_gpu_index: Optional[int] = None
-    global_positioning_min_num_images_gpu_solver: Optional[int] = None
-    bundle_adjustment_use_gpu: Optional[bool] = None
-    bundle_adjustment_gpu_index: Optional[int] = None
-    bundle_adjustment_min_num_images_gpu_solver: Optional[int] = None
-    # Skip stage flags
-    skip_preprocessing: Optional[bool] = None
-    skip_view_graph_calibration: Optional[bool] = None
-    skip_relative_pose_estimation: Optional[bool] = None
-    skip_rotation_averaging: Optional[bool] = None
-    skip_track_establishment: Optional[bool] = None
-    skip_global_positioning: Optional[bool] = None
-    skip_bundle_adjustment: Optional[bool] = None
-    skip_retriangulation: Optional[bool] = None
-    skip_pruning: Optional[bool] = None
-    # Iteration parameters
-    ba_iteration_num: Optional[int] = None
-    retriangulation_iteration_num: Optional[int] = None
-    # Track Establishment parameters
-    track_establishment_min_num_tracks_per_view: Optional[int] = None
-    track_establishment_min_num_view_per_track: Optional[int] = None
-    track_establishment_max_num_view_per_track: Optional[int] = None
-    track_establishment_max_num_tracks: Optional[int] = None
-    # Global Positioning parameters
-    global_positioning_optimize_positions: Optional[bool] = None
-    global_positioning_optimize_points: Optional[bool] = None
-    global_positioning_optimize_scales: Optional[bool] = None
-    global_positioning_thres_loss_function: Optional[float] = None
-    global_positioning_max_num_iterations: Optional[int] = None
-    # Bundle Adjustment parameters
-    bundle_adjustment_optimize_rotations: Optional[bool] = None
-    bundle_adjustment_optimize_translation: Optional[bool] = None
-    bundle_adjustment_optimize_intrinsics: Optional[bool] = None
-    bundle_adjustment_optimize_principal_point: Optional[bool] = None
-    bundle_adjustment_optimize_points: Optional[bool] = None
-    bundle_adjustment_thres_loss_function: Optional[float] = None
-    bundle_adjustment_max_num_iterations: Optional[int] = None
-    # Triangulation parameters
-    triangulation_complete_max_reproj_error: Optional[float] = None
-    triangulation_merge_max_reproj_error: Optional[float] = None
-    triangulation_min_angle: Optional[float] = None
-    triangulation_min_num_matches: Optional[int] = None
-    # Inlier Thresholds parameters
-    thresholds_max_angle_error: Optional[float] = None
-    thresholds_max_reprojection_error: Optional[float] = None
-    thresholds_min_triangulation_angle: Optional[float] = None
-    thresholds_max_epipolar_error_E: Optional[float] = None
-    thresholds_max_epipolar_error_F: Optional[float] = None
-    thresholds_max_epipolar_error_H: Optional[float] = None
-    thresholds_min_inlier_num: Optional[float] = None
-    thresholds_min_inlier_ratio: Optional[float] = None
-    thresholds_max_rotation_error: Optional[float] = None
-
-
-class InstantsfmMapperParams(BaseModel):
-    """InstantSfM mapper (fast global SfM) parameters."""
-    export_txt: bool = True
-    disable_depths: bool = False
-    manual_config_name: Optional[str] = None
-    gpu_index: int = 0  # GPU index to use
-    num_iteration_bundle_adjustment: int = 3
-    bundle_adjustment_max_iterations: int = 200
-    bundle_adjustment_function_tolerance: float = 5e-4
-    global_positioning_max_iterations: int = 100
-    global_positioning_function_tolerance: float = 5e-4
-    min_num_matches: int = 30
-    min_triangulation_angle: float = 1.5
-
-
-# ============ Block Schemas ============
 class BlockCreate(BaseModel):
     """Schema for creating a new block."""
-    name: str = Field(..., min_length=1, max_length=255)
-    image_path: str = Field(..., min_length=1)
+    name: str
+    image_path: str
     algorithm: AlgorithmType = AlgorithmType.GLOMAP
     matching_method: MatchingMethod = MatchingMethod.SEQUENTIAL
     feature_params: Optional[FeatureParams] = None
     matching_params: Optional[MatchingParams] = None
-    mapper_params: Optional[dict] = None  # ColmapMapperParams, GlomapMapperParams, or InstantsfmMapperParams
+    mapper_params: Optional[Dict[str, Any]] = None
 
 
 class BlockUpdate(BaseModel):
     """Schema for updating a block."""
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    name: Optional[str] = None
     algorithm: Optional[AlgorithmType] = None
     matching_method: Optional[MatchingMethod] = None
     feature_params: Optional[FeatureParams] = None
     matching_params: Optional[MatchingParams] = None
-    mapper_params: Optional[dict] = None
+    mapper_params: Optional[Dict[str, Any]] = None
 
 
 class BlockResponse(BaseModel):
-    """Schema for block API response."""
+    """Schema for block response."""
     id: str
     name: str
     image_path: str
-    output_path: Optional[str]
+    source_image_path: Optional[str] = None
+    working_image_path: Optional[str] = None
+    output_path: Optional[str] = None
     status: BlockStatus
     algorithm: AlgorithmType
     matching_method: MatchingMethod
-    feature_params: Optional[dict]
-    matching_params: Optional[dict]
-    mapper_params: Optional[dict]
+    feature_params: Optional[Dict[str, Any]] = None
+    matching_params: Optional[Dict[str, Any]] = None
+    mapper_params: Optional[Dict[str, Any]] = None
     glomap_mode: Optional[str] = None
     parent_block_id: Optional[str] = None
     input_colmap_path: Optional[str] = None
     output_colmap_path: Optional[str] = None
     version_index: Optional[int] = None
-    glomap_params: Optional[dict] = None
-    statistics: Optional[dict]
-    current_stage: Optional[str]
-    progress: Optional[float]
-    error_message: Optional[str]
-    # Reconstruction (OpenMVS) fields
+    glomap_params: Optional[Dict[str, Any]] = None
+    statistics: Optional[Dict[str, Any]] = None
+    current_stage: Optional[str] = None
+    current_detail: Optional[str] = None
+    progress: Optional[float] = None
+    error_message: Optional[str] = None
     recon_status: Optional[str] = None
     recon_progress: Optional[float] = None
     recon_current_stage: Optional[str] = None
     recon_output_path: Optional[str] = None
     recon_error_message: Optional[str] = None
-    recon_statistics: Optional[dict] = None
-    # 3D Gaussian Splatting (3DGS) fields
+    recon_statistics: Optional[Dict[str, Any]] = None
     gs_status: Optional[str] = None
     gs_progress: Optional[float] = None
     gs_current_stage: Optional[str] = None
     gs_output_path: Optional[str] = None
     gs_error_message: Optional[str] = None
-    gs_statistics: Optional[dict] = None
-    # Partitioned SfM fields
-    partition_enabled: Optional[bool] = None
+    gs_statistics: Optional[Dict[str, Any]] = None
+    partition_enabled: Optional[bool] = False
     partition_strategy: Optional[str] = None
-    partition_params: Optional[dict] = None
+    partition_params: Optional[Dict[str, Any]] = None
     sfm_pipeline_mode: Optional[str] = None
     merge_strategy: Optional[str] = None
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
-    
+    created_at: datetime
+    updated_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 
@@ -193,28 +109,222 @@ class BlockListResponse(BaseModel):
     total: int
 
 
-# ============ Image Schemas ============
-class ImageInfo(BaseModel):
-    """Image information."""
+# ===== Task Schemas =====
+
+class TaskSubmit(BaseModel):
+    """Schema for submitting a task."""
+    gpu_index: Optional[int] = None
+
+
+class TaskStatus(BaseModel):
+    """Schema for task status."""
+    block_id: str
+    status: BlockStatus
+    current_stage: Optional[str] = None
+    progress: float
+    stage_times: Optional[Dict[str, float]] = None
+    log_tail: Optional[List[str]] = None
+
+
+class GlomapResumeRequest(BaseModel):
+    """Schema for GLOMAP mapper_resume request."""
+    input_colmap_path: Optional[str] = None
+    gpu_index: Optional[int] = None
+    glomap_params: Optional[Dict[str, Any]] = None
+
+
+# ===== Reconstruction Schemas =====
+
+class ReconstructRequest(BaseModel):
+    """Schema for reconstruction request."""
+    quality_preset: Optional[str] = "medium"  # low, medium, high
+
+
+class ReconstructionFileInfo(BaseModel):
+    """Schema for reconstruction file information."""
     name: str
     path: str
-    size: int  # bytes
-    width: Optional[int] = None
-    height: Optional[int] = None
-    thumbnail_url: Optional[str] = None
+    size: int
+    stage: Optional[str] = None
+
+
+class ReconstructionFilesResponse(BaseModel):
+    """Schema for reconstruction files response."""
+    files: List[ReconstructionFileInfo]
+
+
+class ReconstructionStatusResponse(BaseModel):
+    """Schema for reconstruction status response."""
+    block_id: str
+    recon_status: Optional[str] = None
+    recon_progress: Optional[float] = None
+    recon_current_stage: Optional[str] = None
+    recon_output_path: Optional[str] = None
+    recon_error_message: Optional[str] = None
+    recon_statistics: Optional[Dict[str, Any]] = None
+
+
+class ReconstructionLogResponse(BaseModel):
+    """Schema for reconstruction log response."""
+    lines: List[str]
+
+
+# ===== 3DGS Schemas =====
+
+class GSFileInfo(BaseModel):
+    """Schema for 3DGS file information."""
+    name: str
+    path: str
+    size: int
+    stage: Optional[str] = None
+
+
+class GSFilesResponse(BaseModel):
+    """Schema for 3DGS files response."""
+    files: List[GSFileInfo]
+
+
+class GSStatusResponse(BaseModel):
+    """Schema for 3DGS status response."""
+    block_id: str
+    gs_status: Optional[str] = None
+    gs_progress: Optional[float] = None
+    gs_current_stage: Optional[str] = None
+    gs_output_path: Optional[str] = None
+    gs_error_message: Optional[str] = None
+    gs_statistics: Optional[Dict[str, Any]] = None
+
+
+class GSLogResponse(BaseModel):
+    """Schema for 3DGS log response."""
+    lines: List[str]
+
+
+class GSTrainParams(BaseModel):
+    """Schema for 3DGS training parameters."""
+    iterations: Optional[int] = None
+    resolution: Optional[int] = None
+    # Add more params as needed
+
+
+class GSTrainRequest(BaseModel):
+    """Schema for 3DGS training request."""
+    gpu_index: int
+    train_params: Optional[GSTrainParams] = None
+
+
+# ===== Partition Schemas =====
+
+class PartitionInfo(BaseModel):
+    """Schema for partition information."""
+    id: str
+    index: int
+    name: str
+    image_start_name: Optional[str] = None
+    image_end_name: Optional[str] = None
+    image_count: Optional[int] = None
+    status: Optional[str] = None
+    statistics: Optional[Dict[str, Any]] = None
+
+
+class PartitionConfigRequest(BaseModel):
+    """Schema for partition configuration request."""
+    partition_strategy: str
+    partition_params: Dict[str, Any]
+    sfm_pipeline_mode: Optional[str] = None
+    merge_strategy: Optional[str] = None
+
+
+class PartitionConfigResponse(BaseModel):
+    """Schema for partition configuration response."""
+    partition_enabled: bool
+    partition_strategy: Optional[str] = None
+    partition_params: Optional[Dict[str, Any]] = None
+    sfm_pipeline_mode: Optional[str] = None
+    merge_strategy: Optional[str] = None
+    partitions: List[PartitionInfo]
+
+
+class PartitionPreviewRequest(BaseModel):
+    """Schema for partition preview request."""
+    partition_strategy: str
+    partition_params: Dict[str, Any]
+
+
+class PartitionPreviewResponse(BaseModel):
+    """Schema for partition preview response."""
+    partitions: List[PartitionInfo]
+    total_images: int
+
+
+# ===== Result Schemas =====
+
+class CameraInfo(BaseModel):
+    """Schema for camera information."""
+    image_id: int
+    image_name: str
+    qw: float
+    qx: float
+    qy: float
+    qz: float
+    tx: float
+    ty: float
+    tz: float
+    camera_id: int
+    num_points: int
+    x: Optional[float] = None
+    y: Optional[float] = None
+    z: Optional[float] = None
+
+
+class Point3D(BaseModel):
+    """Schema for 3D point."""
+    id: int
+    x: float
+    y: float
+    z: float
+    r: int
+    g: int
+    b: int
+    error: Optional[float] = None
+
+
+class ReconstructionStats(BaseModel):
+    """Schema for reconstruction statistics."""
+    num_images: int = 0
+    num_registered_images: int = 0
+    num_registered_images_unique: Optional[int] = None
+    num_registered_images_sum: Optional[int] = None
+    num_points3d: int = 0
+    num_observations: int = 0
+    mean_reprojection_error: float = 0.0
+    mean_track_length: float = 0.0
+    stage_times: Optional[Dict[str, float]] = None
+    algorithm_params: Optional[Dict[str, Any]] = None
+
+
+# ===== Image Schemas =====
+
+class ImageInfo(BaseModel):
+    """Schema for image information."""
+    name: str
+    path: str
+    size: int
+    thumbnail_url: str
 
 
 class ImageListResponse(BaseModel):
-    """Image list response with pagination."""
+    """Schema for image list response."""
     images: List[ImageInfo]
     total: int
     page: int
     page_size: int
 
 
-# ============ GPU Schemas ============
+# ===== GPU Schemas =====
+
 class GPUInfo(BaseModel):
-    """GPU device information."""
+    """Schema for GPU information."""
     index: int
     name: str
     memory_total: int  # MB
@@ -225,222 +335,6 @@ class GPUInfo(BaseModel):
 
 
 class GPUListResponse(BaseModel):
-    """GPU list response."""
+    """Schema for GPU list response."""
     gpus: List[GPUInfo]
 
-
-# ============ Task Schemas ============
-class TaskSubmit(BaseModel):
-    """Task submission request."""
-    gpu_index: int = 0
-
-
-class GlomapResumeRequest(BaseModel):
-    """Request payload for starting a GLOMAP mapper_resume optimization."""
-
-    gpu_index: int = 0
-    # Optional explicit COLMAP input path; if omitted, derive from parent block output.
-    input_colmap_path: Optional[str] = None
-    # GLOMAP-specific parameters (e.g. skip_* flags, gpu toggles)
-    glomap_params: Optional[dict] = None
-
-
-class TaskStatus(BaseModel):
-    """Task status response."""
-    block_id: str
-    status: BlockStatus
-    current_stage: Optional[str]
-    progress: float
-    stage_times: Optional[dict]  # Stage -> elapsed seconds
-    log_tail: Optional[List[str]]  # Last N lines of log
-
-
-# ============ Result Schemas ============
-class CameraInfo(BaseModel):
-    """Camera information from reconstruction."""
-    image_id: int
-    image_name: str
-    camera_id: int
-    qw: float
-    qx: float
-    qy: float
-    qz: float
-    tx: float
-    ty: float
-    tz: float
-    num_points: int
-
-
-class Point3D(BaseModel):
-    """3D point from reconstruction."""
-    id: int
-    x: float
-    y: float
-    z: float
-    r: int
-    g: int
-    b: int
-    error: float
-    num_observations: int
-
-
-class ReconstructionStats(BaseModel):
-    """Reconstruction statistics."""
-    num_images: int = 0
-    num_registered_images: int = 0
-    # For partition aggregation: unique vs sum across partitions
-    num_registered_images_unique: int = 0
-    num_registered_images_sum: int = 0
-    num_points3d: int = 0
-    num_observations: int = 0
-    mean_reprojection_error: float = 0.0
-    mean_track_length: float = 0.0
-    stage_times: dict = Field(default_factory=dict)  # Stage -> elapsed seconds
-    algorithm_params: dict = Field(default_factory=dict)
-
-
-# ============ Reconstruction Schemas ============
-class ReconstructRequest(BaseModel):
-    """Request payload for starting reconstruction."""
-
-    quality_preset: Literal["fast", "balanced", "high"] = "balanced"
-
-
-class ReconstructionFileInfo(BaseModel):
-    """Information about a reconstruction output file."""
-
-    stage: str  # dense | mesh | refine | texture
-    type: str  # point_cloud | mesh | texture | other
-    name: str
-    size_bytes: int
-    mtime: datetime
-    preview_supported: bool
-    download_url: str
-
-
-class ReconstructionFilesResponse(BaseModel):
-    """List of reconstruction output files."""
-
-    files: List[ReconstructionFileInfo]
-
-
-class ReconstructionStatusResponse(BaseModel):
-    """Reconstruction status for a block."""
-
-    block_id: str
-    recon_status: Optional[str]
-    recon_progress: Optional[float]
-    recon_current_stage: Optional[str]
-    recon_output_path: Optional[str]
-    recon_error_message: Optional[str]
-    recon_statistics: Optional[dict]
-
-
-class ReconstructionLogResponse(BaseModel):
-    """Tail of reconstruction logs for a block."""
-
-    block_id: str
-    lines: List[str]
-
-
-# ============ 3DGS (Gaussian Splatting) Schemas ============
-class GSTrainParams(BaseModel):
-    """Training parameters for gaussian-splatting (server-side)."""
-
-    iterations: int = Field(7000, ge=1)
-    resolution: int = Field(2, ge=1)
-    data_device: Literal["cpu", "cuda"] = "cpu"
-    sh_degree: int = Field(3, ge=0, le=3)
-
-
-class GSTrainRequest(BaseModel):
-    """Request payload for starting 3DGS training."""
-
-    gpu_index: int = Field(0, ge=0)
-    train_params: GSTrainParams = Field(default_factory=GSTrainParams)
-
-
-class GSFileInfo(BaseModel):
-    """Information about a 3DGS output file."""
-
-    stage: str  # model | other
-    type: str  # gaussian | other
-    name: str
-    size_bytes: int
-    mtime: datetime
-    preview_supported: bool
-    download_url: str
-
-
-class GSFilesResponse(BaseModel):
-    """List of 3DGS output files."""
-
-    files: List[GSFileInfo]
-
-
-class GSStatusResponse(BaseModel):
-    """3DGS status for a block."""
-
-    block_id: str
-    gs_status: Optional[str]
-    gs_progress: Optional[float]
-    gs_current_stage: Optional[str]
-    gs_output_path: Optional[str]
-    gs_error_message: Optional[str]
-    gs_statistics: Optional[dict]
-
-
-class GSLogResponse(BaseModel):
-    """Tail of 3DGS training logs for a block."""
-
-    block_id: str
-    lines: List[str]
-
-
-# ============ Partition Schemas ============
-class PartitionConfigRequest(BaseModel):
-    """Request to configure partitions for a block."""
-    partition_enabled: bool = False
-    partition_strategy: str = "name_range_with_overlap"
-    partition_params: dict = Field(default_factory=lambda: {"partition_size": 1000, "overlap": 150})
-    sfm_pipeline_mode: str = "global_feat_match"
-    merge_strategy: str = Field(default="sim3_keep_one", pattern="^(rigid_keep_one|sim3_keep_one)$")
-
-
-class PartitionPreviewRequest(BaseModel):
-    """Request to preview partitions without saving."""
-    partition_size: int = Field(1000, ge=1)
-    overlap: int = Field(150, ge=0)
-
-
-class PartitionInfo(BaseModel):
-    """Partition information."""
-    id: Optional[str] = None
-    index: int
-    name: str
-    image_start_name: Optional[str] = None
-    image_end_name: Optional[str] = None
-    image_count: int
-    overlap_with_prev: int = 0
-    overlap_with_next: int = 0
-    status: Optional[str] = None
-    progress: Optional[float] = None
-    error_message: Optional[str] = None
-    image_names: Optional[List[str]] = None  # Only in preview
-    statistics: Optional[dict] = None  # Partition statistics (num_registered_images, num_points3d, etc.)
-
-
-class PartitionConfigResponse(BaseModel):
-    """Partition configuration response."""
-    partition_enabled: bool
-    partition_strategy: Optional[str] = None
-    partition_params: Optional[dict] = None
-    sfm_pipeline_mode: Optional[str] = None
-    merge_strategy: Optional[str] = None
-    partitions: List[PartitionInfo] = Field(default_factory=list)
-
-
-class PartitionPreviewResponse(BaseModel):
-    """Partition preview response."""
-    partitions: List[PartitionInfo]
-    total_images: int

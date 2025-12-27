@@ -21,9 +21,21 @@ export const useBlocksStore = defineStore('blocks', () => {
     error.value = null
     try {
       const response = await blockApi.list()
-      blocks.value = response.data.blocks
+      // Ensure we have the correct response structure
+      if (response.data && response.data.blocks) {
+        blocks.value = response.data.blocks
+      } else if (Array.isArray(response.data)) {
+        // Handle case where API returns array directly
+        blocks.value = response.data
+      } else {
+        console.error('Unexpected API response format:', response.data)
+        blocks.value = []
+      }
     } catch (e: unknown) {
-      error.value = e instanceof Error ? e.message : 'Failed to fetch blocks'
+      const errorMessage = e instanceof Error ? e.message : 'Failed to fetch blocks'
+      error.value = errorMessage
+      console.error('Error fetching blocks:', e)
+      blocks.value = []
     } finally {
       loading.value = false
     }

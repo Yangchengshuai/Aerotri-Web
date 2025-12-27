@@ -14,6 +14,12 @@ from ..models.block import Block, BlockStatus, AlgorithmType, MatchingMethod, Gl
 from ..models.database import AsyncSessionLocal
 from .log_parser import LogParser
 from .workspace_service import WorkspaceService
+from .instantsfm_visualizer_proxy import (
+    InstantSfMVisualizerProxy,
+    register_visualizer_proxy,
+    unregister_visualizer_proxy,
+    get_visualizer_proxy,
+)
 
 
 # COLMAP/GLOMAP executable paths
@@ -536,11 +542,11 @@ class TaskRunner:
             "--database_path", database_path,
             "--image_path", image_path,
             "--ImageReader.single_camera", str(params.get("single_camera", 0)),
-            "--ImageReader.camera_model", params.get("camera_model", "SIMPLE_RADIAL"),
+            "--ImageReader.camera_model", params.get("camera_model", "OPENCV"),
             "--SiftExtraction.use_gpu", str(params.get("use_gpu", 1)),
             "--SiftExtraction.gpu_index", str(gpu_index),
             "--SiftExtraction.max_image_size", str(params.get("max_image_size", 2640)),
-            "--SiftExtraction.max_num_features", str(params.get("max_num_features", 12000)),
+            "--SiftExtraction.max_num_features", str(params.get("max_num_features", 15000)),
         ]
         
         try:
@@ -596,14 +602,13 @@ class TaskRunner:
             ]
         elif method == "spatial":
             # Spatial matching based on image GPS/pose priors
+            # Note: COLMAP automatically detects GPS vs Cartesian coordinates from database
             spatial_max_num_neighbors = params.get("spatial_max_num_neighbors", 50)
-            spatial_is_gps = params.get("spatial_is_gps", True)
             spatial_ignore_z = params.get("spatial_ignore_z", False)
             cmd = [
                 COLMAP_PATH, "spatial_matcher",
                 "--database_path", database_path,
                 "--SpatialMatching.max_num_neighbors", str(spatial_max_num_neighbors),
-                "--SpatialMatching.is_gps", "1" if spatial_is_gps else "0",
                 "--SpatialMatching.ignore_z", "1" if spatial_ignore_z else "0",
                 "--SiftMatching.use_gpu", str(params.get("use_gpu", 1)),
                 "--SiftMatching.gpu_index", str(gpu_index),
@@ -1391,14 +1396,44 @@ class TaskRunner:
         if params.get("disable_depths", False):
             base_cmd_parts[-1] += " --disable_depths"
         
+        # Add visualization support
+        visualizer_proxy = None
+        if params.get("enable_visualization", False):
+            base_cmd_parts[-1] += " --enable_gui"
+            # Set VISER_PORT environment variable for port detection
+            # Note: viser uses random port by default, we'll try to capture it from logs
+            viser_port = params.get("visualization_port")
+            if viser_port:
+                base_cmd_parts.insert(-1, f"export VISER_PORT={viser_port}")
+            
+            # Start visualization proxy (will be started after process starts)
+            ctx.write_log_line("Visualization enabled - will start proxy after viser server is ready")
+        
         base_cmd = " && ".join(base_cmd_parts)
         cmd = ["bash", "-c", base_cmd]
         
         ctx.write_log_line(f"Running InstantSfM with data_path={data_path}, gpu_index={effective_gpu_index} (from params: {params.get('gpu_index', 'not set')}, fallback: {gpu_index})")
         ctx.write_log_line(f"Command: {' '.join(cmd)}")
         
-        # Run the process
-        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        # Start visualization proxy if enabled
+        # Note: Proxy will wait for viser server to start (viser starts after InstantSfM process begins)
+        if params.get("enable_visualization", False):
+            viser_port = params.get("visualization_port")
+            visualizer_proxy = InstantSfMVisualizerProxy(block_id, viser_port=viser_port)
+            register_visualizer_proxy(block_id, visualizer_proxy)
+            
+            # Start proxy in background (it will wait for viser server)
+            await visualizer_proxy.start()
+            ctx.write_log_line("Visualization proxy started - waiting for viser server to be ready")
+        
+        try:
+            # Run the process
+            await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        finally:
+            # Clean up visualization proxy
+            if visualizer_proxy:
+                await visualizer_proxy.stop()
+                unregister_visualizer_proxy(block_id)
     
     async def _run_process(self, cmd: List[str], ctx: TaskContext, db: AsyncSession, block_id: str, coarse_stage: str):
         """Run a subprocess and capture output.

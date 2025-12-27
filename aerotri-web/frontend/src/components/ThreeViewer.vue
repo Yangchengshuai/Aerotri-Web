@@ -113,6 +113,7 @@ import axios from 'axios'
 import { resultApi, partitionApi, blockApi, taskApi } from '@/api'
 import type { CameraInfo, Point3D } from '@/types'
 import PartitionSelector from './PartitionSelector.vue'
+import { useCameraSelectionStore } from '@/stores/cameraSelection'
 
 const props = defineProps<{
   blockId: string
@@ -164,7 +165,18 @@ let ensureSizeRaf: number | null = null
 let ensureSizeFrames = 0
 const initError = ref<string | null>(null)
 
+// Camera selection
+const cameraSelectionStore = useCameraSelectionStore()
+let raycaster: THREE.Raycaster
+let mouse: THREE.Vector2
+let selectedCameraObject: THREE.Object3D | null = null
+const highlightColor = 0x409eff // Element Plus primary color
+const defaultColor = 0xffff00 // Yellow
+
 onMounted(async () => {
+  // Initialize camera selection store
+  cameraSelectionStore.setBlockId(props.blockId)
+  
   // ElementPlus tabs may mount while hidden -> container size can be 0.
   // Use nextTick + ResizeObserver to ensure correct canvas sizing.
   nextTick(() => {
@@ -341,6 +353,13 @@ function initThree() {
   // But since we rotated rootGroup, the "ground" for the data is inverted.
   // Let's keep grid at y=0.
   scene.add(gridHelper)
+
+  // Initialize raycaster for camera selection
+  raycaster = new THREE.Raycaster()
+  mouse = new THREE.Vector2()
+
+  // Add double-click event listener for camera selection
+  renderer.domElement.addEventListener('dblclick', onCanvasClick, false)
 
   // Start animation
   animate()
@@ -539,6 +558,10 @@ async function downloadPly() {
 
 function loadCameras(cameras: CameraInfo[]) {
   camerasGroup.clear()
+  selectedCameraObject = null
+
+  // Update store with cameras
+  cameraSelectionStore.setCameras(cameras)
 
   if (cameras.length === 0) return
 
@@ -662,6 +685,9 @@ function loadCameras(cameras: CameraInfo[]) {
   if (cameras.length !== validCameras.length) {
     console.log(`Filtered ${cameras.length - validCameras.length} outlier cameras out of ${cameras.length} total`)
   }
+
+  // Update highlight based on store selection
+  updateCameraHighlight()
 }
 
 function updateCameraSizes() {
@@ -785,6 +811,139 @@ function fitToView() {
   controls.update()
 }
 
+function onCanvasClick(event: MouseEvent) {
+  // Double-click to select camera (prevents accidental selection)
+  if (!renderer || !camera || !camerasGroup) return
+
+  // Calculate mouse position in normalized device coordinates
+  const rect = renderer.domElement.getBoundingClientRect()
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+
+  // Update raycaster
+  raycaster.setFromCamera(mouse, camera)
+
+  // Find intersections with camera objects
+  const intersects = raycaster.intersectObjects(camerasGroup.children, true)
+
+  if (intersects.length > 0) {
+    // Find the camera object (might be nested in group)
+    let cameraObj: THREE.Object3D | null = null
+    for (const intersect of intersects) {
+      let obj = intersect.object
+      while (obj) {
+        if (obj.userData.camera) {
+          cameraObj = obj
+          break
+        }
+        obj = obj.parent
+      }
+      if (cameraObj) break
+    }
+
+    if (cameraObj && cameraObj.userData.camera) {
+      const cameraInfo = cameraObj.userData.camera as CameraInfo
+      cameraSelectionStore.setSelectedCamera(cameraInfo.image_id)
+      updateCameraHighlight()
+    }
+  }
+}
+
+function updateCameraHighlight() {
+  if (!camerasGroup) return
+
+  const selectedId = cameraSelectionStore.selectedCameraId
+
+  // Reset all cameras to default color
+  camerasGroup.children.forEach((child) => {
+    if (child instanceof THREE.Group) {
+      child.traverse((obj) => {
+        if (obj instanceof THREE.LineSegments) {
+          const material = obj.material as THREE.LineBasicMaterial
+          if (material) {
+            material.color.setHex(defaultColor)
+          }
+        }
+      })
+    }
+  })
+
+  // Highlight selected camera
+  if (selectedId !== null) {
+    camerasGroup.children.forEach((child) => {
+      if (child instanceof THREE.Group && child.userData.camera) {
+        const cameraInfo = child.userData.camera as CameraInfo
+        if (cameraInfo.image_id === selectedId) {
+          selectedCameraObject = child
+          child.traverse((obj) => {
+            if (obj instanceof THREE.LineSegments) {
+              const material = obj.material as THREE.LineBasicMaterial
+              if (material) {
+                material.color.setHex(highlightColor)
+              }
+            }
+          })
+        }
+      }
+    })
+  } else {
+    selectedCameraObject = null
+  }
+}
+
+// Watch store selection changes
+watch(() => cameraSelectionStore.selectedCameraId, () => {
+  updateCameraHighlight()
+})
+
+// Watch cameras list changes (e.g., after deletion)
+watch(() => cameraSelectionStore.cameras, (newCameras, oldCameras) => {
+  // If a camera was removed, remove it from 3D scene directly
+  if (initialized && oldCameras && newCameras.length < oldCameras.length) {
+    const removedIds = new Set(
+      oldCameras
+        .filter(cam => !newCameras.some(c => c.image_id === cam.image_id))
+        .map(cam => cam.image_id)
+    )
+    
+    // Remove camera objects from scene
+    const toRemove: THREE.Object3D[] = []
+    camerasGroup.children.forEach((child) => {
+      if (child instanceof THREE.Group && child.userData.camera) {
+        const cameraInfo = child.userData.camera as CameraInfo
+        if (removedIds.has(cameraInfo.image_id)) {
+          toRemove.push(child)
+        }
+      }
+    })
+    
+    toRemove.forEach(obj => {
+      camerasGroup.remove(obj)
+      obj.traverse(child => {
+        if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+          if (child.geometry) child.geometry.dispose()
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach(m => m.dispose())
+            } else {
+              child.material.dispose()
+            }
+          }
+        }
+      })
+    })
+    
+    // Update highlight if selected camera was removed
+    if (selectedCameraObject && toRemove.includes(selectedCameraObject)) {
+      selectedCameraObject = null
+    }
+    updateCameraHighlight()
+  } else if (initialized && newCameras.length !== camerasGroup.children.length) {
+    // If cameras were added or completely changed, reload
+    loadCameras(newCameras)
+  }
+}, { deep: false })
+
 function dispose() {
   stopEnsureCanvasSizedLoop()
   document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -800,6 +959,7 @@ function dispose() {
   }
   
   if (renderer && containerRef.value) {
+    renderer.domElement.removeEventListener('dblclick', onCanvasClick, false)
     containerRef.value.removeChild(renderer.domElement)
     renderer.dispose()
   }

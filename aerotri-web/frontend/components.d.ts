@@ -9,9 +9,12 @@ declare module 'vue' {
   export interface GlobalComponents {
     BlockCard: typeof import('./src/components/BlockCard.vue')['default']
     BlockStats: typeof import('./src/components/BlockStats.vue')['default']
+    CameraDetailPanel: typeof import('./src/components/CameraDetailPanel.vue')['default']
+    CameraList: typeof import('./src/components/CameraList.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElButton: typeof import('element-plus/es')['ElButton']
+    ElButtonGroup: typeof import('element-plus/es')['ElButtonGroup']
     ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElCol: typeof import('element-plus/es')['ElCol']
@@ -59,6 +62,7 @@ declare module 'vue' {
     GaussianSplattingPanel: typeof import('./src/components/GaussianSplattingPanel.vue')['default']
     GPUSelector: typeof import('./src/components/GPUSelector.vue')['default']
     ImagePreview: typeof import('./src/components/ImagePreview.vue')['default']
+    InstantSfMRealtimeViewer: typeof import('./src/components/InstantSfMRealtimeViewer.vue')['default']
     ParameterForm: typeof import('./src/components/ParameterForm.vue')['default']
     ParameterSummary: typeof import('./src/components/ParameterSummary.vue')['default']
     PartitionConfigPanel: typeof import('./src/components/PartitionConfigPanel.vue')['default']
@@ -71,5 +75,8 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']
     ThreeViewer: typeof import('./src/components/ThreeViewer.vue')['default']
+  }
+  export interface ComponentCustomProperties {
+    vLoading: typeof import('element-plus/es')['ElLoadingDirective']
   }
 }

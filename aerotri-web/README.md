@@ -24,6 +24,7 @@
   - 图层显示控制
   - **分区模式支持**: 支持查看单个分区结果或合并后的结果
   - **版本切换**: 支持在 3D 视图中切换不同版本的结果（原始 + GLOMAP 优化版本）
+  - **相机选择与交互**: 支持双击选择相机、查看相机详情、删除相机
 - **统计分析**: 
   - 处理结果统计
   - 各阶段耗时
@@ -44,6 +45,7 @@
 - SQLite + SQLAlchemy
 - WebSocket
 - pynvml (GPU 监控)
+- aiohttp (WebSocket 可视化代理)
 
 ### 前端
 - Vue.js 3 + TypeScript
@@ -103,8 +105,8 @@ npm run test
 | `COLMAP_PATH` | COLMAP 可执行文件路径 | `/usr/local/bin/colmap`（可改为自编译路径，如 `/root/work/colmap3.11/colmap/build/src/colmap/exe/colmap`） |
 | `GLOMAP_PATH` | GLOMAP 可执行文件路径 | `/usr/local/bin/glomap`（可改为自编译路径，如 `/root/work/glomap/build/glomap/glomap`） |
 | `INSTANTSFM_PATH` | InstantSfM 可执行文件路径 | 根据安装路径配置（例如 `ins-sfm`） |
-| `GS_REPO_PATH` | 3DGS 训练仓库路径（包含 `train.py`） | `/root/work/gaussian-splatting` |
-| `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 gaussian-splatting 依赖与 CUDA 扩展） | （必填，例如某个 Conda/venv 中的 `python`） |
+| `GS_REPO_PATH` | 3DGS 训练仓库路径（包含 `train.py`） | `/root/work/gs_workspace/gaussian-splatting` |
+| `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 gaussian-splatting 依赖与 CUDA 扩展） | `/root/work/gs_workspace/gs_env/bin/python`（默认值，可通过环境变量覆盖） |
 
 ## API 文档
 
@@ -142,6 +144,7 @@ npm run test
 | `/api/blocks/{id}/glomap/mapper_resume` | POST | GLOMAP mapper_resume 优化任务 |
 | `/api/blocks/{id}/versions` | GET | Block 版本列表 |
 | `/ws/blocks/{id}/progress` | WebSocket | 实时进度 |
+| `/ws/blocks/{id}/visualization` | WebSocket | InstantSfM 实时可视化 |
 
 ## 目录结构
 
@@ -194,15 +197,25 @@ aerotri-web/
 - 必须先完成 SfM（Block 状态为 `completed`，且存在 `data/outputs/{block_id}/sparse/0`）。
 - 后端需配置 `GS_REPO_PATH`/`GS_PYTHON`（见上文环境变量）。
 
+### 自动相机模型检测与去畸变
+
+- 3DGS 训练前会自动检测相机模型（从 COLMAP 稀疏重建中读取）
+- 如果相机模型不是 `PINHOLE` 或 `SIMPLE_PINHOLE`，会自动运行 COLMAP `image_undistorter` 进行去畸变
+- 去畸变后的图像和相机参数将用于 3DGS 训练，确保兼容性
+
+### RTX 5090 支持
+
+- 自动设置 `TORCH_CUDA_ARCH_LIST=12.0` 以支持 RTX 5090（Blackwell sm_120）架构
+
 ### Web 端入口
 
-- 在 Block 详情页切换到 **“3DGS”** 标签页：可配置训练参数、选择 GPU、启动/取消训练、查看日志与产物列表。
-- 产物 `point_cloud.ply` 支持点击 **“预览”**：会在同域页面 `/visionary/index.html` 中打开。
+- 在 Block 详情页切换到 **"3DGS"** 标签页：可配置训练参数、选择 GPU、启动/取消训练、查看日志与产物列表。
+- 产物 `point_cloud.ply` 支持点击 **"预览"**：会在同域页面 `/visionary/index.html` 中打开。
 
 ### 预览兼容性说明
 
 - 预览依赖 WebGPU，推荐 Chrome/Edge 较新版本 + 独显环境。
-- 若浏览器/驱动不支持 WebGPU，可使用“下载”将 `point_cloud.ply` 下载到本地离线查看。
+- 若浏览器/驱动不支持 WebGPU，可使用"下载"将 `point_cloud.ply` 下载到本地离线查看。
 
 ## 支持的算法参数
 
@@ -226,10 +239,16 @@ aerotri-web/
 
 ### InstantSfM (快速全局式 SfM)
 - 快速全局式 SfM 算法，适用于大规模数据集
+- **实时可视化**: 支持启用实时可视化功能，实时显示优化过程、相机位姿和点云（需要 InstantSfM 支持）
+  - `enable_visualization`: 启用实时可视化
+  - `visualization_port`: 可视化端口（可选，留空则自动检测 viser 服务器端口）
 
 ### 通用参数
 - 特征提取: max_image_size, max_num_features, camera_model
+  - 默认相机模型: `OPENCV`（原为 `SIMPLE_RADIAL`）
+  - 默认最大特征数: `15000`（原为 `12000`）
 - 匹配: method (sequential/exhaustive/vocab_tree), overlap
+  - **空间匹配**: COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定 `spatial_is_gps` 参数
 
 ### 分区 SfM 参数
 - `partition_enabled`: 启用分区模式

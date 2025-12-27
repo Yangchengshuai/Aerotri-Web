@@ -111,19 +111,15 @@
           </el-text>
         </el-form-item>
 
-        <el-form-item label="坐标类型为 GPS">
-          <el-switch v-model="formData.matching_params.spatial_is_gps" />
-          <el-text type="info" size="small" style="margin-left: 8px">
-            勾选表示使用经纬度/GPS 坐标进行空间最近邻搜索
-          </el-text>
-        </el-form-item>
-
         <el-form-item label="忽略高度 (Z)">
           <el-switch v-model="formData.matching_params.spatial_ignore_z" />
           <el-text type="info" size="small" style="margin-left: 8px">
             对只有平面精度的航测数据，可忽略高度分量，只按平面距离匹配
           </el-text>
         </el-form-item>
+        <el-text type="info" size="small" style="display: block; margin-top: -8px; margin-bottom: 16px; color: var(--el-text-color-secondary)">
+          注意：COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定
+        </el-text>
       </template>
 
       <!-- Mapper Parameters -->
@@ -840,6 +836,32 @@
       </template>
 
       <template v-else-if="formData.algorithm === 'instantsfm'">
+        <!-- InstantSfM Basic Parameters -->
+        <el-divider content-position="left">InstantSfM 基本参数</el-divider>
+        
+        <el-form-item label="启用实时可视化">
+          <el-switch v-model="(formData.mapper_params as InstantsfmMapperParams).enable_visualization" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            实时显示优化过程、相机位姿和点云（需要 InstantSfM 支持）
+          </el-text>
+        </el-form-item>
+        
+        <el-form-item 
+          label="可视化端口" 
+          v-if="(formData.mapper_params as InstantsfmMapperParams).enable_visualization"
+        >
+          <el-input-number
+            v-model="(formData.mapper_params as InstantsfmMapperParams).visualization_port"
+            :min="1024"
+            :max="65535"
+            :step="1"
+            :placeholder="8080"
+            clearable
+          />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            留空则自动检测 viser 服务器端口
+          </el-text>
+        </el-form-item>
         <el-form-item label="导出文本格式">
           <el-switch v-model="formData.mapper_params.export_txt" />
           <el-text type="info" size="small" style="margin-left: 8px">
@@ -969,8 +991,8 @@ const defaultFeatureParams: FeatureParams = {
   use_gpu: true,
   gpu_index: 0,
   max_image_size: 2640,
-  max_num_features: 12000,
-  camera_model: 'SIMPLE_RADIAL',
+  max_num_features: 15000,
+  camera_model: 'OPENCV',
   single_camera: true,
 }
 
@@ -981,7 +1003,6 @@ const defaultMatchingParams: MatchingParams = {
   gpu_index: 0,
   vocab_tree_path: undefined,
   spatial_max_num_neighbors: 50,
-  spatial_is_gps: true,
   spatial_ignore_z: false,
 }
 
@@ -1060,6 +1081,8 @@ const defaultInstantsfmParams: InstantsfmMapperParams = {
   global_positioning_function_tolerance: 5e-4,
   min_num_matches: 30,
   min_triangulation_angle: 1.5,
+  enable_visualization: false,
+  visualization_port: null,
 }
 
 const formData = reactive({

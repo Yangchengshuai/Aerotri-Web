@@ -22,6 +22,14 @@
           <el-skeleton :rows="5" animated />
         </el-card>
         
+        <el-alert
+          v-else-if="blocksStore.error"
+          :title="blocksStore.error"
+          type="error"
+          :closable="false"
+          show-icon
+        />
+        
         <el-empty 
           v-else-if="blocksStore.blocks.length === 0"
           description="暂无 Block，点击上方按钮创建"
