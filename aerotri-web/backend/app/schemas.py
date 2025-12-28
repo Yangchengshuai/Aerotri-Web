@@ -89,6 +89,12 @@ class BlockResponse(BaseModel):
     gs_output_path: Optional[str] = None
     gs_error_message: Optional[str] = None
     gs_statistics: Optional[Dict[str, Any]] = None
+    tiles_status: Optional[str] = None
+    tiles_progress: Optional[float] = None
+    tiles_current_stage: Optional[str] = None
+    tiles_output_path: Optional[str] = None
+    tiles_error_message: Optional[str] = None
+    tiles_statistics: Optional[Dict[str, Any]] = None
     partition_enabled: Optional[bool] = False
     partition_strategy: Optional[str] = None
     partition_params: Optional[Dict[str, Any]] = None
@@ -142,10 +148,13 @@ class ReconstructRequest(BaseModel):
 
 class ReconstructionFileInfo(BaseModel):
     """Schema for reconstruction file information."""
+    stage: str  # 'dense' | 'mesh' | 'refine' | 'texture'
+    type: str  # 'point_cloud' | 'mesh' | 'texture' | 'other'
     name: str
-    path: str
-    size: int
-    stage: Optional[str] = None
+    size_bytes: int
+    mtime: datetime
+    preview_supported: bool
+    download_url: str
 
 
 class ReconstructionFilesResponse(BaseModel):
@@ -213,22 +222,72 @@ class GSTrainRequest(BaseModel):
     train_params: Optional[GSTrainParams] = None
 
 
+# ===== 3D Tiles Schemas =====
+
+class TilesFileInfo(BaseModel):
+    """Schema for 3D Tiles file information."""
+    name: str
+    type: str  # tileset, tile, glb
+    size_bytes: int
+    mtime: datetime
+    preview_supported: bool
+    download_url: str
+
+
+class TilesFilesResponse(BaseModel):
+    """Schema for 3D Tiles files response."""
+    files: List[TilesFileInfo]
+
+
+class TilesStatusResponse(BaseModel):
+    """Schema for 3D Tiles status response."""
+    block_id: str
+    tiles_status: Optional[str] = None
+    tiles_progress: Optional[float] = None
+    tiles_current_stage: Optional[str] = None
+    tiles_output_path: Optional[str] = None
+    tiles_error_message: Optional[str] = None
+    tiles_statistics: Optional[Dict[str, Any]] = None
+
+
+class TilesLogResponse(BaseModel):
+    """Schema for 3D Tiles log response."""
+    block_id: str
+    lines: List[str]
+
+
+class TilesConvertRequest(BaseModel):
+    """Schema for 3D Tiles conversion request."""
+    keep_glb: Optional[bool] = False  # Whether to keep intermediate GLB file
+    optimize: Optional[bool] = False  # Whether to optimize GLB (future use)
+
+
+class TilesetUrlResponse(BaseModel):
+    """Schema for tileset URL response."""
+    tileset_url: str
+
+
 # ===== Partition Schemas =====
 
 class PartitionInfo(BaseModel):
     """Schema for partition information."""
-    id: str
+    id: Optional[str] = None  # Optional for preview (not saved to DB yet)
     index: int
     name: str
     image_start_name: Optional[str] = None
     image_end_name: Optional[str] = None
     image_count: Optional[int] = None
+    overlap_with_prev: Optional[int] = None
+    overlap_with_next: Optional[int] = None
     status: Optional[str] = None
+    progress: Optional[float] = None
+    error_message: Optional[str] = None
     statistics: Optional[Dict[str, Any]] = None
 
 
 class PartitionConfigRequest(BaseModel):
     """Schema for partition configuration request."""
+    partition_enabled: bool
     partition_strategy: str
     partition_params: Dict[str, Any]
     sfm_pipeline_mode: Optional[str] = None
@@ -247,8 +306,8 @@ class PartitionConfigResponse(BaseModel):
 
 class PartitionPreviewRequest(BaseModel):
     """Schema for partition preview request."""
-    partition_strategy: str
-    partition_params: Dict[str, Any]
+    partition_size: int
+    overlap: int
 
 
 class PartitionPreviewResponse(BaseModel):

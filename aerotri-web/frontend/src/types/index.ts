@@ -135,6 +135,14 @@ export interface Block {
   gs_output_path?: string | null
   gs_error_message?: string | null
   gs_statistics?: Record<string, unknown> | null
+  // 3D Tiles fields
+  tiles_status?: string | null
+  tiles_progress?: number | null
+  tiles_current_stage?: string | null
+  tiles_output_path?: string | null
+  tiles_error_message?: string | null
+  tiles_statistics?: Record<string, unknown> | null
+  tiles_tileset_url?: string | null
   // Partition fields
   partition_enabled?: boolean
   created_at: string
@@ -191,6 +199,23 @@ export interface GSState {
   progress: number
   currentStage: string | null
   files: GSFileInfo[]
+}
+
+// 3D Tiles types
+export interface TilesFileInfo {
+  name: string
+  type: 'tileset' | 'tile' | 'glb'
+  size_bytes: number
+  mtime: string
+  preview_supported: boolean
+  download_url: string
+}
+
+export interface TilesState {
+  status: 'NOT_STARTED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+  progress: number
+  currentStage: string | null
+  files: TilesFileInfo[]
 }
 
 // Image types

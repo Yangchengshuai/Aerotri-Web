@@ -15,6 +15,9 @@ export default defineConfig({
       resolvers: [ElementPlusResolver()],
     }),
   ],
+  define: {
+    CESIUM_BASE_URL: '"/cesium/"',
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

@@ -10,6 +10,7 @@ import type {
   BlockStatistics,
   ReconFileInfo,
   GSFileInfo,
+  TilesFileInfo,
 } from '@/types'
 
 const api = axios.create({
@@ -201,6 +202,41 @@ export const gsApi = {
     api.get<{ block_id: string; lines: string[] }>(`/blocks/${blockId}/gs/log_tail`, {
       params: { lines },
     }),
+}
+
+// 3D Tiles API
+export const tilesApi = {
+  convert: (
+    blockId: string,
+    payload: {
+      keep_glb?: boolean
+      optimize?: boolean
+    } = {},
+  ) => api.post(`/blocks/${blockId}/tiles/convert`, payload),
+
+  status: (blockId: string) =>
+    api.get<{
+      block_id: string
+      tiles_status: string | null
+      tiles_progress: number | null
+      tiles_current_stage: string | null
+      tiles_output_path: string | null
+      tiles_error_message: string | null
+      tiles_statistics: Record<string, unknown> | null
+    }>(`/blocks/${blockId}/tiles/status`),
+
+  cancel: (blockId: string) => api.post(`/blocks/${blockId}/tiles/cancel`, {}),
+
+  files: (blockId: string) =>
+    api.get<{ files: TilesFileInfo[] }>(`/blocks/${blockId}/tiles/files`),
+
+  logTail: (blockId: string, lines = 200) =>
+    api.get<{ block_id: string; lines: string[] }>(`/blocks/${blockId}/tiles/log_tail`, {
+      params: { lines },
+    }),
+
+  tilesetUrl: (blockId: string) =>
+    api.get<{ tileset_url: string }>(`/blocks/${blockId}/tiles/tileset_url`),
 }
 
 // Partition API

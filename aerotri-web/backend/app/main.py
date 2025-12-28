@@ -12,6 +12,7 @@ from .models.database import init_db
 from .services.task_runner import task_runner
 from .services.openmvs_runner import openmvs_runner
 from .services.gs_runner import gs_runner
+from .services.tiles_runner import tiles_runner
 
 
 @asynccontextmanager
@@ -30,6 +31,8 @@ async def lifespan(app: FastAPI):
     await openmvs_runner.recover_orphaned_reconstructions()
     # Recover orphaned 3DGS training tasks
     await gs_runner.recover_orphaned_gs_tasks()
+    # Recover orphaned 3D Tiles conversion tasks
+    await tiles_runner.recover_orphaned_tiles_tasks()
     
     yield
     
@@ -44,13 +47,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS middleware - MUST be before app.include_router()
+# This ensures all responses, including FileResponse, have CORS headers
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
-    allow_credentials=True,
+    allow_origins=["http://localhost:3000"],  # Frontend origin
+    allow_credentials=True,  # Allow credentials when using specific origins
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # Expose all headers to the client
 )
 
 # GZip middleware (important for large JSON payloads like point clouds)

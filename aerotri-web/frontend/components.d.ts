@@ -11,6 +11,7 @@ declare module 'vue' {
     BlockStats: typeof import('./src/components/BlockStats.vue')['default']
     CameraDetailPanel: typeof import('./src/components/CameraDetailPanel.vue')['default']
     CameraList: typeof import('./src/components/CameraList.vue')['default']
+    CesiumViewer: typeof import('./src/components/CesiumViewer.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElButton: typeof import('element-plus/es')['ElButton']
@@ -75,6 +76,7 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']
     ThreeViewer: typeof import('./src/components/ThreeViewer.vue')['default']
+    TilesConversionPanel: typeof import('./src/components/TilesConversionPanel.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

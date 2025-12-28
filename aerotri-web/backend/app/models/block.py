@@ -154,6 +154,30 @@ class Block(Base):
     gs_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # JSON statistics for 3DGS (stage times, params, iterations, etc.)
     gs_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # ====== 3D Tiles Conversion fields ======
+    # Status of 3D Tiles conversion pipeline
+    tiles_status: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        default="NOT_STARTED",
+    )
+    # Overall 3D Tiles conversion progress (0-100)
+    tiles_progress: Mapped[Optional[float]] = mapped_column(
+        nullable=True,
+        default=0.0,
+    )
+    # Current coarse 3D Tiles stage: obj_to_glb/glb_to_tiles/completed/...
+    tiles_current_stage: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    # Root output path for 3D Tiles artifacts (e.g. <recon_output_path>/tiles)
+    tiles_output_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Human-readable error message for 3D Tiles conversion failures
+    tiles_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # JSON statistics for 3D Tiles (stage times, file sizes, etc.)
+    tiles_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # ====== Partitioned SfM fields (large-scale datasets) ======
     # Whether partitioned SfM mode is enabled for this block
@@ -227,6 +251,12 @@ class Block(Base):
             "gs_output_path": self.gs_output_path,
             "gs_error_message": self.gs_error_message,
             "gs_statistics": self.gs_statistics,
+            "tiles_status": self.tiles_status,
+            "tiles_progress": self.tiles_progress,
+            "tiles_current_stage": self.tiles_current_stage,
+            "tiles_output_path": self.tiles_output_path,
+            "tiles_error_message": self.tiles_error_message,
+            "tiles_statistics": self.tiles_statistics,
             "partition_enabled": self.partition_enabled,
             "partition_strategy": self.partition_strategy,
             "partition_params": self.partition_params,

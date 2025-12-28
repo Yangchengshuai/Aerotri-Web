@@ -1,0 +1,419 @@
+"""3D Tiles conversion related API endpoints."""
+
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..models import Block, BlockStatus, get_db
+from ..schemas import (
+    TilesConvertRequest,
+    TilesFilesResponse,
+    TilesFileInfo,
+    TilesStatusResponse,
+    TilesLogResponse,
+    TilesetUrlResponse,
+)
+from ..services.tiles_runner import tiles_runner
+
+
+router = APIRouter()
+
+
+@router.post(
+    "/blocks/{block_id}/tiles/convert",
+    response_model=TilesStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_tiles_conversion(
+    block_id: str,
+    payload: TilesConvertRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger 3D Tiles conversion for a completed reconstruction."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    # Check if reconstruction is completed
+    if not block.recon_output_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reconstruction must be completed before converting to 3D Tiles.",
+        )
+
+    # Check if texture stage is completed
+    texture_dir = Path(block.recon_output_path) / "texture"
+    if not texture_dir.exists():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Texture stage not completed. Please complete reconstruction first.",
+        )
+
+    if block.tiles_status == "RUNNING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="3D Tiles conversion is already running for this block.",
+        )
+
+    convert_params = {
+        "keep_glb": payload.keep_glb or False,
+        "optimize": payload.optimize or False,
+    }
+
+    await tiles_runner.start_conversion(
+        block=block,
+        db=db,
+        convert_params=convert_params,
+    )
+
+    return TilesStatusResponse(
+        block_id=block.id,
+        tiles_status=block.tiles_status,
+        tiles_progress=block.tiles_progress,
+        tiles_current_stage=block.tiles_current_stage,
+        tiles_output_path=block.tiles_output_path,
+        tiles_error_message=block.tiles_error_message,
+        tiles_statistics=block.tiles_statistics,
+    )
+
+
+@router.post(
+    "/blocks/{block_id}/tiles/cancel",
+    response_model=TilesStatusResponse,
+)
+async def cancel_tiles_conversion(
+    block_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a running 3D Tiles conversion task."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    if block.tiles_status != "RUNNING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="3D Tiles conversion is not running for this block.",
+        )
+
+    await tiles_runner.cancel_conversion(block_id)
+
+    # Refresh block state after cancellation
+    await db.refresh(block)
+
+    return TilesStatusResponse(
+        block_id=block.id,
+        tiles_status=block.tiles_status,
+        tiles_progress=block.tiles_progress,
+        tiles_current_stage=block.tiles_current_stage,
+        tiles_output_path=block.tiles_output_path,
+        tiles_error_message=block.tiles_error_message,
+        tiles_statistics=block.tiles_statistics,
+    )
+
+
+@router.get(
+    "/blocks/{block_id}/tiles/status",
+    response_model=TilesStatusResponse,
+)
+async def get_tiles_status(
+    block_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get 3D Tiles conversion status for a block."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    return TilesStatusResponse(
+        block_id=block.id,
+        tiles_status=block.tiles_status,
+        tiles_progress=block.tiles_progress,
+        tiles_current_stage=block.tiles_current_stage,
+        tiles_output_path=block.tiles_output_path,
+        tiles_error_message=block.tiles_error_message,
+        tiles_statistics=block.tiles_statistics,
+    )
+
+
+def _collect_tiles_files(root: Path) -> List[TilesFileInfo]:
+    """Collect 3D Tiles output files."""
+    files: List[TilesFileInfo] = []
+    if not root.exists():
+        return files
+
+    # Look for tileset.json
+    tileset_path = root / "tileset.json"
+    if tileset_path.exists() and tileset_path.is_file():
+        stat = tileset_path.stat()
+        files.append(
+            TilesFileInfo(
+                name="tileset.json",
+                type="tileset",
+                size_bytes=stat.st_size,
+                mtime=datetime.fromtimestamp(stat.st_mtime),
+                preview_supported=True,
+                download_url=f"/api/blocks/{{block_id}}/tiles/download?file=tileset.json",
+            )
+        )
+
+    # Look for b3dm files
+    for b3dm_path in root.glob("*.b3dm"):
+        stat = b3dm_path.stat()
+        files.append(
+            TilesFileInfo(
+                name=b3dm_path.name,
+                type="tile",
+                size_bytes=stat.st_size,
+                mtime=datetime.fromtimestamp(stat.st_mtime),
+                preview_supported=False,
+                download_url=f"/api/blocks/{{block_id}}/tiles/download?file={b3dm_path.name}",
+            )
+        )
+
+    # Look for GLB file (if kept)
+    glb_path = root / "model.glb"
+    if glb_path.exists() and glb_path.is_file():
+        stat = glb_path.stat()
+        files.append(
+            TilesFileInfo(
+                name="model.glb",
+                type="glb",
+                size_bytes=stat.st_size,
+                mtime=datetime.fromtimestamp(stat.st_mtime),
+                preview_supported=False,
+                download_url=f"/api/blocks/{{block_id}}/tiles/download?file=model.glb",
+            )
+        )
+
+    return files
+
+
+@router.get(
+    "/blocks/{block_id}/tiles/files",
+    response_model=TilesFilesResponse,
+)
+async def list_tiles_files(
+    block_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """List 3D Tiles output files for a block."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    if not block.tiles_output_path:
+        return TilesFilesResponse(files=[])
+
+    root = Path(block.tiles_output_path)
+    files = _collect_tiles_files(root)
+    # Fix download_url now that we know the concrete block_id
+    for f in files:
+        f.download_url = f"/api/blocks/{block_id}/tiles/download?file={f.name}"
+    return TilesFilesResponse(files=files)
+
+
+@router.get("/blocks/{block_id}/tiles/download")
+@router.options("/blocks/{block_id}/tiles/download")
+async def download_tiles_file(
+    block_id: str,
+    request: Request,
+    file: str = Query(..., description="Relative path under tiles output root"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a 3D Tiles output file."""
+    
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    if not block.tiles_output_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="3D Tiles output not found for this block.",
+        )
+
+    root = Path(block.tiles_output_path).resolve()
+    requested = (root / file).resolve()
+
+    # Prevent directory traversal
+    if not str(requested).startswith(str(root)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file path.",
+        )
+
+    if not requested.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file}",
+        )
+
+    # Special handling for tileset.json: modify relative URIs to absolute URLs
+    # This fixes the issue where Cesium cannot resolve relative paths when
+    # tileset.json is loaded via query parameter URL
+    if file == "tileset.json":
+        import json
+        with open(requested, "r", encoding="utf-8") as f:
+            tileset_data = json.load(f)
+        
+        # Modify relative URIs in tileset.json to relative paths (not absolute URLs)
+        # This allows Cesium to use the same origin as tileset.json (via Vite proxy)
+        def fix_uri(uri: str) -> str:
+            if not uri:
+                return uri
+            # If it's already an absolute URL with localhost:8000, convert to relative path
+            if uri.startswith("http://localhost:8000") or uri.startswith("https://localhost:8000"):
+                # Extract the path part (everything after the domain)
+                if "/api/" in uri:
+                    return "/api/" + uri.split("/api/", 1)[1]
+                return uri
+            # If it's already a relative path starting with /, keep it
+            if uri.startswith("/"):
+                return uri
+            # Convert relative filename (e.g., "model.b3dm") to relative path
+            return f"/api/blocks/{block_id}/tiles/download?file={uri}"
+        
+        def fix_uris_in_content(content: dict) -> None:
+            if isinstance(content, dict) and "uri" in content:
+                original_uri = content["uri"]
+                fixed_uri = fix_uri(original_uri)
+                content["uri"] = fixed_uri
+                if original_uri != fixed_uri:
+                    print(f"Fixed URI: {original_uri} -> {fixed_uri}")
+            if isinstance(content, dict) and "children" in content:
+                for child in content["children"]:
+                    if isinstance(child, dict) and "content" in child:
+                        fix_uris_in_content(child["content"])
+        
+        # Fix root content URI
+        if "root" in tileset_data and "content" in tileset_data["root"]:
+            # Directly fix the URI in root content
+            root_content = tileset_data["root"]["content"]
+            if "uri" in root_content:
+                original_uri = root_content["uri"]
+                fixed_uri = fix_uri(original_uri)
+                root_content["uri"] = fixed_uri
+                print(f"Fixed root URI: {original_uri} -> {fixed_uri}")
+            # Also call fix_uris_in_content for nested structures
+            fix_uris_in_content(root_content)
+        
+        # Fix children URIs if any
+        if "root" in tileset_data and "children" in tileset_data["root"]:
+            for child in tileset_data["root"]["children"]:
+                if "content" in child:
+                    fix_uris_in_content(child["content"])
+        
+        # Return modified JSON with CORS headers
+        response = JSONResponse(content=tileset_data, media_type="application/json")
+        response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+    # Return file with CORS headers
+    # Determine content type based on file extension
+    content_type = "application/octet-stream"
+    if file.endswith(".b3dm"):
+        content_type = "application/octet-stream"
+    elif file.endswith(".json"):
+        content_type = "application/json"
+    
+    response = FileResponse(
+        path=str(requested),
+        filename=requested.name,
+        media_type=content_type,
+        headers={
+            "Access-Control-Allow-Origin": "http://localhost:3000",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+    return response
+
+
+@router.get(
+    "/blocks/{block_id}/tiles/log_tail",
+    response_model=TilesLogResponse,
+)
+async def get_tiles_log_tail(
+    block_id: str,
+    lines: int = Query(200, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the last N lines of 3D Tiles conversion logs for a block."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    log_lines = tiles_runner.get_log_tail(block_id, lines) or []
+    return TilesLogResponse(block_id=block_id, lines=log_lines)
+
+
+@router.get(
+    "/blocks/{block_id}/tiles/tileset_url",
+    response_model=TilesetUrlResponse,
+)
+async def get_tileset_url(
+    block_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the tileset.json URL for CesiumJS loading."""
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    if not block.tiles_output_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="3D Tiles output not found for this block.",
+        )
+
+    tileset_path = Path(block.tiles_output_path) / "tileset.json"
+    if not tileset_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="tileset.json not found. Conversion may not be completed.",
+        )
+
+    # Return full URL (assuming API is served at root)
+    # In production, you might want to use request.base_url
+    tileset_url = f"/api/blocks/{block_id}/tiles/download?file=tileset.json"
+    return TilesetUrlResponse(tileset_url=tileset_url)
+

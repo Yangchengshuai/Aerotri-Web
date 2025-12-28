@@ -36,6 +36,11 @@
   - 分区管理：查看分区状态、进度和结果
   - 分区合并：支持多种合并策略（rigid_keep_one, sim3_keep_one）
 - **Block 对比**: 对比不同算法/参数的处理结果
+- **3D Tiles 转换**: 
+  - 支持将 OpenMVS 重建结果转换为 3D Tiles 格式
+  - 转换流程：OBJ → GLB → 3D Tiles
+  - 支持查看转换进度、日志和产物列表
+  - 支持获取 tileset.json URL 用于 Cesium 等查看器
 
 ## 技术栈
 
@@ -46,6 +51,7 @@
 - WebSocket
 - pynvml (GPU 监控)
 - aiohttp (WebSocket 可视化代理)
+- CORS 中间件（支持跨域请求，包括 FileResponse）
 
 ### 前端
 - Vue.js 3 + TypeScript
@@ -141,6 +147,13 @@ npm run test
 | `/api/blocks/{id}/gs/files` | GET | 3DGS 产物列表 |
 | `/api/blocks/{id}/gs/download` | GET | 3DGS 产物下载 |
 | `/api/blocks/{id}/gs/log_tail` | GET | 3DGS 日志 tail |
+| `/api/blocks/{id}/tiles/convert` | POST | 启动 3D Tiles 转换 |
+| `/api/blocks/{id}/tiles/status` | GET | 3D Tiles 状态 |
+| `/api/blocks/{id}/tiles/cancel` | POST | 取消 3D Tiles 转换 |
+| `/api/blocks/{id}/tiles/files` | GET | 3D Tiles 产物列表 |
+| `/api/blocks/{id}/tiles/download` | GET | 3D Tiles 产物下载 |
+| `/api/blocks/{id}/tiles/log_tail` | GET | 3D Tiles 日志 tail |
+| `/api/blocks/{id}/tiles/tileset_url` | GET | 获取 tileset.json URL |
 | `/api/blocks/{id}/glomap/mapper_resume` | POST | GLOMAP mapper_resume 优化任务 |
 | `/api/blocks/{id}/versions` | GET | Block 版本列表 |
 | `/ws/blocks/{id}/progress` | WebSocket | 实时进度 |
@@ -189,6 +202,24 @@ aerotri-web/
 8. **合并分区**（如使用分区模式）: 分区完成后可手动触发合并操作
 9. **GLOMAP 优化**（可选）: 对于已完成的 GLOMAP Block，可点击"使用 GLOMAP 继续优化"按钮，基于当前结果进行一轮 mapper_resume 全局优化
 10. **对比分析**: 创建多个 Block 使用不同算法，在对比页面分析结果
+
+## 3D Tiles 转换
+
+### 前置条件
+
+- 必须先完成 OpenMVS 重建（Block 的 `recon_status` 为 `completed`，且存在重建输出文件）。
+
+### 功能特性
+
+- 支持将 OpenMVS 重建结果（OBJ 格式）转换为 3D Tiles 格式
+- 转换流程：OBJ → GLB → 3D Tiles
+- 支持查看转换进度、阶段和日志
+- 支持下载转换产物（tileset.json、tiles、GLB 等）
+- 支持获取 tileset.json URL，可在 Cesium 等 3D Tiles 查看器中加载
+
+### Web 端入口
+
+- 在 Block 详情页切换到 **"3D Tiles"** 标签页：可启动转换任务、查看进度、日志与产物列表。
 
 ## 3DGS（3D Gaussian Splatting）训练与预览（V1）
 

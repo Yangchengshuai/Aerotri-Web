@@ -665,6 +665,7 @@ class TaskRunner:
         db: AsyncSession,
         block_id: str,
         coarse_stage: str,
+        partition_index: Optional[int] = None,
     ):
         """Run COLMAP incremental mapper."""
         def _b(v, default: int = 0) -> int:
@@ -685,7 +686,7 @@ class TaskRunner:
             "--Mapper.ba_gpu_index", str(gpu_index),
         ]
         
-        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage, partition_index=partition_index)
     
     async def _run_glomap_mapper(
         self,
@@ -698,6 +699,7 @@ class TaskRunner:
         db: AsyncSession,
         block_id: str,
         coarse_stage: str,
+        partition_index: Optional[int] = None,
     ):
         """Run GLOMAP global mapper."""
         def _b(v, default: int = 0) -> int:
@@ -774,7 +776,7 @@ class TaskRunner:
         _add_param_if_set(cmd, "thresholds_min_inlier_ratio", "--Thresholds.min_inlier_ratio", float)
         _add_param_if_set(cmd, "thresholds_max_rotation_error", "--Thresholds.max_rotation_error", float)
         
-        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+        await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage, partition_index=partition_index)
     
     async def _run_glomap_mapper_resume(
         self,
@@ -873,18 +875,22 @@ class TaskRunner:
             # - skip_pruning
             # Other skip flags (preprocessing, view_graph_calibration, etc.) are forced to true
             # and are not registered as options, so we should not pass them
+            # IMPORTANT: Always explicitly set these flags to ensure correct behavior.
+            # Default values match GlobalMapperOptions defaults: skip_global_positioning=false, skip_bundle_adjustment=false, skip_pruning=true
             skip_flags_mapper_resume = [
-                ("skip_global_positioning", "--skip_global_positioning"),
-                ("skip_bundle_adjustment", "--skip_bundle_adjustment"),
-                ("skip_pruning", "--skip_pruning"),
+                ("skip_global_positioning", "--skip_global_positioning", False),
+                ("skip_bundle_adjustment", "--skip_bundle_adjustment", False),
+                ("skip_pruning", "--skip_pruning", True),
             ]
-            for key, flag in skip_flags_mapper_resume:
-                v = params_to_use.get(key)
+            for key, flag, default_value in skip_flags_mapper_resume:
+                v = params_to_use.get(key) if params_to_use else None
+                # Use provided value if exists, otherwise use default
+                if v is None:
+                    v = default_value
+                # GLOMAP requires boolean options to have explicit values: on/off, yes/no, 1/0, true/false
                 if v is True or (isinstance(v, int) and v != 0):
-                    # GLOMAP requires boolean options to have explicit values: on/off, yes/no, 1/0, true/false
                     cmd.extend([flag, "1"])
-                elif v is False or (isinstance(v, int) and v == 0):
-                    # Explicitly set to false
+                else:  # False or 0
                     cmd.extend([flag, "0"])
             
             # Global Positioning parameters
@@ -1294,6 +1300,7 @@ class TaskRunner:
         block_id: str,
         coarse_stage: str,
         partition_image_names: Optional[List[str]] = None,
+        partition_index: Optional[int] = None,
     ):
         """Run InstantSfM mapper.
         
@@ -1428,19 +1435,23 @@ class TaskRunner:
         
         try:
             # Run the process
-            await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage)
+            await self._run_process(cmd, ctx, db, block_id, coarse_stage=coarse_stage, partition_index=partition_index)
         finally:
             # Clean up visualization proxy
             if visualizer_proxy:
                 await visualizer_proxy.stop()
                 unregister_visualizer_proxy(block_id)
     
-    async def _run_process(self, cmd: List[str], ctx: TaskContext, db: AsyncSession, block_id: str, coarse_stage: str):
+    async def _run_process(self, cmd: List[str], ctx: TaskContext, db: AsyncSession, block_id: str, coarse_stage: str, partition_index: Optional[int] = None):
         """Run a subprocess and capture output.
         
         Args:
             cmd: Command and arguments
             ctx: Task context
+            db: Database session
+            block_id: Block ID
+            coarse_stage: Coarse stage name
+            partition_index: Optional partition index for partition_mapping stage
         """
         # Prepare environment variables with library paths
         env = os.environ.copy()
@@ -1527,21 +1538,15 @@ class TaskRunner:
                 # Non-zero exit code
                 ctx.write_log_line(f"Warning: Process exited with code {process.returncode}")
 
-            # 对 GLOMAP / COLMAP / InstantSfM mapper / mapper_resume 阶段做特殊处理：
+            # 对 GLOMAP / COLMAP / InstantSfM mapper / mapper_resume / partition_mapping 阶段做特殊处理：
             # 如果已经成功导出了 sparse 结果（空三完成），则视为成功。
-            if coarse_stage in ("mapping", "mapping_resume"):
+            if coarse_stage in ("mapping", "mapping_resume", "partition_mapping"):
                 try:
                     async with AsyncSessionLocal() as s:
                         result = await s.execute(select(Block).where(Block.id == block_id))
                         block = result.scalar_one_or_none()
 
                     if block and block.output_path:
-                        # 检查 COLMAP/GLOMAP 标准输出路径：sparse/
-                        sparse_path = os.path.join(block.output_path, "sparse")
-                        
-                        # 检查 InstantSfM 标准输出路径：sparse/0/
-                        instantsfm_sparse_path = os.path.join(block.output_path, "sparse", "0")
-                        
                         # 验证函数：检查目录是否存在且包含必要的重建文件
                         def validate_sparse_output(sparse_dir):
                             """验证 sparse 输出目录是否包含有效的重建结果"""
@@ -1560,28 +1565,58 @@ class TaskRunner:
                             # 至少需要找到 cameras 和 images 文件（points3D 可能为空）
                             return len(found_files) >= 2
                         
-                        # 检查标准 sparse 路径（COLMAP/GLOMAP）
-                        if validate_sparse_output(sparse_path):
-                            ctx.write_log_line(
-                                f"Detected valid sparse output at {sparse_path} after non-zero exit; "
-                                "treating mapper stage as SUCCESS despite non-zero exit code."
+                        # 对于分区模式，检查分区特定的 sparse 输出路径
+                        if coarse_stage == "partition_mapping" and partition_index is not None:
+                            # GLOMAP 分区输出路径：partitions/partition_{index}/sparse/0/
+                            partition_sparse_path = os.path.join(
+                                block.output_path,
+                                "partitions",
+                                f"partition_{partition_index}",
+                                "sparse",
+                                "0"
                             )
-                            return
-                        
-                        # 检查 InstantSfM sparse/0/ 路径
-                        if validate_sparse_output(instantsfm_sparse_path):
-                            ctx.write_log_line(
-                                f"Detected valid InstantSfM sparse output at {instantsfm_sparse_path} after non-zero exit; "
-                                "treating mapper stage as SUCCESS despite non-zero exit code."
-                            )
-                            return
-                        
-                        # 如果 sparse 目录存在但验证失败，记录详细信息
-                        if os.path.isdir(sparse_path):
-                            ctx.write_log_line(
-                                f"Warning: sparse directory exists at {sparse_path} but validation failed. "
-                                "Contents may be incomplete."
-                            )
+                            if validate_sparse_output(partition_sparse_path):
+                                ctx.write_log_line(
+                                    f"Detected valid partition {partition_index} sparse output at {partition_sparse_path} after non-zero exit; "
+                                    "treating partition mapper stage as SUCCESS despite non-zero exit code."
+                                )
+                                return
+                            
+                            # 如果分区 sparse 目录存在但验证失败，记录详细信息
+                            if os.path.isdir(partition_sparse_path):
+                                ctx.write_log_line(
+                                    f"Warning: partition {partition_index} sparse directory exists at {partition_sparse_path} but validation failed. "
+                                    "Contents may be incomplete."
+                                )
+                        else:
+                            # 检查 COLMAP/GLOMAP 标准输出路径：sparse/
+                            sparse_path = os.path.join(block.output_path, "sparse")
+                            
+                            # 检查 InstantSfM 标准输出路径：sparse/0/
+                            instantsfm_sparse_path = os.path.join(block.output_path, "sparse", "0")
+                            
+                            # 检查标准 sparse 路径（COLMAP/GLOMAP）
+                            if validate_sparse_output(sparse_path):
+                                ctx.write_log_line(
+                                    f"Detected valid sparse output at {sparse_path} after non-zero exit; "
+                                    "treating mapper stage as SUCCESS despite non-zero exit code."
+                                )
+                                return
+                            
+                            # 检查 InstantSfM sparse/0/ 路径
+                            if validate_sparse_output(instantsfm_sparse_path):
+                                ctx.write_log_line(
+                                    f"Detected valid InstantSfM sparse output at {instantsfm_sparse_path} after non-zero exit; "
+                                    "treating mapper stage as SUCCESS despite non-zero exit code."
+                                )
+                                return
+                            
+                            # 如果 sparse 目录存在但验证失败，记录详细信息
+                            if os.path.isdir(sparse_path):
+                                ctx.write_log_line(
+                                    f"Warning: sparse directory exists at {sparse_path} but validation failed. "
+                                    "Contents may be incomplete."
+                                )
                 except Exception as e:
                     # 验证逻辑失败时不要中断主流程，只记录告警并继续按错误处理
                     ctx.write_log_line(
@@ -1795,18 +1830,54 @@ class TaskRunner:
                     if ctx.cancelled:
                         return
                     
-                    partition_start = datetime.now()
-                    await self._run_partition_mapper(
-                        block,
-                        partition,
-                        database_path,
-                        image_dir,
-                        mapper_params,
-                        gpu_index,
-                        ctx,
-                        db,
-                    )
-                    partition_times[f"partition_{partition.index}"] = (datetime.now() - partition_start).total_seconds()
+                    # 检查分区输出是否已存在，如果存在则跳过
+                    partition_output = os.path.join(output_path, "partitions", f"partition_{partition.index}", "sparse")
+                    partition_sparse_path = os.path.join(partition_output, "0")
+                    
+                    def validate_sparse_output(sparse_dir):
+                        """验证 sparse 输出目录是否包含有效的重建结果"""
+                        if not os.path.isdir(sparse_dir):
+                            return False
+                        
+                        # 检查是否包含 COLMAP 重建文件（.bin 或 .txt 格式）
+                        required_files = ["cameras", "images", "points3D"]
+                        found_files = []
+                        for stem in required_files:
+                            bin_path = os.path.join(sparse_dir, f"{stem}.bin")
+                            txt_path = os.path.join(sparse_dir, f"{stem}.txt")
+                            if os.path.exists(bin_path) or os.path.exists(txt_path):
+                                found_files.append(stem)
+                        
+                        # 至少需要找到 cameras 和 images 文件（points3D 可能为空）
+                        return len(found_files) >= 2
+                    
+                    if validate_sparse_output(partition_sparse_path):
+                        # 分区输出已存在且有效，跳过处理并更新状态
+                        ctx.write_log_line(
+                            f"[Partition {partition.index}] Sparse output already exists, skipping mapper. "
+                            f"Output path: {partition_sparse_path}"
+                        )
+                        partition.status = "COMPLETED"
+                        partition.progress = 100.0
+                        partition.statistics = {
+                            "image_count": partition.image_count or 0,
+                        }
+                        await db.commit()
+                        partition_times[f"partition_{partition.index}"] = 0.0  # 已存在，时间为 0
+                    else:
+                        # 分区输出不存在或无效，运行 mapper
+                        partition_start = datetime.now()
+                        await self._run_partition_mapper(
+                            block,
+                            partition,
+                            database_path,
+                            image_dir,
+                            mapper_params,
+                            gpu_index,
+                            ctx,
+                            db,
+                        )
+                        partition_times[f"partition_{partition.index}"] = (datetime.now() - partition_start).total_seconds()
                     
                     # Update overall progress
                     partition_progress = 20.0 + (i + 1) / len(partitions) * 60.0
@@ -2028,15 +2099,26 @@ class TaskRunner:
             ctx.write_log_line(f"[Partition {partition.index}] Starting mapper for {len(partition_images)} images")
             partition_log_fp.write(f"[Partition {partition.index}] Starting mapper for {len(partition_images)} images\n")
             
-            # For COLMAP mapper, we need to filter images
-            # COLMAP mapper doesn't directly support --image_names, so we'll use a workaround:
-            # Create a temporary image list file or use image_path with filtered images
-            # For now, we'll pass all images and let COLMAP handle it (it will only process registered images)
-            # In practice, COLMAP mapper will only process images that are in the database
+            # For partition mode, create a partition database containing only partition images
+            # This ensures that COLMAP/GLOMAP only process images in this partition
+            partition_database_path = os.path.join(
+                output_path, "partitions", f"partition_{partition.index}", "database.db"
+            )
+            os.makedirs(os.path.dirname(partition_database_path), exist_ok=True)
+            
+            # Create partition database
+            ctx.write_log_line(f"[Partition {partition.index}] Creating partition database with {len(partition_images)} images...")
+            partition_log_fp.write(f"[Partition {partition.index}] Creating partition database with {len(partition_images)} images...\n")
+            self._create_partition_database(
+                database_path,
+                partition_database_path,
+                partition_images,
+                ctx,
+            )
             
             if block.algorithm == AlgorithmType.GLOMAP:
                 await self._run_glomap_mapper(
-                    database_path,
+                    partition_database_path,  # Use partition database instead of global database
                     image_dir,
                     partition_output,
                     mapper_params,
@@ -2045,6 +2127,7 @@ class TaskRunner:
                     db,
                     block.id,
                     coarse_stage="partition_mapping",
+                    partition_index=partition.index,
                 )
             elif block.algorithm == AlgorithmType.INSTANTSFM:
                 # For InstantSfM, we need to set up the data_path structure
@@ -2061,10 +2144,12 @@ class TaskRunner:
                     block.id,
                     coarse_stage="partition_mapping",
                     partition_image_names=partition_images,
+                    partition_index=partition.index,
                 )
             else:
+                # COLMAP mapper
                 await self._run_colmap_mapper(
-                    database_path,
+                    partition_database_path,  # Use partition database instead of global database
                     image_dir,
                     partition_output,
                     mapper_params,
@@ -2073,6 +2158,7 @@ class TaskRunner:
                     db,
                     block.id,
                     coarse_stage="partition_mapping",
+                    partition_index=partition.index,
                 )
             
             # Update partition status
@@ -2095,6 +2181,56 @@ class TaskRunner:
                 "partition_index": partition.index,
             })
         except Exception as e:
+            # 检查分区输出文件是否存在，如果存在则视为成功
+            partition_sparse_path = os.path.join(partition_output, "0")
+            if os.path.isdir(partition_sparse_path):
+                # 验证函数：检查目录是否包含必要的重建文件
+                def validate_sparse_output(sparse_dir):
+                    """验证 sparse 输出目录是否包含有效的重建结果"""
+                    if not os.path.isdir(sparse_dir):
+                        return False
+                    
+                    # 检查是否包含 COLMAP 重建文件（.bin 或 .txt 格式）
+                    required_files = ["cameras", "images", "points3D"]
+                    found_files = []
+                    for stem in required_files:
+                        bin_path = os.path.join(sparse_dir, f"{stem}.bin")
+                        txt_path = os.path.join(sparse_dir, f"{stem}.txt")
+                        if os.path.exists(bin_path) or os.path.exists(txt_path):
+                            found_files.append(stem)
+                    
+                    # 至少需要找到 cameras 和 images 文件（points3D 可能为空）
+                    return len(found_files) >= 2
+                
+                if validate_sparse_output(partition_sparse_path):
+                    # 输出文件存在且有效，视为成功
+                    partition.status = "COMPLETED"
+                    partition.progress = 100.0
+                    partition.statistics = {
+                        "image_count": len(partition_images),
+                    }
+                    await db.commit()
+                    
+                    ctx.write_log_line(
+                        f"[Partition {partition.index}] Process exited with error but sparse output is valid; "
+                        f"treating as SUCCESS. Error: {e}"
+                    )
+                    partition_log_fp.write(
+                        f"[Partition {partition.index}] Process exited with error but sparse output is valid; "
+                        f"treating as SUCCESS. Error: {e}\n"
+                    )
+                    
+                    # Notify progress
+                    await self._notify_progress(block.id, {
+                        "pipeline": "sfm",
+                        "stage": "partition_mapping",
+                        "progress": 100.0,
+                        "message": f"Partition {partition.index} completed (recovered from error)",
+                        "partition_index": partition.index,
+                    })
+                    return  # 成功返回，不抛出异常
+            
+            # 输出文件不存在或无效，标记为失败
             partition.status = "FAILED"
             partition.error_message = str(e)
             await db.commit()

@@ -457,6 +457,7 @@ class OpenMVSRunner:
                     ).total_seconds()
 
                 # Stage 5: RefineMesh
+                refine_success = False
                 if self._check_stage_completed("refine", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
                     log_skip("refine")
                     await self._update_block_stage(
@@ -468,6 +469,7 @@ class OpenMVSRunner:
                     stage_times["refine"] = 0.0
                     # 即使跳过，也要确保文件在正确位置（从dense_dir移动到refine_dir）
                     self._move_refine_outputs(dense_dir, refine_dir)
+                    refine_success = True
                 else:
                     stage_start = datetime.now()
                     await self._update_block_stage(
@@ -476,24 +478,60 @@ class OpenMVSRunner:
                         stage="refine",
                         progress=75.0,
                     )
-                    await self._run_refine(
-                        block_id=block_id,
-                        dense_dir=dense_dir,
-                        mesh_dir=mesh_dir,
-                        refine_dir=refine_dir,
-                        quality_preset=quality_preset,
-                        log_path=log_path,
-                    )
-                    if self._cancelled.get(block_id):
-                        block.recon_status = "CANCELLED"
-                        block.recon_current_stage = "cancelled"
-                        await db.commit()
-                        return
-                    # RefineMesh 输出也可能写到 dense_dir，需要移动到 refine_dir
-                    self._move_refine_outputs(dense_dir, refine_dir)
-                    stage_times["refine"] = (
-                        datetime.now() - stage_start
-                    ).total_seconds()
+                    try:
+                        await self._run_refine(
+                            block_id=block_id,
+                            dense_dir=dense_dir,
+                            mesh_dir=mesh_dir,
+                            refine_dir=refine_dir,
+                            quality_preset=quality_preset,
+                            log_path=log_path,
+                        )
+                        if self._cancelled.get(block_id):
+                            block.recon_status = "CANCELLED"
+                            block.recon_current_stage = "cancelled"
+                            await db.commit()
+                            return
+                        # RefineMesh 输出也可能写到 dense_dir，需要移动到 refine_dir
+                        self._move_refine_outputs(dense_dir, refine_dir)
+                        refine_success = True
+                        stage_times["refine"] = (
+                            datetime.now() - stage_start
+                        ).total_seconds()
+                    except Exception as refine_exc:
+                        # Refine阶段失败，检查是否有输出文件
+                        refine_output_found = False
+                        possible_names = [
+                            "scene_dense_refine.ply",
+                            "scene_dense_mesh_refine.ply",
+                        ]
+                        for name in possible_names:
+                            if os.path.exists(os.path.join(refine_dir, name)) or \
+                               os.path.exists(os.path.join(dense_dir, name)):
+                                refine_output_found = True
+                                # 移动文件到refine_dir
+                                self._move_refine_outputs(dense_dir, refine_dir)
+                                break
+                        
+                        if refine_output_found:
+                            # 有输出文件，视为成功
+                            refine_success = True
+                            stage_times["refine"] = (
+                                datetime.now() - stage_start
+                            ).total_seconds()
+                            with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+                                log_fp.write(
+                                    f"[WARNING] Refine stage exited with error but output file found. "
+                                    f"Continuing with refine output.\n"
+                                )
+                        else:
+                            # 没有输出文件，记录警告但继续使用mesh输出
+                            refine_success = False
+                            with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+                                log_fp.write(
+                                    f"[WARNING] Refine stage failed ({refine_exc}) and no output file found. "
+                                    f"Will use mesh output for texture stage.\n"
+                                )
 
                 # Stage 6: TextureMesh
                 if self._check_stage_completed("texture", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
@@ -522,6 +560,7 @@ class OpenMVSRunner:
                         texture_dir=texture_dir,
                         gpu_index=gpu_index,
                         log_path=log_path,
+                        mesh_dir=mesh_dir,
                     )
                     if self._cancelled.get(block_id):
                         block.recon_status = "CANCELLED"
@@ -1043,6 +1082,7 @@ class OpenMVSRunner:
         texture_dir: str,
         gpu_index: int,
         log_path: str,
+        mesh_dir: Optional[str] = None,
     ) -> None:
         # 纹理阶段同样需要访问原始图像，working-folder 仍然应为 dense 目录；
         # 输出 OBJ/MTL/纹理图写入 texture_dir。
@@ -1069,8 +1109,27 @@ class OpenMVSRunner:
                     refine_ply = candidate
                     break
         if not refine_ply:
-            # 如果都找不到，使用默认名称（优先 scene_dense_refine.ply）
-            refine_ply = os.path.join(refine_dir, "scene_dense_refine.ply")
+            # 如果都找不到，尝试使用mesh输出作为fallback
+            if mesh_dir:
+                mesh_ply = os.path.join(mesh_dir, "scene_dense_mesh.ply")
+                if os.path.exists(mesh_ply):
+                    refine_ply = mesh_ply
+                    with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+                        log_fp.write(
+                            f"[INFO] Refine output not found, using mesh output for texture stage: {mesh_ply}\n"
+                        )
+                else:
+                    # 如果mesh_dir中也没有，尝试从dense_dir读取mesh
+                    mesh_ply = os.path.join(dense_dir_abs, "scene_dense_mesh.ply")
+                    if os.path.exists(mesh_ply):
+                        refine_ply = mesh_ply
+                        with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+                            log_fp.write(
+                                f"[INFO] Refine output not found, using mesh output for texture stage: {mesh_ply}\n"
+                            )
+            if not refine_ply:
+                # 如果都找不到，使用默认名称（优先 scene_dense_refine.ply）
+                refine_ply = os.path.join(refine_dir, "scene_dense_refine.ply")
         cmd = [
             str(OPENMVS_TEXTURE),
             dense_mvs,

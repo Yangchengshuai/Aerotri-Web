@@ -169,6 +169,11 @@
           <el-tab-pane label="3DGS" name="gs" v-if="block">
             <GaussianSplattingPanel :block="block" />
           </el-tab-pane>
+
+          <!-- 3D Tiles Tab -->
+          <el-tab-pane label="3D Tiles" name="tiles" v-if="block">
+            <TilesConversionPanel :block="block" />
+          </el-tab-pane>
         </el-tabs>
       </el-main>
     </div>
@@ -265,6 +270,7 @@ import InstantSfMRealtimeViewer from '@/components/InstantSfMRealtimeViewer.vue'
 import StatisticsView from '@/components/StatisticsView.vue'
 import ReconstructionPanel from '@/components/ReconstructionPanel.vue'
 import GaussianSplattingPanel from '@/components/GaussianSplattingPanel.vue'
+import TilesConversionPanel from '@/components/TilesConversionPanel.vue'
 import CameraList from '@/components/CameraList.vue'
 import CameraDetailPanel from '@/components/CameraDetailPanel.vue'
 
@@ -413,9 +419,21 @@ async function handleGlomapResume() {
     // Use user-specified path or default
     const inputPath = resumeInputPath.value.trim() || null
     
+    // Merge with default values to ensure all skip flags are explicitly set
+    // Defaults match GLOMAP GlobalMapperOptions: skip_global_positioning=false, skip_bundle_adjustment=false, skip_pruning=true
+    const defaultGlomapResumeParams = {
+      skip_global_positioning: false,
+      skip_bundle_adjustment: false,
+      skip_pruning: true,
+    }
+    const glomapParams = {
+      ...defaultGlomapResumeParams,
+      ...(block.value.mapper_params || {}),
+    }
+    
     const response = await taskApi.glomapMapperResume(blockId.value, {
       gpu_index: selectedGpuIndex.value,
-      glomap_params: block.value.mapper_params || {},
+      glomap_params: glomapParams,
       input_colmap_path: inputPath,
     })
     

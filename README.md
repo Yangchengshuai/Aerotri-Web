@@ -69,6 +69,11 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 内置基于 WebGPU 的 `visionary` 预览页，可在线预览导出的 `point_cloud.ply`
   - **自动相机模型检测与去畸变**: 训练前自动检测相机模型，如非 PINHOLE/SIMPLE_PINHOLE 则自动运行 COLMAP image_undistorter
   - **RTX 5090 支持**: 自动配置 CUDA 架构以支持 RTX 5090（Blackwell sm_120）
+- 3D Tiles 转换
+  - 支持将 OpenMVS 重建结果（OBJ 格式）转换为 3D Tiles 格式，用于 Web 端可视化
+  - Block 维度维护独立的 3D Tiles 状态字段（`tiles_status`、`tiles_progress`、`tiles_current_stage` 等），支持任务恢复
+  - 前端在「3D Tiles」页签中启动转换任务、查看进度、日志与产物列表
+  - 支持获取 tileset.json URL，可在 Cesium 等 3D Tiles 查看器中加载
 - InstantSfM 实时可视化
   - 支持启用实时可视化功能，通过 WebSocket 实时显示优化过程、相机位姿和点云
   - 前端提供实时可视化查看器，可在任务运行期间查看优化进度
