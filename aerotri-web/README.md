@@ -277,7 +277,7 @@ aerotri-web/
 ### 通用参数
 - 特征提取: max_image_size, max_num_features, camera_model
   - 默认相机模型: `OPENCV`（原为 `SIMPLE_RADIAL`）
-  - 默认最大特征数: `15000`（原为 `12000`）
+  - 默认最大特征数: `20000`（原为 `15000`），前端上限 `50000`
 - 匹配: method (sequential/exhaustive/vocab_tree), overlap
   - **空间匹配**: COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定 `spatial_is_gps` 参数
 
@@ -287,10 +287,17 @@ aerotri-web/
 - `partition_params`: 分区参数（partition_size, overlap）
 - `sfm_pipeline_mode`: SfM 流水线模式（如 "global_feat_match"）
 - `merge_strategy`: 合并策略（"rigid_keep_one" 或 "sim3_keep_one"）
+- **分区合并改进**:
+  - 完整保留并正确重映射 2D points 数据，确保 point2d_idx 与 tracks 对应关系正确
+  - 从 1 开始重新分配所有 ID（image_id, camera_id, point_id），避免溢出问题
+  - 使用容差比较进行相机去重，处理不同分区中相同相机的参数差异
+  - 使用已合并结果作为参考进行对齐，而非仅使用前一个分区
 
 ### GLOMAP mapper_resume 参数
 - `input_colmap_path`: 输入 COLMAP 稀疏重建目录路径（包含 cameras.bin/txt, images.bin/txt, points3D.bin/txt）
+  - **自动检测**: 如果未设置，会自动检测 `merged/sparse/0`（分区合并结果）或 `sparse/0`（普通结果）
 - `glomap_params`: GLOMAP 优化参数（支持所有 GLOMAP mapper 参数，但部分跳过阶段参数在 mapper_resume 模式下不可用）
+  - `BundleAdjustment.loss_function_type`: 损失函数类型（"huber", "cauchy", "softl1", "trivial"），默认为 "huber"
 - `gpu_index`: GPU 索引
 
 ## 许可证

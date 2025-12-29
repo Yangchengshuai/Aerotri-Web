@@ -546,7 +546,7 @@ class TaskRunner:
             "--SiftExtraction.use_gpu", str(params.get("use_gpu", 1)),
             "--SiftExtraction.gpu_index", str(gpu_index),
             "--SiftExtraction.max_image_size", str(params.get("max_image_size", 2640)),
-            "--SiftExtraction.max_num_features", str(params.get("max_num_features", 15000)),
+            "--SiftExtraction.max_num_features", str(params.get("max_num_features", 20000)),
         ]
         
         try:
@@ -948,8 +948,40 @@ class TaskRunner:
 
         # Basic validation
         input_colmap_path = getattr(block, "input_colmap_path", None)
+        
+        # If input_colmap_path is not set, try to auto-detect from block output_path
+        # For partitioned blocks, check merged/sparse/0 first, then sparse/0
         if not input_colmap_path or not os.path.isdir(input_colmap_path):
-            error_msg = f"Invalid COLMAP input path for mapper_resume: {input_colmap_path!r}"
+            output_path = block.output_path or ""
+            if output_path:
+                # Check for partitioned merge result first
+                merged_sparse = os.path.join(output_path, "merged", "sparse", "0")
+                sparse_0 = os.path.join(output_path, "sparse", "0")
+                
+                # Prefer merged/sparse/0 if it exists (partitioned merge result)
+                if os.path.isdir(merged_sparse):
+                    # Check if it contains COLMAP files
+                    has_colmap_files = any(
+                        os.path.exists(os.path.join(merged_sparse, f))
+                        for f in ["cameras.bin", "images.bin", "points3D.bin", 
+                                 "cameras.txt", "images.txt", "points3D.txt"]
+                    )
+                    if has_colmap_files:
+                        input_colmap_path = merged_sparse
+                        ctx.write_log_line(f"Auto-detected merged sparse result: {input_colmap_path}")
+                # Fallback to sparse/0 (may be symlink to merged/sparse/0)
+                elif os.path.isdir(sparse_0):
+                    has_colmap_files = any(
+                        os.path.exists(os.path.join(sparse_0, f))
+                        for f in ["cameras.bin", "images.bin", "points3D.bin",
+                                 "cameras.txt", "images.txt", "points3D.txt"]
+                    )
+                    if has_colmap_files:
+                        input_colmap_path = sparse_0
+                        ctx.write_log_line(f"Auto-detected sparse result: {input_colmap_path}")
+        
+        if not input_colmap_path or not os.path.isdir(input_colmap_path):
+            error_msg = f"Invalid COLMAP input path for mapper_resume: {input_colmap_path!r}. Please set input_colmap_path or ensure merged/sparse/0 or sparse/0 exists."
             block.status = BlockStatus.FAILED
             block.error_message = error_msg
             block.current_stage = "failed"

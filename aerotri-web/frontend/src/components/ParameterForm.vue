@@ -61,7 +61,7 @@
         <el-input-number
           v-model="formData.feature_params.max_num_features"
           :min="1000"
-          :max="16384"
+          :max="50000"
           :step="1000"
         />
       </el-form-item>
@@ -991,7 +991,7 @@ const defaultFeatureParams: FeatureParams = {
   use_gpu: true,
   gpu_index: 0,
   max_image_size: 2640,
-  max_num_features: 15000,
+  max_num_features: 20000,
   camera_model: 'OPENCV',
   single_camera: true,
 }

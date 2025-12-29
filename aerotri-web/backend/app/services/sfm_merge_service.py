@@ -13,16 +13,24 @@ class SFMMergeService:
     """Service for merging partition SfM results."""
     
     @staticmethod
-    def read_images_bin(images_bin_path: str) -> Dict[str, Dict]:
+    def read_images_bin(images_bin_path: str, include_points2d: bool = False) -> Dict[str, Dict]:
         """Read COLMAP images.bin file.
         
+        Args:
+            images_bin_path: Path to images.bin file
+            include_points2d: If True, include 2D points data in the result
+        
         Returns:
-            Dict mapping image_name -> {image_id, qw, qx, qy, qz, tx, ty, tz, camera_id}
+            Dict mapping image_name -> {image_id, qw, qx, qy, qz, tx, ty, tz, camera_id, points2d}
+            points2d is a list of (x, y, point3d_id) tuples if include_points2d=True
         """
         images = {}
         with open(images_bin_path, "rb") as f:
             num_images = struct.unpack("<Q", f.read(8))[0]
-            for _ in range(num_images):
+            # Validate num_images to avoid overflow in range()
+            if num_images > 2**31 - 1:  # Python range() limit
+                raise RuntimeError(f"Number of images {num_images} exceeds Python range() limit")
+            for _ in range(int(num_images)):
                 image_id = struct.unpack("<I", f.read(4))[0]
                 qw, qx, qy, qz = struct.unpack("<4d", f.read(32))
                 tx, ty, tz = struct.unpack("<3d", f.read(24))
@@ -37,9 +45,19 @@ class SFMMergeService:
                     name_chars.append(char.decode("utf-8"))
                 image_name = "".join(name_chars)
                 
-                # Skip 2D points
+                # Read 2D points
                 num_points2d = struct.unpack("<Q", f.read(8))[0]
-                f.read(num_points2d * 24)  # Skip point data
+                if num_points2d > 2**31 - 1:  # Python range() limit
+                    raise RuntimeError(f"Number of 2D points {num_points2d} exceeds Python range() limit")
+                
+                points2d = []
+                if include_points2d:
+                    for _ in range(int(num_points2d)):
+                        x, y = struct.unpack("<2d", f.read(16))
+                        point3d_id = struct.unpack("<Q", f.read(8))[0]
+                        points2d.append((x, y, point3d_id))
+                else:
+                    f.read(int(num_points2d) * 24)  # Skip point data
                 
                 images[image_name] = {
                     "image_id": image_id,
@@ -47,6 +65,8 @@ class SFMMergeService:
                     "tx": tx, "ty": ty, "tz": tz,
                     "camera_id": camera_id,
                 }
+                if include_points2d:
+                    images[image_name]["points2d"] = points2d
         return images
     
     @staticmethod
@@ -101,18 +121,46 @@ class SFMMergeService:
         Returns:
             Dict mapping camera_id -> camera parameters
         """
+        # COLMAP camera model to parameter count mapping
+        # Reference: https://github.com/colmap/colmap/blob/master/src/base/camera_models.h
+        MODEL_PARAM_COUNTS = {
+            0: 3,   # SIMPLE_PINHOLE
+            1: 4,   # PINHOLE
+            2: 4,   # SIMPLE_RADIAL
+            3: 5,   # RADIAL
+            4: 8,   # OPENCV
+            5: 8,   # OPENCV_FISHEYE
+            6: 12,  # FULL_OPENCV
+            7: 4,   # FOV
+            8: 4,   # SIMPLE_RADIAL_FISHEYE
+            9: 5,   # RADIAL_FISHEYE
+            10: 12, # THIN_PRISM_FISHEYE
+        }
+        
         cameras = {}
         with open(cameras_bin_path, "rb") as f:
             num_cameras = struct.unpack("<Q", f.read(8))[0]
-            for _ in range(num_cameras):
+            # Validate num_cameras to avoid overflow in range()
+            if num_cameras > 2**31 - 1:  # Python range() limit
+                raise RuntimeError(f"Number of cameras {num_cameras} exceeds Python range() limit")
+            for _ in range(int(num_cameras)):
                 camera_id = struct.unpack("<I", f.read(4))[0]
                 model = struct.unpack("<I", f.read(4))[0]
                 width = struct.unpack("<Q", f.read(8))[0]
                 height = struct.unpack("<Q", f.read(8))[0]
                 
-                # Read params (variable length based on model)
-                num_params = struct.unpack("<Q", f.read(8))[0]
-                params = struct.unpack(f"<{num_params}d", f.read(8 * num_params))
+                # Get parameter count based on camera model
+                num_params = MODEL_PARAM_COUNTS.get(model, 4)  # Default to 4 if unknown model
+                # Validate num_params to avoid overflow in struct.unpack
+                if num_params > 2**31 - 1:  # Python struct format limit
+                    raise RuntimeError(f"Number of camera parameters {num_params} exceeds Python struct format limit")
+                if num_params < 0:
+                    raise RuntimeError(f"Number of camera parameters {num_params} is negative")
+                # Read params as bytes and unpack
+                params_bytes = f.read(8 * int(num_params))
+                if len(params_bytes) < 8 * num_params:
+                    raise RuntimeError(f"Insufficient data for camera {camera_id}: expected {8 * num_params} bytes, got {len(params_bytes)}")
+                params = struct.unpack(f"<{int(num_params)}d", params_bytes)
                 
                 cameras[camera_id] = {
                     "model": model,
@@ -182,18 +230,24 @@ class SFMMergeService:
         points = {}
         with open(points_bin_path, "rb") as f:
             num_points = struct.unpack("<Q", f.read(8))[0]
-            for _ in range(num_points):
+            # Validate num_points to avoid overflow in range()
+            if num_points > 2**31 - 1:  # Python range() limit
+                raise RuntimeError(f"Number of points {num_points} exceeds Python range() limit")
+            for _ in range(int(num_points)):
                 point_id = struct.unpack("<Q", f.read(8))[0]
                 x, y, z = struct.unpack("<3d", f.read(24))
                 r, g, b = struct.unpack("<3B", f.read(3))
                 error = struct.unpack("<d", f.read(8))[0]
                 
                 track_length = struct.unpack("<Q", f.read(8))[0]
+                # Validate track_length to avoid overflow in range()
+                if track_length > 2**31 - 1:  # Python range() limit
+                    raise RuntimeError(f"Track length {track_length} exceeds Python range() limit")
                 track = []
-                for _ in range(track_length):
+                for _ in range(int(track_length)):
                     image_id = struct.unpack("<I", f.read(4))[0]
                     point2d_idx = struct.unpack("<I", f.read(4))[0]
-                    track.append((image_id, point2d_idx))
+                    track.append((int(image_id), int(point2d_idx)))
                 
                 points[point_id] = {
                     "x": x, "y": y, "z": z,
@@ -432,10 +486,14 @@ class SFMMergeService:
             points_txt = os.path.join(partition_sparse, "points3D.txt")
             
             # Read images (support both binary and text formats)
+            # Include 2D points data for proper merging
             if os.path.exists(images_bin):
-                images = SFMMergeService.read_images_bin(images_bin)
+                images = SFMMergeService.read_images_bin(images_bin, include_points2d=True)
             elif os.path.exists(images_txt):
                 images = SFMMergeService.read_images_txt(images_txt)
+                # For text format, we don't have 2D points easily, so set empty
+                for img_name in images:
+                    images[img_name]["points2d"] = []
             else:
                 raise RuntimeError(f"Partition {partition.index} missing images.bin or images.txt")
             
@@ -474,19 +532,98 @@ class SFMMergeService:
         merged_points = {}
         
         # Add reference partition images and cameras
+        # Reassign IDs starting from 1 to avoid overflow issues
+        image_id_map = {}  # old_id -> new_id
+        camera_id_map = {}  # old_id -> new_id
+        point_id_map = {}  # old_id -> new_id
+        
+        next_image_id = 1
+        next_camera_id = 1
+        next_point_id = 1
+        
+        # Remap reference partition IDs
         for img_name, img_data in ref_data["images"].items():
-            merged_images[img_name] = img_data.copy()
-        for cam_id, cam_data in ref_data["cameras"].items():
-            merged_cameras[cam_id] = cam_data.copy()
-        for pt_id, pt_data in ref_data["points"].items():
-            merged_points[pt_id] = pt_data.copy()
+            old_img_id = img_data["image_id"]
+            old_cam_id = img_data["camera_id"]
+            
+            # Map camera ID
+            if old_cam_id not in camera_id_map:
+                camera_id_map[old_cam_id] = next_camera_id
+                next_camera_id += 1
+            
+            # Map image ID
+            image_id_map[old_img_id] = next_image_id
+            new_img_data = img_data.copy()
+            new_img_data["image_id"] = next_image_id
+            new_img_data["camera_id"] = camera_id_map[old_cam_id]
+            
+            # Remap 2D points: update point3d_id references
+            if "points2d" in new_img_data:
+                remapped_points2d = []
+                for x, y, old_point3d_id in new_img_data["points2d"]:
+                    # point3d_id will be remapped when we process points
+                    # For now, keep the old ID (we'll update it later)
+                    remapped_points2d.append((x, y, old_point3d_id))
+                new_img_data["points2d"] = remapped_points2d
+            else:
+                new_img_data["points2d"] = []
+            
+            merged_images[img_name] = new_img_data
+            next_image_id += 1
+        
+        # Add cameras
+        for old_cam_id, cam_data in ref_data["cameras"].items():
+            if old_cam_id in camera_id_map:
+                merged_cameras[camera_id_map[old_cam_id]] = cam_data.copy()
+        
+        # Add points with remapped IDs
+        for old_pt_id, pt_data in ref_data["points"].items():
+            point_id_map[old_pt_id] = next_point_id
+            new_pt_data = pt_data.copy()
+            # Remap track image_ids
+            new_track = []
+            for old_img_id, point2d_idx in pt_data["track"]:
+                if old_img_id in image_id_map:
+                    new_track.append((image_id_map[old_img_id], point2d_idx))
+            new_pt_data["track"] = new_track
+            merged_points[next_point_id] = new_pt_data
+            next_point_id += 1
+        
+        # Update 2D points in merged_images: remap point3d_id references
+        # Build a mapping from (image_id, point2d_idx) to new point3d_id for reference partition
+        # This helps us update 2D points correctly
+        point2d_to_point3d = {}  # (image_id, point2d_idx) -> new_point3d_id
+        for new_pt_id, pt_data in merged_points.items():
+            for new_img_id, point2d_idx in pt_data["track"]:
+                point2d_to_point3d[(new_img_id, point2d_idx)] = new_pt_id
+        
+        # Update 2D points in merged_images with remapped point3d_id
+        # IMPORTANT: Keep ALL 2D points to maintain point2d_idx correspondence with tracks
+        # Only update point3d_id references, don't remove points
+        for img_name, img_data in merged_images.items():
+            if "points2d" in img_data and img_data["points2d"]:
+                updated_points2d = []
+                img_id = img_data["image_id"]
+                for idx, (x, y, old_point3d_id) in enumerate(img_data["points2d"]):
+                    # Try to find the new point3d_id using point2d_idx
+                    point2d_idx = idx  # point2d_idx is the index in the points2d list
+                    key = (img_id, point2d_idx)
+                    if key in point2d_to_point3d:
+                        new_point3d_id = point2d_to_point3d[key]
+                        updated_points2d.append((x, y, new_point3d_id))
+                    elif old_point3d_id in point_id_map:
+                        # Fallback: use point_id_map if available
+                        new_point3d_id = point_id_map[old_point3d_id]
+                        updated_points2d.append((x, y, new_point3d_id))
+                    else:
+                        # Keep the point but mark as invalid (UINT64_MAX)
+                        # This ensures point2d_idx correspondence is maintained
+                        updated_points2d.append((x, y, 18446744073709551615))  # UINT64_MAX
+                img_data["points2d"] = updated_points2d
         
         ctx.write_log_line(f"[Merge] Reference partition (0): {len(merged_images)} images, {len(merged_points)} points")
         
         # Merge subsequent partitions with rigid alignment
-        next_image_id = max([img["image_id"] for img in merged_images.values()], default=0) + 1
-        next_camera_id = max(merged_cameras.keys(), default=0) + 1
-        next_point_id = max(merged_points.keys(), default=0) + 1
         
         for i in range(1, len(partition_data)):
             part_data = partition_data[i]
@@ -494,12 +631,11 @@ class SFMMergeService:
             
             ctx.write_log_line(f"[Merge] Aligning partition {partition.index} to reference")
             
-            # Find overlap images (images that appear in both reference and current partition)
-            # For simplicity, we'll use images from previous partition as reference
-            prev_images = partition_data[i-1]["images"]
+            # Find overlap images (images that appear in both merged result and current partition)
+            # Use merged_images as reference (contains all previously merged images)
             curr_images = part_data["images"]
             
-            overlap_images = set(prev_images.keys()) & set(curr_images.keys())
+            overlap_images = set(merged_images.keys()) & set(curr_images.keys())
             if len(overlap_images) < 3:
                 ctx.write_log_line(f"[Merge] Warning: Only {len(overlap_images)} overlap images, alignment may be poor")
             
@@ -517,8 +653,8 @@ class SFMMergeService:
                     src_t = np.array([src_img["tx"], src_img["ty"], src_img["tz"]])
                     source_poses.append((src_R, src_t))
                     
-                    # Target: previous partition (or reference)
-                    tgt_img = prev_images[img_name]
+                    # Target: merged result (reference)
+                    tgt_img = merged_images[img_name]
                     tgt_R = SFMMergeService.quaternion_to_rotation_matrix(
                         tgt_img["qw"], tgt_img["qx"], tgt_img["qy"], tgt_img["qz"]
                     )
@@ -544,6 +680,53 @@ class SFMMergeService:
                 t_transform = np.zeros(3)
                 s_transform = 1.0
                 ctx.write_log_line(f"[Merge] Using identity transform for partition {partition.index} (insufficient overlap)")
+            
+            # Initialize ID mappings for current partition BEFORE processing images
+            # Build camera_id mapping for current partition first
+            partition_camera_id_to_global = {}
+            for old_cam_id in part_data["cameras"].keys():
+                if old_cam_id not in partition_camera_id_to_global:
+                    # Check if camera already exists in merged cameras by comparing params
+                    # Use tolerance-based comparison for camera parameters to handle slight differences
+                    # from independent estimation in different partitions
+                    cam_data = part_data["cameras"][old_cam_id]
+                    found_existing = False
+                    
+                    def camera_params_equal(cam1, cam2, tolerance=1e-2):
+                        """Compare camera parameters with tolerance for numerical differences."""
+                        if (cam1["model"] != cam2["model"] or
+                            cam1["width"] != cam2["width"] or
+                            cam1["height"] != cam2["height"]):
+                            return False
+                        params1 = cam1["params"]
+                        params2 = cam2["params"]
+                        if len(params1) != len(params2):
+                            return False
+                        # Use relative tolerance for focal length, absolute for distortion
+                        for i, (p1, p2) in enumerate(zip(params1, params2)):
+                            if i < 2:  # fx, fy: use relative tolerance (1%)
+                                if abs(p1 - p2) / max(abs(p1), abs(p2), 1.0) > tolerance:
+                                    return False
+                            else:  # cx, cy, distortion: use absolute tolerance
+                                if abs(p1 - p2) > tolerance:
+                                    return False
+                        return True
+                    
+                    for merged_cam_id, merged_cam_data in merged_cameras.items():
+                        if camera_params_equal(merged_cam_data, cam_data, tolerance=1e-2):
+                            partition_camera_id_to_global[old_cam_id] = merged_cam_id
+                            found_existing = True
+                            # Optionally: average the parameters for better accuracy
+                            # For now, keep the reference partition's parameters
+                            break
+                    if not found_existing:
+                        # Add new camera (truly different camera)
+                        partition_camera_id_to_global[old_cam_id] = next_camera_id
+                        merged_cameras[next_camera_id] = cam_data.copy()
+                        next_camera_id += 1
+            
+            # Initialize image_id mapping (will be built during image processing)
+            partition_image_id_to_global = {}
             
             # Transform and add images from current partition
             for img_name, img_data in curr_images.items():
@@ -579,6 +762,18 @@ class SFMMergeService:
                         "qw": qw_new, "qx": qx_new, "qy": qy_new, "qz": qz_new,
                         "tx": float(t_w2c_new[0]), "ty": float(t_w2c_new[1]), "tz": float(t_w2c_new[2]),
                     })
+                    # Add to image_id mapping for overlap images
+                    partition_image_id_to_global[img_data["image_id"]] = merged_images[img_name]["image_id"]
+                    
+                    # Update 2D points for overlap images: merge 2D points from current partition
+                    # Keep existing 2D points but add new ones from current partition
+                    if "points2d" in img_data and img_data["points2d"]:
+                        existing_points2d = merged_images[img_name].get("points2d", [])
+                        # For overlap images, we should merge 2D points
+                        # But to avoid duplicates, we'll keep the existing ones and update point3d_id references later
+                        # For now, just ensure points2d exists
+                        if "points2d" not in merged_images[img_name]:
+                            merged_images[img_name]["points2d"] = []
                 else:
                     # New image: transform and add
                     qw, qx, qy, qz = img_data["qw"], img_data["qx"], img_data["qy"], img_data["qz"]
@@ -606,30 +801,37 @@ class SFMMergeService:
                     qw_new, qx_new, qy_new, qz_new = SFMMergeService.rotation_matrix_to_quaternion(R_w2c_new)
                     
                     # Assign new IDs
-                    cam_id = img_data["camera_id"]
-                    if cam_id not in merged_cameras:
+                    old_cam_id = img_data["camera_id"]
+                    new_cam_id = partition_camera_id_to_global.get(old_cam_id, next_camera_id)
+                    if old_cam_id not in partition_camera_id_to_global:
                         # Add camera if not exists
-                        if cam_id in part_data["cameras"]:
-                            merged_cameras[next_camera_id] = part_data["cameras"][cam_id].copy()
-                            cam_id = next_camera_id
+                        if old_cam_id in part_data["cameras"]:
+                            merged_cameras[next_camera_id] = part_data["cameras"][old_cam_id].copy()
+                            partition_camera_id_to_global[old_cam_id] = next_camera_id
+                            new_cam_id = next_camera_id
                             next_camera_id += 1
                     
+                    # Check for ID overflow (32-bit unsigned int max: 4294967295)
+                    MAX_UINT32 = 4294967295
+                    if next_image_id > MAX_UINT32:
+                        raise RuntimeError(f"Image ID overflow: {next_image_id} exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                    if new_cam_id > MAX_UINT32:
+                        raise RuntimeError(f"Camera ID overflow: {new_cam_id} exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                    
+                    # Add 2D points from current partition for new images
+                    points2d = img_data.get("points2d", [])
                     merged_images[img_name] = {
                         "image_id": next_image_id,
                         "qw": qw_new, "qx": qx_new, "qy": qy_new, "qz": qz_new,
                         "tx": float(t_w2c_new[0]), "ty": float(t_w2c_new[1]), "tz": float(t_w2c_new[2]),
-                        "camera_id": cam_id,
+                        "camera_id": new_cam_id,
+                        "points2d": points2d,  # Will be remapped later
                     }
+                    partition_image_id_to_global[img_data["image_id"]] = next_image_id
                     next_image_id += 1
             
-            # Build partition image_id -> global image_id mapping
-            partition_image_id_to_global = {}
-            for img_name, img_data in curr_images.items():
-                partition_old_id = img_data["image_id"]
-                if img_name in merged_images:
-                    # Image exists in merged result (overlap or newly added)
-                    partition_image_id_to_global[partition_old_id] = merged_images[img_name]["image_id"]
-                # Note: If image_name not in merged_images, it means it wasn't added (shouldn't happen)
+            # Build partition point_id mapping for current partition
+            partition_point_id_map = {}  # old_pt_id -> new_point_id
             
             # Transform and add points
             for pt_id, pt_data in part_data["points"].items():
@@ -640,11 +842,29 @@ class SFMMergeService:
                 
                 # Remap track image_ids from partition IDs to global IDs
                 new_track = []
+                MAX_UINT32 = 4294967295
                 for old_image_id, point2d_idx in pt_data["track"]:
                     if old_image_id in partition_image_id_to_global:
                         new_image_id = partition_image_id_to_global[old_image_id]
-                        new_track.append((new_image_id, point2d_idx))
+                        # Check for overflow and ensure values are within valid range
+                        if new_image_id > MAX_UINT32:
+                            raise RuntimeError(f"Track image_id overflow: {new_image_id} exceeds 32-bit unsigned integer limit")
+                        # Ensure point2d_idx is a valid integer within range
+                        point2d_idx_int = int(point2d_idx)
+                        if point2d_idx_int < 0:
+                            raise RuntimeError(f"Track point2d_idx is negative: {point2d_idx_int}")
+                        if point2d_idx_int > MAX_UINT32:
+                            raise RuntimeError(f"Track point2d_idx overflow: {point2d_idx_int} exceeds 32-bit unsigned integer limit")
+                        new_track.append((int(new_image_id), point2d_idx_int))
                     # If image_id not in mapping, skip this observation (invalid reference)
+                
+                # Check point ID overflow
+                MAX_UINT64 = 18446744073709551615  # 64-bit unsigned int for points3D
+                if next_point_id > MAX_UINT64:
+                    raise RuntimeError(f"Point ID overflow: {next_point_id} exceeds 64-bit unsigned integer limit")
+                
+                # Map old point ID to new point ID
+                partition_point_id_map[pt_id] = next_point_id
                 
                 # Use new point ID
                 merged_points[next_point_id] = {
@@ -658,6 +878,46 @@ class SFMMergeService:
                     "track": new_track,  # Use remapped track
                 }
                 next_point_id += 1
+            
+            # Update 2D points for images from current partition: remap point3d_id references
+            # Build mapping from (image_id, point2d_idx) to new point3d_id
+            partition_point2d_to_point3d = {}
+            for new_pt_id, pt_data in merged_points.items():
+                # Only include points that were just added (in partition_point_id_map values)
+                if new_pt_id in partition_point_id_map.values():
+                    for new_img_id, point2d_idx in pt_data["track"]:
+                        if new_img_id in partition_image_id_to_global.values():
+                            partition_point2d_to_point3d[(new_img_id, point2d_idx)] = new_pt_id
+            
+            # Update 2D points for images from current partition
+            for img_name, img_data in curr_images.items():
+                if img_name in merged_images and "points2d" in img_data:
+                    merged_img_data = merged_images[img_name]
+                    img_id = merged_img_data["image_id"]
+                    old_points2d = img_data["points2d"]
+                    updated_points2d = []
+                    
+                    for idx, (x, y, old_point3d_id) in enumerate(old_points2d):
+                        # Try to find new point3d_id using point2d_idx
+                        point2d_idx = idx
+                        key = (img_id, point2d_idx)
+                        if key in partition_point2d_to_point3d:
+                            new_point3d_id = partition_point2d_to_point3d[key]
+                            updated_points2d.append((x, y, new_point3d_id))
+                        elif old_point3d_id in partition_point_id_map:
+                            # Fallback: use partition_point_id_map
+                            new_point3d_id = partition_point_id_map[old_point3d_id]
+                            updated_points2d.append((x, y, new_point3d_id))
+                        # If neither works, skip this point (invalid reference)
+                    
+                    # For overlap images, merge with existing points2d
+                    if "points2d" in merged_img_data and merged_img_data["points2d"]:
+                        # Keep existing valid points and add new valid ones
+                        existing_points2d = merged_img_data["points2d"]
+                        # Simple merge: append new points (could be optimized to avoid duplicates)
+                        merged_img_data["points2d"] = existing_points2d + updated_points2d
+                    else:
+                        merged_img_data["points2d"] = updated_points2d
             
             ctx.write_log_line(f"[Merge] Partition {partition.index} merged: {len(merged_images)} total images, {len(merged_points)} total points")
         
@@ -680,16 +940,24 @@ class SFMMergeService:
         }
         
         # Write cameras.bin
+        # COLMAP cameras.bin format does NOT include num_params field
+        # Format: num_cameras (Q), then for each camera:
+        #   camera_id (I), model (I), width (Q), height (Q), params[] (d array, no count)
         cameras_bin_path = os.path.join(output_sparse_dir, "cameras.bin")
+        MAX_UINT32 = 4294967295
         with open(cameras_bin_path, "wb") as f:
             f.write(struct.pack("<Q", len(merged_cameras)))
             for cam_id, cam_data in sorted(merged_cameras.items()):
+                if cam_id > MAX_UINT32:
+                    raise RuntimeError(f"Cannot write camera_id {cam_id}: exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                if cam_data["model"] > MAX_UINT32:
+                    raise RuntimeError(f"Cannot write camera model {cam_data['model']}: exceeds 32-bit unsigned integer limit")
                 f.write(struct.pack("<I", cam_id))
                 f.write(struct.pack("<I", cam_data["model"]))
                 f.write(struct.pack("<Q", cam_data["width"]))
                 f.write(struct.pack("<Q", cam_data["height"]))
+                # Write params directly without num_params field (COLMAP format)
                 params = cam_data["params"]
-                f.write(struct.pack("<Q", len(params)))
                 f.write(struct.pack(f"<{len(params)}d", *params))
         
         # Also write cameras.txt for compatibility (COLMAP sometimes has issues with binary format)
@@ -705,16 +973,28 @@ class SFMMergeService:
         
         # Write images.bin
         images_bin_path = os.path.join(output_sparse_dir, "images.bin")
+        MAX_UINT32 = 4294967295
         with open(images_bin_path, "wb") as f:
             f.write(struct.pack("<Q", len(merged_images)))
             for img_name, img_data in sorted(merged_images.items(), key=lambda x: x[1]["image_id"]):
-                f.write(struct.pack("<I", img_data["image_id"]))
+                img_id = img_data["image_id"]
+                cam_id = img_data["camera_id"]
+                if img_id > MAX_UINT32:
+                    raise RuntimeError(f"Cannot write image_id {img_id}: exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                if cam_id > MAX_UINT32:
+                    raise RuntimeError(f"Cannot write camera_id {cam_id}: exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                f.write(struct.pack("<I", img_id))
                 f.write(struct.pack("<4d", img_data["qw"], img_data["qx"], img_data["qy"], img_data["qz"]))
                 f.write(struct.pack("<3d", img_data["tx"], img_data["ty"], img_data["tz"]))
-                f.write(struct.pack("<I", img_data["camera_id"]))
+                f.write(struct.pack("<I", cam_id))
                 f.write(img_name.encode("utf-8") + b"\x00")
-                # Write empty 2D points (simplified)
-                f.write(struct.pack("<Q", 0))
+                
+                # Write 2D points if available
+                points2d = img_data.get("points2d", [])
+                f.write(struct.pack("<Q", len(points2d)))
+                for x, y, point3d_id in points2d:
+                    f.write(struct.pack("<2d", x, y))
+                    f.write(struct.pack("<Q", point3d_id))
         
         # Also write images.txt for compatibility
         images_txt_path = os.path.join(output_sparse_dir, "images.txt")
@@ -740,9 +1020,17 @@ class SFMMergeService:
                 f.write(struct.pack("<d", pt_data["error"]))
                 track = pt_data["track"]
                 f.write(struct.pack("<Q", len(track)))
+                MAX_UINT32 = 4294967295
                 for image_id, point2d_idx in track:
-                    f.write(struct.pack("<I", image_id))
-                    f.write(struct.pack("<I", point2d_idx))
+                    # Ensure values are integers and within valid range
+                    image_id_int = int(image_id)
+                    point2d_idx_int = int(point2d_idx)
+                    if image_id_int < 0 or image_id_int > MAX_UINT32:
+                        raise RuntimeError(f"Cannot write track image_id {image_id_int}: exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                    if point2d_idx_int < 0 or point2d_idx_int > MAX_UINT32:
+                        raise RuntimeError(f"Cannot write track point2d_idx {point2d_idx_int}: exceeds 32-bit unsigned integer limit ({MAX_UINT32})")
+                    f.write(struct.pack("<I", image_id_int))
+                    f.write(struct.pack("<I", point2d_idx_int))
         
         # Also write points3D.txt for compatibility
         points_txt_path = os.path.join(output_sparse_dir, "points3D.txt")
