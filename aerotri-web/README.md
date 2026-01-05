@@ -264,7 +264,8 @@ aerotri-web/
 - **迭代参数**: `ba_iteration_num`, `retriangulation_iteration_num`
 - **轨迹建立参数**: `track_establishment_min_num_tracks_per_view`, `track_establishment_min_num_view_per_track`, `track_establishment_max_num_view_per_track`, `track_establishment_max_num_tracks`
 - **全局定位参数**: `global_positioning_optimize_positions`, `global_positioning_optimize_points`, `global_positioning_optimize_scales`, `global_positioning_thres_loss_function`, `global_positioning_max_num_iterations`
-- **束调整参数**: `bundle_adjustment_optimize_rotations`, `bundle_adjustment_optimize_translation`, `bundle_adjustment_optimize_intrinsics`, `bundle_adjustment_optimize_principal_point`, `bundle_adjustment_optimize_points`, `bundle_adjustment_thres_loss_function`, `bundle_adjustment_max_num_iterations`
+- **束调整参数**: `bundle_adjustment_optimize_rotations`, `bundle_adjustment_optimize_translation`, `bundle_adjustment_optimize_intrinsics`, `bundle_adjustment_optimize_principal_point`, `bundle_adjustment_optimize_points`, `bundle_adjustment_thres_loss_function`, `bundle_adjustment_loss_function_type`, `bundle_adjustment_max_num_iterations`
+  - `bundle_adjustment_loss_function_type`: 损失函数类型，可选值："huber"（默认）、"cauchy"、"softl1"、"trivial"
 - **重三角化参数**: `triangulation_complete_max_reproj_error`, `triangulation_merge_max_reproj_error`, `triangulation_min_angle`, `triangulation_min_num_matches`
 - **内点阈值参数**: `thresholds_max_angle_error`, `thresholds_max_reprojection_error`, `thresholds_min_triangulation_angle`, `thresholds_max_epipolar_error_E`, `thresholds_max_epipolar_error_F`, `thresholds_max_epipolar_error_H`, `thresholds_min_inlier_num`, `thresholds_min_inlier_ratio`, `thresholds_max_rotation_error`
 

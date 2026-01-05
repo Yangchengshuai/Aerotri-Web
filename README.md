@@ -49,6 +49,7 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
     - 默认相机模型从 `SIMPLE_RADIAL` 改为 `OPENCV`
     - 默认最大特征数从 `15000` 提升至 `20000`，前端上限提升至 `50000`
     - 空间匹配自动检测坐标类型（GPS/笛卡尔），移除手动 `spatial_is_gps` 参数
+    - **GLOMAP Bundle Adjustment 损失函数类型支持**: 支持配置损失函数类型（"huber"、"cauchy"、"softl1"、"trivial"），默认为 "huber"
   - **分区合并改进**:
     - 修复分区合并时 2D points 数据丢失问题，完整保留并正确重映射 point3d_id
     - 改进 ID 重映射机制，从 1 开始重新分配以避免溢出问题

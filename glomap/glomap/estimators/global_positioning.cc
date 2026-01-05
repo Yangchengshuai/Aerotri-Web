@@ -66,7 +66,7 @@ bool GlobalPositioner::Solve(const ViewGraph& view_graph,
 
   // Parameterize the variables, set image poses / tracks / scales to be
   // constant if desired
-  ParameterizeVariables(images, tracks);
+  ParameterizeVariables(images, tracks); //配置优化参数和求解器  
 
   LOG(INFO) << "Solving the global positioner problem";
 

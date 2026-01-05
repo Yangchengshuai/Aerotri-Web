@@ -221,6 +221,8 @@ void OptionManager::AddBundleAdjusterOptions() {
                               &mapper->opt_ba.optimize_points);
   AddAndRegisterDefaultOption("BundleAdjustment.thres_loss_function",
                               &mapper->opt_ba.thres_loss_function);
+  AddAndRegisterDefaultOption("BundleAdjustment.loss_function_type",
+                              &mapper->opt_ba.loss_function_type);
   AddAndRegisterDefaultOption(
       "BundleAdjustment.max_num_iterations",
       &mapper->opt_ba.solver_options.max_num_iterations);

@@ -24,13 +24,25 @@ struct BundleAdjusterOptions : public OptimizationBaseOptions {
   // Constrain the minimum number of views per track
   int min_num_view_per_track = 3;
 
+  // Loss function type: "huber", "cauchy", "softl1", "trivial"
+  std::string loss_function_type = "huber";
+
   BundleAdjusterOptions() : OptimizationBaseOptions() {
     thres_loss_function = 1.;
     solver_options.max_num_iterations = 200;
   }
 
   std::shared_ptr<ceres::LossFunction> CreateLossFunction() {
-    return std::make_shared<ceres::HuberLoss>(thres_loss_function);
+    if (loss_function_type == "cauchy") {
+      return std::make_shared<ceres::CauchyLoss>(thres_loss_function);
+    } else if (loss_function_type == "softl1") {
+      return std::make_shared<ceres::SoftLOneLoss>(thres_loss_function);
+    } else if (loss_function_type == "trivial") {
+      return std::make_shared<ceres::TrivialLoss>();
+    } else {
+      // Default to Huber loss
+      return std::make_shared<ceres::HuberLoss>(thres_loss_function);
+    }
   }
 };
 

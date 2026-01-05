@@ -235,7 +235,7 @@ bool GlobalMapper::Solve(const colmap::Database& database,
             images,
             tracks,
             scaling * options_.inlier_thresholds.max_reprojection_error);
-
+        // 如果过滤掉的Track超过0.1%，继续BA
         if (filtered_num > 1e-3 * tracks.size()) {
           status = false;
         } else
