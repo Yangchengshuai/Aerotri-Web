@@ -113,6 +113,8 @@ async def update_block(
             # Handle Pydantic models (convert to dict)
             if hasattr(value, 'model_dump'):
                 value = value.model_dump(exclude_unset=True)
+            # For dict fields (feature_params, matching_params, mapper_params), 
+            # ensure we store the dict directly (frontend sends complete objects)
             setattr(block, field, value)
     
     await db.commit()

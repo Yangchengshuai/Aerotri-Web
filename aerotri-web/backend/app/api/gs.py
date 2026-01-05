@@ -64,6 +64,19 @@ async def start_gs_training(
 
     # Re-read state after runner initialization
     await db.refresh(block)
+    
+    # Get TensorBoard port if available
+    tb_port = gs_runner.get_tensorboard_port(block.id)
+    tb_url = None
+    if tb_port:
+        tb_url = f"http://localhost:{tb_port}"
+    
+    # Get network_gui port if available
+    network_gui_port = gs_runner.get_network_gui_port(block.id)
+    network_gui_url = None
+    if network_gui_port:
+        network_gui_url = f"tcp://127.0.0.1:{network_gui_port}"
+    
     return GSStatusResponse(
         block_id=block.id,
         gs_status=block.gs_status,
@@ -72,6 +85,10 @@ async def start_gs_training(
         gs_output_path=block.gs_output_path,
         gs_error_message=block.gs_error_message,
         gs_statistics=block.gs_statistics,
+        tensorboard_port=tb_port,
+        tensorboard_url=tb_url,
+        network_gui_port=network_gui_port,
+        network_gui_url=network_gui_url,
     )
 
 
@@ -81,6 +98,19 @@ async def get_gs_status(block_id: str, db: AsyncSession = Depends(get_db)):
     block = result.scalar_one_or_none()
     if not block:
         raise HTTPException(status_code=404, detail=f"Block not found: {block_id}")
+    
+    # Get TensorBoard port if available
+    tb_port = gs_runner.get_tensorboard_port(block_id)
+    tb_url = None
+    if tb_port:
+        tb_url = f"http://localhost:{tb_port}"
+    
+    # Get network_gui port if available
+    network_gui_port = gs_runner.get_network_gui_port(block_id)
+    network_gui_url = None
+    if network_gui_port:
+        network_gui_url = f"tcp://127.0.0.1:{network_gui_port}"
+    
     return GSStatusResponse(
         block_id=block.id,
         gs_status=block.gs_status,
@@ -89,6 +119,10 @@ async def get_gs_status(block_id: str, db: AsyncSession = Depends(get_db)):
         gs_output_path=block.gs_output_path,
         gs_error_message=block.gs_error_message,
         gs_statistics=block.gs_statistics,
+        tensorboard_port=tb_port,
+        tensorboard_url=tb_url,
+        network_gui_port=network_gui_port,
+        network_gui_url=network_gui_url,
     )
 
 
@@ -104,6 +138,8 @@ async def cancel_gs_training(block_id: str, db: AsyncSession = Depends(get_db)):
 
     await gs_runner.cancel_training(block_id)
     await db.refresh(block)
+    
+    # TensorBoard is stopped in cancel_training, so ports are None
     return GSStatusResponse(
         block_id=block.id,
         gs_status=block.gs_status,
@@ -112,6 +148,10 @@ async def cancel_gs_training(block_id: str, db: AsyncSession = Depends(get_db)):
         gs_output_path=block.gs_output_path,
         gs_error_message=block.gs_error_message,
         gs_statistics=block.gs_statistics,
+        tensorboard_port=None,
+        tensorboard_url=None,
+        network_gui_port=None,
+        network_gui_url=None,
     )
 
 

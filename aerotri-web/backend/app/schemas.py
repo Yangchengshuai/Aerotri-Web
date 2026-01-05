@@ -10,7 +10,15 @@ from .models import BlockStatus, AlgorithmType, MatchingMethod
 
 class FeatureParams(BaseModel):
     """Feature extraction parameters."""
-    pass  # Can be extended with specific feature params
+    use_gpu: Optional[bool] = None
+    gpu_index: Optional[int] = None
+    max_image_size: Optional[int] = None
+    max_num_features: Optional[int] = None
+    camera_model: Optional[str] = None
+    single_camera: Optional[bool] = None
+    
+    class Config:
+        extra = "allow"  # Allow extra fields for backward compatibility
 
 
 class MatchingParams(BaseModel):
@@ -182,10 +190,13 @@ class ReconstructionLogResponse(BaseModel):
 
 class GSFileInfo(BaseModel):
     """Schema for 3DGS file information."""
+    stage: str
+    type: str  # 'gaussian' | 'other'
     name: str
-    path: str
-    size: int
-    stage: Optional[str] = None
+    size_bytes: int
+    mtime: datetime
+    preview_supported: bool
+    download_url: str
 
 
 class GSFilesResponse(BaseModel):
@@ -202,6 +213,10 @@ class GSStatusResponse(BaseModel):
     gs_output_path: Optional[str] = None
     gs_error_message: Optional[str] = None
     gs_statistics: Optional[Dict[str, Any]] = None
+    tensorboard_port: Optional[int] = None
+    tensorboard_url: Optional[str] = None
+    network_gui_port: Optional[int] = None
+    network_gui_url: Optional[str] = None
 
 
 class GSLogResponse(BaseModel):
@@ -210,10 +225,48 @@ class GSLogResponse(BaseModel):
 
 
 class GSTrainParams(BaseModel):
-    """Schema for 3DGS training parameters."""
-    iterations: Optional[int] = None
-    resolution: Optional[int] = None
-    # Add more params as needed
+    """Schema for 3DGS training parameters.
+    
+    Default values match gaussian-splatting source code:
+    - Basic: iterations=30000, resolution=-1, data_device='cuda', sh_degree=3
+    - Optimization: position_lr_init=0.00016, position_lr_final=0.0000016, etc.
+    - Advanced: test_iterations=[7000, 30000], save_iterations=[7000, 30000], etc.
+    See arguments/__init__.py and train.py for full defaults.
+    """
+    # Basic parameters
+    iterations: Optional[int] = None  # Default: 30000
+    resolution: Optional[int] = None  # Default: -1 (use original resolution)
+    data_device: Optional[str] = None  # Default: 'cuda' | 'cpu'
+    sh_degree: Optional[int] = None  # Default: 3
+    
+    # Optimization parameters
+    position_lr_init: Optional[float] = None  # Default: 0.00016
+    position_lr_final: Optional[float] = None  # Default: 0.0000016
+    position_lr_delay_mult: Optional[float] = None  # Default: 0.01
+    position_lr_max_steps: Optional[int] = None  # Default: 30000
+    feature_lr: Optional[float] = None  # Default: 0.0025
+    opacity_lr: Optional[float] = None  # Default: 0.025
+    scaling_lr: Optional[float] = None  # Default: 0.005
+    rotation_lr: Optional[float] = None  # Default: 0.001
+    lambda_dssim: Optional[float] = None  # Default: 0.2
+    percent_dense: Optional[float] = None  # Default: 0.01
+    densification_interval: Optional[int] = None  # Default: 100
+    opacity_reset_interval: Optional[int] = None  # Default: 3000
+    densify_from_iter: Optional[int] = None  # Default: 500
+    densify_until_iter: Optional[int] = None  # Default: 15000
+    densify_grad_threshold: Optional[float] = None  # Default: 0.0002
+    
+    # Advanced parameters
+    white_background: Optional[bool] = None  # Default: False
+    random_background: Optional[bool] = None  # Default: False
+    test_iterations: Optional[List[int]] = None  # Default: [7000, 30000]
+    save_iterations: Optional[List[int]] = None  # Default: [7000, 30000]
+    checkpoint_iterations: Optional[List[int]] = None  # Default: []
+    quiet: Optional[bool] = None  # Default: False
+    disable_viewer: Optional[bool] = None  # Default: False
+    
+    class Config:
+        extra = "allow"  # Allow extra fields for backward compatibility
 
 
 class GSTrainRequest(BaseModel):

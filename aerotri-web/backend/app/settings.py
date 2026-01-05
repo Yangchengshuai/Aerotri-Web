@@ -48,8 +48,17 @@ OPENMVS_TEXTURE = Path(
 # Path to the gaussian-splatting repository root (contains train.py)
 GS_REPO_PATH = Path(os.getenv("GS_REPO_PATH", "/root/work/gs_workspace/gaussian-splatting"))
 # Python interpreter to run gaussian-splatting (should be a prepared conda/venv with CUDA extensions)
-# Default to gs_env if available, otherwise require explicit configuration
-GS_PYTHON = os.getenv("GS_PYTHON", "/root/work/gs_workspace/gs_env/bin/python")
+# Default to conda environment gs_env_py310
+GS_PYTHON = os.getenv("GS_PYTHON", "/root/miniconda3/envs/gs_env_py310/bin/python")
+# TensorBoard executable (should be in the same conda environment)
+TENSORBOARD_PATH = os.getenv("TENSORBOARD_PATH", "/root/miniconda3/envs/gs_env_py310/bin/tensorboard")
+# TensorBoard port range (start port for dynamic allocation)
+TENSORBOARD_PORT_START = int(os.getenv("TENSORBOARD_PORT_START", "6006"))
+TENSORBOARD_PORT_END = int(os.getenv("TENSORBOARD_PORT_END", "6100"))
+# Network GUI port range (for train.py network_gui)
+NETWORK_GUI_PORT_START = int(os.getenv("NETWORK_GUI_PORT_START", "6009"))
+NETWORK_GUI_PORT_END = int(os.getenv("NETWORK_GUI_PORT_END", "6109"))
+NETWORK_GUI_IP = os.getenv("NETWORK_GUI_IP", "127.0.0.1")
 
 
 def ensure_executable(path: Path) -> Path:

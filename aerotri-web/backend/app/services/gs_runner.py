@@ -15,6 +15,7 @@ import asyncio
 import os
 import re
 import shutil
+import socket
 import time
 from collections import deque
 from datetime import datetime
@@ -25,7 +26,10 @@ from sqlalchemy import select
 
 from ..models.block import Block
 from ..models.database import AsyncSessionLocal
-from ..settings import GS_PYTHON, GS_REPO_PATH
+from ..settings import (
+    GS_PYTHON, GS_REPO_PATH, TENSORBOARD_PATH, TENSORBOARD_PORT_START, TENSORBOARD_PORT_END,
+    NETWORK_GUI_PORT_START, NETWORK_GUI_PORT_END, NETWORK_GUI_IP
+)
 
 # Import COLMAP_PATH from task_runner
 try:
@@ -170,6 +174,9 @@ class GSRunner:
     def __init__(self) -> None:
         self._log_buffers: Dict[str, Deque[str]] = {}
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
+        self._tensorboard_processes: Dict[str, asyncio.subprocess.Process] = {}
+        self._tensorboard_ports: Dict[str, int] = {}
+        self._network_gui_ports: Dict[str, int] = {}
         self._cancelled: Dict[str, bool] = {}
         self._recovery_done = False
 
@@ -186,6 +193,113 @@ class GSRunner:
             return list(buf)[-lines:]
         return []
 
+    def _find_free_port(self, start_port: int, end_port: int) -> Optional[int]:
+        """Find a free port in the given range, excluding already used ports."""
+        used_ports = set(self._tensorboard_ports.values()) | set(self._network_gui_ports.values())
+        for port in range(start_port, end_port):
+            if port in used_ports:
+                continue
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(("", port))
+                    return port
+            except OSError:
+                continue
+        return None
+
+    async def _start_tensorboard(self, block_id: str, model_dir: str, log_func=None) -> Optional[int]:
+        """Start TensorBoard service for a training task.
+        
+        Returns:
+            Port number if successful, None otherwise.
+        """
+        if not os.path.exists(TENSORBOARD_PATH):
+            if log_func:
+                log_func(f"[GSRunner] TensorBoard not found at {TENSORBOARD_PATH}, skipping TensorBoard")
+            return None
+
+        # Check if model directory exists
+        if not os.path.exists(model_dir):
+            if log_func:
+                log_func(f"[GSRunner] Model directory does not exist: {model_dir}, skipping TensorBoard")
+            return None
+
+        # Find a free port
+        port = self._find_free_port(TENSORBOARD_PORT_START, TENSORBOARD_PORT_END)
+        if not port:
+            if log_func:
+                log_func(f"[GSRunner] No free port available for TensorBoard (range {TENSORBOARD_PORT_START}-{TENSORBOARD_PORT_END})")
+            return None
+
+        # Start TensorBoard process
+        cmd = [
+            TENSORBOARD_PATH,
+            "--logdir", model_dir,
+            "--port", str(port),
+            "--host", "0.0.0.0",
+            "--reload_interval", "5",  # Reload every 5 seconds
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            self._tensorboard_processes[block_id] = proc
+            self._tensorboard_ports[block_id] = port
+
+            if log_func:
+                log_func(f"[GSRunner] Started TensorBoard on port {port} for {block_id}")
+                log_func(f"[GSRunner] TensorBoard URL: http://localhost:{port}")
+
+            # Wait a bit to check if process started successfully
+            await asyncio.sleep(1)
+            if proc.returncode is not None:
+                # Process exited immediately, likely an error
+                stderr = await proc.stderr.read()
+                error_msg = stderr.decode("utf-8", errors="replace")[:500] if stderr else "Unknown error"
+                if log_func:
+                    log_func(f"[GSRunner] TensorBoard failed to start: {error_msg}")
+                self._tensorboard_processes.pop(block_id, None)
+                self._tensorboard_ports.pop(block_id, None)
+                return None
+
+            return port
+        except Exception as e:
+            if log_func:
+                log_func(f"[GSRunner] Failed to start TensorBoard: {e}")
+            return None
+
+    async def _stop_tensorboard(self, block_id: str, log_func=None) -> None:
+        """Stop TensorBoard service for a training task."""
+        proc = self._tensorboard_processes.get(block_id)
+        if proc:
+            try:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        await proc.wait()
+                if log_func:
+                    log_func(f"[GSRunner] Stopped TensorBoard for {block_id}")
+            except Exception as e:
+                if log_func:
+                    log_func(f"[GSRunner] Error stopping TensorBoard: {e}")
+            finally:
+                self._tensorboard_processes.pop(block_id, None)
+                self._tensorboard_ports.pop(block_id, None)
+
+    def get_tensorboard_port(self, block_id: str) -> Optional[int]:
+        """Get TensorBoard port for a block, if TensorBoard is running."""
+        return self._tensorboard_ports.get(block_id)
+
+    def get_network_gui_port(self, block_id: str) -> Optional[int]:
+        """Get network_gui port for a block, if network_gui is enabled."""
+        return self._network_gui_ports.get(block_id)
+
     async def cancel_training(self, block_id: str) -> None:
         self._cancelled[block_id] = True
         proc = self._processes.get(block_id)
@@ -195,6 +309,9 @@ class GSRunner:
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             except asyncio.TimeoutError:
                 proc.kill()
+
+        # Stop TensorBoard
+        await self._stop_tensorboard(block_id)
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Block).where(Block.id == block_id))
@@ -496,10 +613,20 @@ class GSRunner:
 
                 os.makedirs(model_dir, exist_ok=True)
 
+                # Start TensorBoard service
+                tb_port = await self._start_tensorboard(block_id, model_dir, log_func=log)
+                if tb_port:
+                    # Update statistics with TensorBoard port
+                    stats = block.gs_statistics or {}
+                    stats["tensorboard_port"] = tb_port
+                    block.gs_statistics = stats
+                    await db.commit()
+
                 # Stage: training
                 block.gs_current_stage = "training"
                 await db.commit()
 
+                # Build command arguments
                 args = [
                     GS_PYTHON,
                     "train.py",
@@ -507,18 +634,98 @@ class GSRunner:
                     dataset_dir,
                     "-m",
                     model_dir,
-                    "--iterations",
-                    str(int(train_params.get("iterations", 7000))),
-                    "--resolution",
-                    str(int(train_params.get("resolution", 2))),
-                    "--data_device",
-                    str(train_params.get("data_device", "cpu")),
-                    "--sh_degree",
-                    str(int(train_params.get("sh_degree", 3))),
                 ]
+                
+                # Basic parameters
+                if "iterations" in train_params and train_params["iterations"] is not None:
+                    args.extend(["--iterations", str(int(train_params["iterations"]))])
+                if "resolution" in train_params and train_params["resolution"] is not None:
+                    args.extend(["--resolution", str(int(train_params["resolution"]))])
+                if "data_device" in train_params and train_params["data_device"] is not None:
+                    args.extend(["--data_device", str(train_params["data_device"])])
+                if "sh_degree" in train_params and train_params["sh_degree"] is not None:
+                    args.extend(["--sh_degree", str(int(train_params["sh_degree"]))])
+                
+                # Optimization parameters
+                if "position_lr_init" in train_params and train_params["position_lr_init"] is not None:
+                    args.extend(["--position_lr_init", str(float(train_params["position_lr_init"]))])
+                if "position_lr_final" in train_params and train_params["position_lr_final"] is not None:
+                    args.extend(["--position_lr_final", str(float(train_params["position_lr_final"]))])
+                if "position_lr_delay_mult" in train_params and train_params["position_lr_delay_mult"] is not None:
+                    args.extend(["--position_lr_delay_mult", str(float(train_params["position_lr_delay_mult"]))])
+                if "position_lr_max_steps" in train_params and train_params["position_lr_max_steps"] is not None:
+                    args.extend(["--position_lr_max_steps", str(int(train_params["position_lr_max_steps"]))])
+                if "feature_lr" in train_params and train_params["feature_lr"] is not None:
+                    args.extend(["--feature_lr", str(float(train_params["feature_lr"]))])
+                if "opacity_lr" in train_params and train_params["opacity_lr"] is not None:
+                    args.extend(["--opacity_lr", str(float(train_params["opacity_lr"]))])
+                if "scaling_lr" in train_params and train_params["scaling_lr"] is not None:
+                    args.extend(["--scaling_lr", str(float(train_params["scaling_lr"]))])
+                if "rotation_lr" in train_params and train_params["rotation_lr"] is not None:
+                    args.extend(["--rotation_lr", str(float(train_params["rotation_lr"]))])
+                if "lambda_dssim" in train_params and train_params["lambda_dssim"] is not None:
+                    args.extend(["--lambda_dssim", str(float(train_params["lambda_dssim"]))])
+                if "percent_dense" in train_params and train_params["percent_dense"] is not None:
+                    args.extend(["--percent_dense", str(float(train_params["percent_dense"]))])
+                if "densification_interval" in train_params and train_params["densification_interval"] is not None:
+                    args.extend(["--densification_interval", str(int(train_params["densification_interval"]))])
+                if "opacity_reset_interval" in train_params and train_params["opacity_reset_interval"] is not None:
+                    args.extend(["--opacity_reset_interval", str(int(train_params["opacity_reset_interval"]))])
+                if "densify_from_iter" in train_params and train_params["densify_from_iter"] is not None:
+                    args.extend(["--densify_from_iter", str(int(train_params["densify_from_iter"]))])
+                if "densify_until_iter" in train_params and train_params["densify_until_iter"] is not None:
+                    args.extend(["--densify_until_iter", str(int(train_params["densify_until_iter"]))])
+                if "densify_grad_threshold" in train_params and train_params["densify_grad_threshold"] is not None:
+                    args.extend(["--densify_grad_threshold", str(float(train_params["densify_grad_threshold"]))])
+                
+                # Advanced parameters
+                if train_params.get("white_background", False):
+                    args.append("--white_background")
+                if train_params.get("random_background", False):
+                    args.append("--random_background")
+                if "test_iterations" in train_params and train_params["test_iterations"]:
+                    args.extend(["--test_iterations"] + [str(int(x)) for x in train_params["test_iterations"]])
+                if "save_iterations" in train_params and train_params["save_iterations"]:
+                    args.extend(["--save_iterations"] + [str(int(x)) for x in train_params["save_iterations"]])
+                if "checkpoint_iterations" in train_params and train_params["checkpoint_iterations"]:
+                    args.extend(["--checkpoint_iterations"] + [str(int(x)) for x in train_params["checkpoint_iterations"]])
+                if train_params.get("quiet", False):
+                    args.append("--quiet")
+                
+                # Network GUI configuration
+                # Only disable if explicitly requested, otherwise enable with port allocation
+                if train_params.get("disable_viewer", False):
+                    args.append("--disable_viewer")
+                else:
+                    # Allocate a port for network_gui
+                    network_gui_port = self._find_free_port(
+                        NETWORK_GUI_PORT_START, NETWORK_GUI_PORT_END
+                    )
+                    if network_gui_port:
+                        self._network_gui_ports[block_id] = network_gui_port
+                        args.extend(["--ip", NETWORK_GUI_IP])
+                        args.extend(["--port", str(network_gui_port)])
+                        log(f"[GSRunner] Network GUI enabled on {NETWORK_GUI_IP}:{network_gui_port}")
+                    else:
+                        log(f"[GSRunner] No free port for network_gui, disabling viewer")
+                        args.append("--disable_viewer")
 
                 env = os.environ.copy()
                 env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+                
+                # Set PYTHONPATH to include gaussian-splatting and all submodules
+                # This is required for importing diff_gaussian_rasterization, simple_knn, etc.
+                gs_repo_str = str(GS_REPO_PATH)
+                submodules = [
+                    os.path.join(gs_repo_str, "submodules", "diff-gaussian-rasterization"),
+                    os.path.join(gs_repo_str, "submodules", "simple-knn"),
+                    os.path.join(gs_repo_str, "submodules", "fused-ssim"),
+                ]
+                pythonpath_parts = [gs_repo_str] + submodules
+                current_pythonpath = env.get("PYTHONPATH", "")
+                if current_pythonpath:
+                    pythonpath_parts.append(current_pythonpath)
+                env["PYTHONPATH"] = ":".join(pythonpath_parts)
                 
                 # Set CUDA architecture for RTX 5090 (Blackwell sm_120) if not already set
                 # This ensures CUDA kernels are available for sm_120
@@ -530,13 +737,17 @@ class GSRunner:
                 log(f"[GSRunner] cmd={' '.join(args)}")
                 log(f"[GSRunner] CUDA_VISIBLE_DEVICES={env.get('CUDA_VISIBLE_DEVICES')}")
                 log(f"[GSRunner] TORCH_CUDA_ARCH_LIST={env.get('TORCH_CUDA_ARCH_LIST', 'not set')}")
+                log(f"[GSRunner] PYTHONPATH={env.get('PYTHONPATH', 'not set')}")
 
+                # Increase limit to handle long progress lines (3DGS training may output long lines)
+                # Default limit is 64KB, we set it to 10MB to handle very long progress outputs
                 proc = await asyncio.create_subprocess_exec(
                     *args,
                     cwd=str(GS_REPO_PATH),
                     env=env,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
+                    limit=10 * 1024 * 1024,  # 10MB buffer limit
                 )
                 self._processes[block_id] = proc
 
@@ -586,8 +797,14 @@ class GSRunner:
                 block.gs_statistics = stats
                 await db.commit()
 
+                # Note: TensorBoard is kept running after training completes
+                # so users can view the training metrics. It will be stopped
+                # when the block is deleted or manually stopped.
+
         except asyncio.CancelledError:
             log("[GSRunner] Cancelled")
+            # Stop TensorBoard on cancellation
+            await self._stop_tensorboard(block_id, log_func=log)
             async with AsyncSessionLocal() as db:
                 result = await db.execute(select(Block).where(Block.id == block_id))
                 block = result.scalar_one_or_none()
@@ -597,6 +814,8 @@ class GSRunner:
                     await db.commit()
         except Exception as e:
             log(f"[GSRunner] Error: {e}")
+            # Stop TensorBoard on error
+            await self._stop_tensorboard(block_id, log_func=log)
             async with AsyncSessionLocal() as db:
                 result = await db.execute(select(Block).where(Block.id == block_id))
                 block = result.scalar_one_or_none()
@@ -611,6 +830,7 @@ class GSRunner:
                     await db.commit()
         finally:
             self._processes.pop(block_id, None)
+            self._network_gui_ports.pop(block_id, None)
 
     async def recover_orphaned_gs_tasks(self) -> None:
         """Recover 3DGS tasks that were RUNNING when backend was killed."""
