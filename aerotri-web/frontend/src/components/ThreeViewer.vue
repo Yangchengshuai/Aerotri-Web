@@ -21,6 +21,7 @@
       
       <el-checkbox v-model="showCameras">显示相机</el-checkbox>
       <el-checkbox v-model="showPoints">显示点云</el-checkbox>
+      <el-checkbox v-model="showOnlyProblemCameras" @change="handleFilterChange">只显示问题相机</el-checkbox>
       <div v-if="showCameras" class="camera-size-control">
         <span class="control-label">相机大小</span>
         <el-slider
@@ -126,6 +127,10 @@ const showCameras = ref(true)
 const showPoints = ref(true)
 const cameraSizeMultiplier = ref(1.0) // 用户可调节的相机大小倍数
 let baseCameraScale = 0.2 // 基础相机尺寸（会根据场景自动计算）
+
+// Error visualization
+const ERROR_THRESHOLD = 1.0 // 问题相机阈值（像素）
+const showOnlyProblemCameras = ref(false) // 只显示问题相机
 
 // Partition mode state
 const viewMode = ref<'partition' | 'merged'>('merged')
@@ -677,7 +682,7 @@ function loadCameras(cameras: CameraInfo[]) {
     // Apply initial user multiplier via scale
     frustum.scale.set(cameraSizeMultiplier.value, cameraSizeMultiplier.value, cameraSizeMultiplier.value)
 
-    frustum.userData = { camera: cam, isOutlier: false }
+    frustum.userData = { camera: cam, isOutlier: false, error: cam.mean_reprojection_error }
     camerasGroup.add(frustum)
   })
 
@@ -685,6 +690,18 @@ function loadCameras(cameras: CameraInfo[]) {
   if (cameras.length !== validCameras.length) {
     console.log(`Filtered ${cameras.length - validCameras.length} outlier cameras out of ${cameras.length} total`)
   }
+  
+  // Debug: check error data
+  const camerasWithError = validCameras.filter(c => c.mean_reprojection_error != null)
+  console.log(`[ThreeViewer] Loaded ${validCameras.length} cameras, ${camerasWithError.length} with error data`)
+  if (camerasWithError.length > 0) {
+    const problemCount = camerasWithError.filter(c => (c.mean_reprojection_error ?? 0) > ERROR_THRESHOLD).length
+    console.log(`[ThreeViewer] Problem cameras (error > ${ERROR_THRESHOLD}): ${problemCount}`)
+  }
+
+  // Update error styling and filtering
+  updateCameraErrorStyling(ERROR_THRESHOLD)
+  applyCameraFilter()
 
   // Update highlight based on store selection
   updateCameraHighlight()
@@ -700,6 +717,57 @@ function updateCameraSizes() {
       child.scale.set(scaleFactor, scaleFactor, scaleFactor)
     }
   })
+}
+
+function updateCameraErrorStyling(threshold: number) {
+  if (!camerasGroup) return
+  
+  let problemCount = 0
+  camerasGroup.children.forEach((child) => {
+    if (child instanceof THREE.Group && child.userData.errorPlane) {
+      const error = child.userData.error
+      const errorPlane = child.userData.errorPlane as THREE.Mesh
+      
+      // 显示红色平面如果误差超过阈值
+      if (error != null && error > threshold) {
+        errorPlane.visible = true
+        problemCount++
+      } else {
+        errorPlane.visible = false
+      }
+    }
+  })
+  
+  // Debug log
+  if (problemCount > 0) {
+    console.log(`[ThreeViewer] Updated error styling: ${problemCount} problem cameras (error > ${threshold} px)`)
+  }
+}
+
+function applyCameraFilter() {
+  if (!camerasGroup) return
+  
+  camerasGroup.children.forEach((child) => {
+    if (child instanceof THREE.Group) {
+      const error = child.userData.error
+      
+      if (showOnlyProblemCameras.value) {
+        // 只显示问题相机（误差 > 阈值）
+        if (error != null && error > ERROR_THRESHOLD) {
+          child.visible = true
+        } else {
+          child.visible = false
+        }
+      } else {
+        // 显示所有相机
+        child.visible = true
+      }
+    }
+  })
+}
+
+function handleFilterChange() {
+  applyCameraFilter()
 }
 
 // Reserved function for future point cloud rendering
@@ -775,6 +843,25 @@ function createCameraFrustum(scale: number = 0.3): THREE.Object3D {
   })
   const lines = new THREE.LineSegments(geometry, material)
   group.add(lines)
+  
+  // 添加红色平面用于标识问题相机（默认隐藏）
+  const planeWidth = w * 0.8
+  const planeHeight = h * 0.6
+  const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight)
+  const planeMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff0000, // 红色
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide
+  })
+  const errorPlane = new THREE.Mesh(planeGeometry, planeMaterial)
+  // 将平面放置在相机前方
+  errorPlane.position.set(0, 0, d * 0.5)
+  errorPlane.visible = false // 默认隐藏
+  group.add(errorPlane)
+  
+  // 保存引用以便后续控制
+  group.userData.errorPlane = errorPlane
   
   return group
 }

@@ -16,12 +16,13 @@ class ResultReader:
         """Read camera poses from reconstruction.
         
         同时兼容 COLMAP/InstantSFM 的 `images.bin` 与 `images.txt` 文本格式。
+        如果存在文本格式文件，会计算并填充每个相机的重投影误差。
         
         Args:
             output_path: Path to output directory
             
         Returns:
-            List of CameraInfo
+            List of CameraInfo with mean_reprojection_error filled if available
         """
         # Find the sparse reconstruction directory
         sparse_dir = ResultReader._find_sparse_dir(output_path)
@@ -31,12 +32,49 @@ class ResultReader:
         images_bin = os.path.join(sparse_dir, "images.bin")
         images_txt = os.path.join(sparse_dir, "images.txt")
         
+        cameras: List[CameraInfo] = []
         if os.path.exists(images_bin):
-            return ResultReader._read_cameras_bin(images_bin)
+            cameras = ResultReader._read_cameras_bin(images_bin)
         elif os.path.exists(images_txt):
-            return ResultReader._read_cameras_txt(images_txt)
+            cameras = ResultReader._read_cameras_txt(images_txt)
         else:
             raise FileNotFoundError("Neither images.bin nor images.txt found")
+        
+        # Try to compute and fill reprojection errors
+        # First try text format (faster, cached)
+        if os.path.exists(images_txt):
+            cameras_txt = os.path.join(sparse_dir, "cameras.txt")
+            points3d_txt = os.path.join(sparse_dir, "points3D.txt")
+            
+            if os.path.exists(cameras_txt) and os.path.exists(points3d_txt):
+                error_stats = ResultReader._compute_mean_reprojection_error_with_cache(
+                    sparse_dir, cameras_txt, images_txt, points3d_txt
+                )
+                if error_stats and "per_image" in error_stats:
+                    per_image = error_stats["per_image"]
+                    # Fill error into cameras (per_image uses string keys)
+                    for cam in cameras:
+                        img_id = str(cam.image_id)
+                        if img_id in per_image:
+                            cam.mean_reprojection_error = per_image[img_id]["mean_reprojection_error"]
+        # If only binary format exists, compute from binary files
+        elif os.path.exists(images_bin):
+            cameras_bin = os.path.join(sparse_dir, "cameras.bin")
+            points3d_bin = os.path.join(sparse_dir, "points3D.bin")
+            
+            if os.path.exists(cameras_bin) and os.path.exists(points3d_bin):
+                error_stats = ResultReader._compute_mean_reprojection_error_from_bin(
+                    sparse_dir, cameras_bin, images_bin, points3d_bin
+                )
+                if error_stats and "per_image" in error_stats:
+                    per_image = error_stats["per_image"]
+                    # Fill error into cameras (per_image uses string keys)
+                    for cam in cameras:
+                        img_id = str(cam.image_id)
+                        if img_id in per_image:
+                            cam.mean_reprojection_error = per_image[img_id]["mean_reprojection_error"]
+        
+        return cameras
     
     @staticmethod
     def read_points3d(output_path: str, limit: int = 100000) -> Tuple[List[Dict[str, Any]], int]:
@@ -477,13 +515,14 @@ class ResultReader:
         """Read camera poses from a specific partition.
         
         同时兼容 COLMAP/InstantSFM 的 `images.bin` 与 `images.txt` 文本格式。
+        如果存在文本格式文件，会计算并填充每个相机的重投影误差。
         
         Args:
             output_path: Base output path
             partition_index: Partition index
             
         Returns:
-            List of CameraInfo
+            List of CameraInfo with mean_reprojection_error filled if available
         """
         partition_sparse = os.path.join(
             output_path,
@@ -499,12 +538,32 @@ class ResultReader:
         images_bin = os.path.join(partition_sparse, "images.bin")
         images_txt = os.path.join(partition_sparse, "images.txt")
         
+        cameras: List[CameraInfo] = []
         if os.path.exists(images_bin):
-            return ResultReader._read_cameras_bin(images_bin)
+            cameras = ResultReader._read_cameras_bin(images_bin)
         elif os.path.exists(images_txt):
-            return ResultReader._read_cameras_txt(images_txt)
+            cameras = ResultReader._read_cameras_txt(images_txt)
         else:
             raise FileNotFoundError(f"Partition {partition_index}: Neither images.bin nor images.txt found")
+        
+        # Try to compute and fill reprojection errors (only for text format)
+        if os.path.exists(images_txt):
+            cameras_txt = os.path.join(partition_sparse, "cameras.txt")
+            points3d_txt = os.path.join(partition_sparse, "points3D.txt")
+            
+            if os.path.exists(cameras_txt) and os.path.exists(points3d_txt):
+                error_stats = ResultReader._compute_mean_reprojection_error_with_cache(
+                    partition_sparse, cameras_txt, images_txt, points3d_txt
+                )
+                if error_stats and "per_image" in error_stats:
+                    per_image = error_stats["per_image"]
+                    # Fill error into cameras (per_image uses string keys)
+                    for cam in cameras:
+                        img_id = str(cam.image_id)
+                        if img_id in per_image:
+                            cam.mean_reprojection_error = per_image[img_id]["mean_reprojection_error"]
+        
+        return cameras
     
     @staticmethod
     def read_partition_points3d(
@@ -608,8 +667,8 @@ class ResultReader:
         except Exception:
             pass
 
-        # Compute fresh
-        result = ResultReader._compute_mean_reprojection_error(
+        # Compute fresh (with per-image breakdown)
+        result = ResultReader._compute_mean_reprojection_error_with_per_image(
             cameras_txt=cameras_txt,
             images_txt=images_txt,
             points3d_txt=points3d_txt,
@@ -636,6 +695,41 @@ class ResultReader:
 
         Supports common COLMAP camera models, including OPENCV.
         """
+        result = ResultReader._compute_mean_reprojection_error_with_per_image(
+            cameras_txt, images_txt, points3d_txt
+        )
+        if result is None:
+            return None
+        # Return only global stats for backward compatibility
+        return {
+            "mean_reprojection_error": result["mean_reprojection_error"],
+            "num_observations": result["num_observations"]
+        }
+
+    @staticmethod
+    def _compute_mean_reprojection_error_with_per_image(
+        cameras_txt: str,
+        images_txt: str,
+        points3d_txt: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Compute mean reprojection error with per-image breakdown.
+
+        Returns both global mean error and per-image mean errors.
+        Supports common COLMAP camera models, including OPENCV.
+
+        Returns:
+            Dict with keys:
+                - mean_reprojection_error: global mean error
+                - num_observations: total number of observations
+                - per_image: dict mapping image_id to {
+                    "mean_reprojection_error": float,
+                    "num_observations": int
+                }
+        """
+        # Check if files exist
+        if not os.path.exists(cameras_txt) or not os.path.exists(images_txt) or not os.path.exists(points3d_txt):
+            return None
+        
         cameras = ResultReader._parse_cameras_txt(cameras_txt)
         if not cameras:
             return None
@@ -646,6 +740,9 @@ class ResultReader:
 
         total_err = 0.0
         num_obs = 0
+        # Per-image error accumulation
+        img_err: Dict[int, float] = {}
+        img_cnt: Dict[int, int] = {}
 
         # Stream parse images.txt
         with open(images_txt, "r", encoding="utf-8", errors="replace") as f:
@@ -662,6 +759,7 @@ class ResultReader:
                     continue
 
                 # image pose
+                image_id = int(parts[0])
                 qw, qx, qy, qz = map(float, parts[1:5])
                 tx, ty, tz = map(float, parts[5:8])
                 cam_id = int(parts[8])
@@ -703,12 +801,239 @@ class ResultReader:
                     up, vp = proj
                     du = up - u
                     dv = vp - v
-                    total_err += math.hypot(du, dv)
+                    err = math.hypot(du, dv)
+                    
+                    # Accumulate global
+                    total_err += err
                     num_obs += 1
+                    
+                    # Accumulate per-image
+                    if image_id not in img_err:
+                        img_err[image_id] = 0.0
+                        img_cnt[image_id] = 0
+                    img_err[image_id] += err
+                    img_cnt[image_id] += 1
 
         if num_obs == 0:
             return None
-        return {"mean_reprojection_error": total_err / num_obs, "num_observations": num_obs}
+        
+        # Compute per-image means
+        # Use string keys for JSON serialization compatibility
+        per_image: Dict[str, Dict[str, Any]] = {}
+        for img_id in img_err:
+            if img_cnt[img_id] > 0:
+                per_image[str(img_id)] = {
+                    "mean_reprojection_error": img_err[img_id] / img_cnt[img_id],
+                    "num_observations": img_cnt[img_id]
+                }
+        
+        return {
+            "mean_reprojection_error": total_err / num_obs,
+            "num_observations": num_obs,
+            "per_image": per_image
+        }
+
+    @staticmethod
+    def _compute_mean_reprojection_error_from_bin(
+        sparse_dir: str,
+        cameras_bin: str,
+        images_bin: str,
+        points3d_bin: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Compute mean reprojection error from binary COLMAP files.
+        
+        Args:
+            sparse_dir: Sparse directory path (for cache)
+            cameras_bin: Path to cameras.bin
+            images_bin: Path to images.bin
+            points3d_bin: Path to points3D.bin
+            
+        Returns:
+            Dict with mean_reprojection_error, num_observations, and per_image
+        """
+        cache_path = os.path.join(sparse_dir, ".reproj_cache_bin.json")
+        
+        def _sig(p: str) -> Dict[str, Any]:
+            st = os.stat(p)
+            return {"path": os.path.basename(p), "mtime": st.st_mtime, "size": st.st_size}
+        
+        signature = {
+            "version": 1,
+            "cameras": _sig(cameras_bin),
+            "images": _sig(images_bin),
+            "points3D": _sig(points3d_bin),
+        }
+        
+        # Try read cache
+        try:
+            if os.path.exists(cache_path):
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if cached.get("signature") == signature and "result" in cached:
+                    return cached["result"]
+        except Exception:
+            pass
+        
+        # Parse cameras.bin
+        # COLMAP cameras.bin format: camera_id (uint32), model_id (uint32), width (uint64), height (uint64), params (double array)
+        # Note: COLMAP cameras.bin does NOT include num_params field - params length depends on model_id
+        cameras: Dict[int, Dict[str, Any]] = {}
+        try:
+            with open(cameras_bin, "rb") as f:
+                num_cameras = struct.unpack("<Q", f.read(8))[0]
+                for _ in range(num_cameras):
+                    camera_id = struct.unpack("<I", f.read(4))[0]
+                    model_id = struct.unpack("<I", f.read(4))[0]
+                    width = struct.unpack("<Q", f.read(8))[0]
+                    height = struct.unpack("<Q", f.read(8))[0]
+                    
+                    # Map model_id to model name and param count
+                    model_map = {
+                        0: ("SIMPLE_PINHOLE", 3),
+                        1: ("PINHOLE", 4),
+                        2: ("SIMPLE_RADIAL", 4),
+                        3: ("RADIAL", 5),
+                        4: ("OPENCV", 8),
+                        5: ("OPENCV5", 9),
+                    }
+                    model_info = model_map.get(model_id, ("PINHOLE", 4))
+                    model_name, num_params = model_info
+                    
+                    params = struct.unpack(f"<{num_params}d", f.read(8 * num_params))
+                    
+                    cameras[int(camera_id)] = {
+                        "model": model_name,
+                        "width": int(width),
+                        "height": int(height),
+                        "params": list(params)
+                    }
+        except Exception as e:
+            print(f"Error reading cameras.bin: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        
+        # Parse points3D.bin to get 3D coordinates
+        points: Dict[int, Tuple[float, float, float]] = {}
+        try:
+            with open(points3d_bin, "rb") as f:
+                num_points = struct.unpack("<Q", f.read(8))[0]
+                for _ in range(num_points):
+                    point_id = struct.unpack("<Q", f.read(8))[0]
+                    x, y, z = struct.unpack("<3d", f.read(24))
+                    r, g, b = struct.unpack("<3B", f.read(3))
+                    error = struct.unpack("<d", f.read(8))[0]
+                    track_length = struct.unpack("<Q", f.read(8))[0]
+                    # Skip track data
+                    f.read(track_length * 8)
+                    points[point_id] = (x, y, z)
+        except Exception as e:
+            print(f"Error reading points3D.bin: {e}")
+            return None
+        
+        if not cameras or not points:
+            return None
+        
+        total_err = 0.0
+        num_obs = 0
+        img_err: Dict[int, float] = {}
+        img_cnt: Dict[int, int] = {}
+        
+        # Parse images.bin and compute errors
+        try:
+            with open(images_bin, "rb") as f:
+                num_images = struct.unpack("<Q", f.read(8))[0]
+                
+                for _ in range(num_images):
+                    image_id = struct.unpack("<I", f.read(4))[0]
+                    qw, qx, qy, qz = struct.unpack("<4d", f.read(32))
+                    tx, ty, tz = struct.unpack("<3d", f.read(24))
+                    camera_id = struct.unpack("<I", f.read(4))[0]
+                    
+                    # Read image name
+                    name_chars = []
+                    while True:
+                        char = f.read(1)
+                        if char == b"\x00":
+                            break
+                        name_chars.append(char.decode("utf-8"))
+                    
+                    # Read 2D points
+                    num_points2d = struct.unpack("<Q", f.read(8))[0]
+                    
+                    cam = cameras.get(camera_id)
+                    if not cam:
+                        # Skip point data
+                        f.read(num_points2d * 24)
+                        continue
+                    
+                    R = ResultReader._qvec_to_rotmat(qw, qx, qy, qz)
+                    t = (tx, ty, tz)
+                    
+                    # Process observations
+                    for _ in range(num_points2d):
+                        u = struct.unpack("<d", f.read(8))[0]
+                        v = struct.unpack("<d", f.read(8))[0]
+                        point3d_id = struct.unpack("<Q", f.read(8))[0]
+                        
+                        if point3d_id == 18446744073709551615:  # -1 as unsigned
+                            continue
+                        
+                        X = points.get(point3d_id)
+                        if X is None:
+                            continue
+                        
+                        proj = ResultReader._project_point(cam, R, t, X)
+                        if proj is None:
+                            continue
+                        
+                        up, vp = proj
+                        du = up - u
+                        dv = vp - v
+                        err = math.hypot(du, dv)
+                        
+                        # Accumulate global
+                        total_err += err
+                        num_obs += 1
+                        
+                        # Accumulate per-image
+                        if image_id not in img_err:
+                            img_err[image_id] = 0.0
+                            img_cnt[image_id] = 0
+                        img_err[image_id] += err
+                        img_cnt[image_id] += 1
+        except Exception as e:
+            print(f"Error reading images.bin: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        
+        if num_obs == 0:
+            return None
+        
+        # Compute per-image means
+        per_image: Dict[str, Dict[str, Any]] = {}
+        for img_id in img_err:
+            if img_cnt[img_id] > 0:
+                per_image[str(img_id)] = {
+                    "mean_reprojection_error": img_err[img_id] / img_cnt[img_id],
+                    "num_observations": img_cnt[img_id]
+                }
+        
+        result = {
+            "mean_reprojection_error": total_err / num_obs,
+            "num_observations": num_obs,
+            "per_image": per_image
+        }
+        
+        # Write cache (best-effort)
+        try:
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump({"signature": signature, "result": result}, f)
+        except Exception:
+            pass
+        
+        return result
 
     @staticmethod
     def _parse_cameras_txt(cameras_txt: str) -> Dict[int, Dict[str, Any]]:

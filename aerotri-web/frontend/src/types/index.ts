@@ -287,6 +287,7 @@ export interface CameraInfo {
   x?: number | null
   y?: number | null
   z?: number | null
+  mean_reprojection_error?: number
 }
 
 export interface Point3D {

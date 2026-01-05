@@ -387,6 +387,7 @@ class CameraInfo(BaseModel):
     x: Optional[float] = None
     y: Optional[float] = None
     z: Optional[float] = None
+    mean_reprojection_error: Optional[float] = None
 
 
 class Point3D(BaseModel):
