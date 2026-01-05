@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3DGS Viewer</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        #loadingOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.9);
+            z-index: 10;
+        }
+        #loadingOverlay.hidden {
+            display: none;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .loading-text {
+            margin-bottom: 10px;
+            font-family: Arial, sans-serif;
+        }
+        #errorModal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 20;
+        }
+        #errorModal.hidden {
+            display: none;
+        }
+        #noWebGPU {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            z-index: 20;
+        }
+        #noWebGPU.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <!-- Loading Overlay (required by DOMElements) -->
+    <div id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">加载中...</div>
+        <div class="loading-progress">
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: 0%"></div>
+            </div>
+            <span class="progress-text">0%</span>
+        </div>
+    </div>
+    
+    <!-- Error Modal (required by DOMElements) -->
+    <div id="errorModal" class="hidden">
+        <h3>Error</h3>
+        <p id="errorMessage"></p>
+        <button id="closeError">Close</button>
+    </div>
+    
+    <!-- WebGPU Not Supported (required by DOMElements) -->
+    <div id="noWebGPU" class="hidden">
+        <h2>WebGPU Not Supported</h2>
+        <p>This application requires WebGPU support.</p>
+        <p>Please use Chrome/Edge 113+ or Firefox Nightly.</p>
+    </div>
+    
+    <!-- Dummy elements for DOMElements (not used but required) -->
+    <div id="dropZone" style="display: none;"></div>
+    <button id="browseButton" style="display: none;"></button>
+    <input type="file" id="fileInput" style="display: none;">
+    <button id="togglePanel" style="display: none;"></button>
+    <span id="fps" style="display: none;"></span>
+    <span id="pointCount" style="display: none;"></span>
+    
+    <script type="module">
+        import { App } from './visionary-core.es.js';
+        
+        // Get PLY URL from query parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const plyUrl = urlParams.get('ply_url');
+        
+        if (!plyUrl) {
+            const errorModal = document.getElementById('errorModal');
+            const errorMessage = document.getElementById('errorMessage');
+            if (errorModal && errorMessage) {
+                errorMessage.textContent = '缺少 PLY URL 参数';
+                errorModal.classList.remove('hidden');
+            }
+        } else {
+            // Initialize Visionary App
+            const app = new App();
+            
+            app.init()
+                .then(() => {
+                    // Use loadSample to load PLY from URL
+                    return app.loadSample(plyUrl);
+                })
+                .then(() => {
+                    const loadingOverlay = document.getElementById('loadingOverlay');
+                    if (loadingOverlay) {
+                        loadingOverlay.classList.add('hidden');
+                    }
+                })
+                .catch((err) => {
+                    console.error('Error:', err);
+                    const errorModal = document.getElementById('errorModal');
+                    const errorMessage = document.getElementById('errorMessage');
+                    if (errorModal && errorMessage) {
+                        errorMessage.textContent = err.message || '加载失败';
+                        errorModal.classList.remove('hidden');
+                    }
+                    const loadingOverlay = document.getElementById('loadingOverlay');
+                    if (loadingOverlay) {
+                        loadingOverlay.classList.add('hidden');
+                    }
+                });
+        }
+    </script>
+</body>
+</html>

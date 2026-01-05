@@ -192,6 +192,8 @@ export const gsApi = {
       gs_output_path: string | null
       gs_error_message: string | null
       gs_statistics: Record<string, unknown> | null
+      tensorboard_port: number | null
+      tensorboard_url: string | null
     }>(`/blocks/${blockId}/gs/status`),
 
   cancel: (blockId: string) => api.post(`/blocks/${blockId}/gs/cancel`, {}),

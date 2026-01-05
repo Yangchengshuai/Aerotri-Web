@@ -1088,13 +1088,13 @@ const defaultInstantsfmParams: InstantsfmMapperParams = {
 const formData = reactive({
   algorithm: props.block.algorithm,
   matching_method: props.block.matching_method,
-  feature_params: { ...defaultFeatureParams, ...props.block.feature_params },
-  matching_params: { ...defaultMatchingParams, ...props.block.matching_params },
+  feature_params: { ...defaultFeatureParams, ...(props.block.feature_params || {}) },
+  matching_params: { ...defaultMatchingParams, ...(props.block.matching_params || {}) },
   mapper_params: props.block.algorithm === 'glomap'
-    ? { ...defaultGlomapParams, ...(props.block.mapper_params as GlomapMapperParams) }
+    ? { ...defaultGlomapParams, ...(props.block.mapper_params as GlomapMapperParams || {}) }
     : props.block.algorithm === 'instantsfm'
-    ? { ...defaultInstantsfmParams, ...(props.block.mapper_params as InstantsfmMapperParams) }
-    : { ...defaultColmapParams, ...(props.block.mapper_params as ColmapMapperParams) },
+    ? { ...defaultInstantsfmParams, ...(props.block.mapper_params as InstantsfmMapperParams || {}) }
+    : { ...defaultColmapParams, ...(props.block.mapper_params as ColmapMapperParams || {}) },
 })
 
 // Watch algorithm changes to update mapper params

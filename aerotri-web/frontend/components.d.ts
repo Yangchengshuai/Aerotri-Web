@@ -61,6 +61,7 @@ declare module 'vue' {
     ElText: typeof import('element-plus/es')['ElText']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     GaussianSplattingPanel: typeof import('./src/components/GaussianSplattingPanel.vue')['default']
+    GaussianSplattingViewer: typeof import('./src/components/GaussianSplattingViewer.vue')['default']
     GPUSelector: typeof import('./src/components/GPUSelector.vue')['default']
     ImagePreview: typeof import('./src/components/ImagePreview.vue')['default']
     InstantSfMRealtimeViewer: typeof import('./src/components/InstantSfMRealtimeViewer.vue')['default']
