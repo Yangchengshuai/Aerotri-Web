@@ -49,9 +49,20 @@ app = FastAPI(
 
 # CORS middleware - MUST be before app.include_router()
 # This ensures all responses, including FileResponse, have CORS headers
+frontend_origins = [
+    # Local development
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# Optional demo / production origins (can be overridden via env)
+demo_frontend_origin = os.getenv("AEROTRI_FRONTEND_ORIGIN")
+if demo_frontend_origin:
+    frontend_origins.append(demo_frontend_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend origin
+    allow_origins=frontend_origins,
     allow_credentials=True,  # Allow credentials when using specific origins
     allow_methods=["*"],
     allow_headers=["*"],

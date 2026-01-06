@@ -263,6 +263,130 @@
         </el-card>
       </el-tab-pane>
 
+      <!-- 3D Tiles 转换标签页 -->
+      <el-tab-pane label="3D Tiles 转换" name="tiles">
+        <el-card class="tiles-card">
+          <template #header>
+            <div class="card-header">
+              <span>3D Tiles 转换</span>
+              <div class="card-actions">
+                <el-button
+                  text
+                  size="small"
+                  @click="refreshTilesStatus"
+                  :loading="loadingTilesStatus"
+                >
+                  <el-icon><Refresh /></el-icon>
+                  刷新状态
+                </el-button>
+              </div>
+            </div>
+          </template>
+          <div class="tiles-content">
+            <!-- 转换状态 -->
+            <div class="tiles-status-section">
+              <div class="status-line">
+                <span class="status-label">转换状态：</span>
+                <el-tag :type="tilesStatusTagType" size="large">{{ tilesStatusText }}</el-tag>
+                <span v-if="tilesCurrentStage" class="stage-label">{{ tilesCurrentStage }}</span>
+              </div>
+              <div class="status-progress" v-if="tilesStatus === 'RUNNING' || tilesStatus === 'COMPLETED'">
+                <el-progress
+                  :percentage="Math.round(tilesProgress)"
+                  :stroke-width="20"
+                  :text-inside="true"
+                  :status="tilesProgressStatus"
+                />
+              </div>
+              <div v-if="tilesError" class="error-message">
+                <el-alert :title="tilesError" type="error" :closable="false" />
+              </div>
+            </div>
+
+            <!-- 转换操作 -->
+            <div class="tiles-actions-section">
+              <el-form :model="tilesConvertParams" label-width="120px" size="default">
+                <el-form-item label="迭代版本">
+                  <el-select v-model="tilesConvertParams.iteration" placeholder="选择迭代版本" clearable>
+                    <el-option
+                      v-for="iter in availableIterations"
+                      :key="iter"
+                      :label="`iteration_${iter}`"
+                      :value="iter"
+                    />
+                  </el-select>
+                  <el-text type="info" style="margin-left: 8px">
+                    留空则使用最新迭代版本
+                  </el-text>
+                </el-form-item>
+                <el-form-item label="SPZ 压缩">
+                  <el-switch v-model="tilesConvertParams.use_spz" />
+                  <el-text type="info" style="margin-left: 8px">
+                    启用后可减少约 90% 文件大小
+                  </el-text>
+                </el-form-item>
+              </el-form>
+              <div class="action-buttons">
+                <el-button
+                  v-if="tilesStatus === 'RUNNING'"
+                  type="danger"
+                  :loading="loadingTilesAction"
+                  @click="onCancelTilesConversion"
+                >
+                  <el-icon><VideoPause /></el-icon>
+                  取消转换
+                </el-button>
+                <el-button
+                  v-else
+                  type="primary"
+                  :loading="loadingTilesAction"
+                  :disabled="!canStartTilesConversion"
+                  @click="onStartTilesConversion"
+                >
+                  <el-icon><VideoPlay /></el-icon>
+                  开始转换
+                </el-button>
+              </div>
+            </div>
+
+            <!-- 转换文件列表 -->
+            <div class="tiles-files-section" v-if="tilesFiles.length > 0">
+              <h4 class="section-title">转换结果文件</h4>
+              <el-table :data="tilesFiles" size="small" style="width: 100%">
+                <el-table-column prop="name" label="文件" min-width="240" />
+                <el-table-column prop="type" label="类型" width="110" />
+                <el-table-column prop="size_bytes" label="大小" width="120">
+                  <template #default="{ row }">
+                    {{ formatSize(row.size_bytes) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="mtime" label="更新时间" width="180">
+                  <template #default="{ row }">
+                    {{ formatTime(row.mtime) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="180">
+                  <template #default="{ row }">
+                    <el-button
+                      v-if="row.preview_supported && row.name === 'tileset.json'"
+                      type="primary"
+                      text
+                      size="small"
+                      @click="openCesiumPreview(row)"
+                    >
+                      Cesium 预览
+                    </el-button>
+                    <el-button type="primary" text size="small" :href="row.download_url" target="_blank">
+                      下载
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
+        </el-card>
+      </el-tab-pane>
+
       <!-- 训练日志标签页 -->
       <el-tab-pane label="训练日志" name="logs">
         <el-card class="log-card">
@@ -360,9 +484,20 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="previewVisible" title="3DGS 预览" width="80%" top="3vh" destroy-on-close>
+    <!-- Visionary 预览对话框 -->
+    <el-dialog v-model="previewVisible" title="3DGS 预览 (Visionary)" width="80%" top="3vh" destroy-on-close>
       <div class="preview-wrap">
         <iframe v-if="previewUrl" class="preview-iframe" :src="previewUrl" />
+      </div>
+    </el-dialog>
+
+    <!-- Cesium 预览对话框 -->
+    <el-dialog v-model="cesiumPreviewVisible" title="3DGS 预览 (Cesium)" width="90%" top="2vh" destroy-on-close>
+      <div class="cesium-preview-wrap">
+        <CesiumViewer v-if="cesiumTilesetUrl" :tileset-url="cesiumTilesetUrl" />
+        <div v-else class="cesium-loading">
+          <el-text>正在加载 tileset...</el-text>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -373,8 +508,9 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis, Refresh, FullScreen, Link, Cpu, VideoPlay, VideoPause } from '@element-plus/icons-vue'
 import type { Block, GSFileInfo, GSState } from '@/types'
-import { gsApi } from '@/api'
+import { gsApi, gsTilesApi } from '@/api'
 import GPUSelector from './GPUSelector.vue'
+import CesiumViewer from './CesiumViewer.vue'
 
 const props = defineProps<{
   block: Block
@@ -638,12 +774,188 @@ function formatTime(iso: string): string {
 
 const previewVisible = ref(false)
 const previewUrl = ref<string | null>(null)
+const cesiumPreviewVisible = ref(false)
+const cesiumTilesetUrl = ref<string | null>(null)
+
+// 3D Tiles 转换相关状态
+const tilesStatus = ref<string>('NOT_STARTED')
+const tilesProgress = ref(0)
+const tilesCurrentStage = ref<string | null>(null)
+const tilesError = ref<string | null>(null)
+const tilesFiles = ref<Array<{
+  name: string
+  type: string
+  size_bytes: number
+  mtime: string
+  preview_supported: boolean
+  download_url: string
+}>>([])
+const loadingTilesStatus = ref(false)
+const loadingTilesAction = ref(false)
+const tilesConvertParams = ref({
+  iteration: undefined as number | undefined,
+  use_spz: false,
+  optimize: false,
+})
+
+// 获取可用的迭代版本
+const availableIterations = computed(() => {
+  return state.value.files
+    .filter(f => f.name.includes('iteration_') && f.name.endsWith('.ply'))
+    .map(f => {
+      const match = f.name.match(/iteration_(\d+)/)
+      return match ? parseInt(match[1]) : null
+    })
+    .filter((v): v is number => v !== null)
+    .sort((a, b) => b - a)
+})
+
+const tilesStatusTagType = computed(() => {
+  switch (tilesStatus.value) {
+    case 'COMPLETED':
+      return 'success'
+    case 'RUNNING':
+      return 'primary'
+    case 'FAILED':
+      return 'danger'
+    case 'CANCELLED':
+      return 'warning'
+    default:
+      return 'info'
+  }
+})
+
+const tilesStatusText = computed(() => {
+  switch (tilesStatus.value) {
+    case 'NOT_STARTED':
+      return '未开始'
+    case 'RUNNING':
+      return '转换中'
+    case 'COMPLETED':
+      return '已完成'
+    case 'FAILED':
+      return '失败'
+    case 'CANCELLED':
+      return '已取消'
+    default:
+      return tilesStatus.value
+  }
+})
+
+const tilesProgressStatus = computed(() => {
+  if (tilesStatus.value === 'FAILED') return 'exception'
+  if (tilesStatus.value === 'COMPLETED') return 'success'
+  return ''
+})
+
+const canStartTilesConversion = computed(() => {
+  return ['NOT_STARTED', 'FAILED', 'CANCELLED', 'COMPLETED'].includes(tilesStatus.value) &&
+    state.value.status === 'COMPLETED'
+})
 
 function openPreview(file: GSFileInfo) {
   // Use Visionary viewer page with PLY URL parameter
   const plyUrl = file.download_url
   previewUrl.value = `/visionary/viewer.html?ply_url=${encodeURIComponent(plyUrl)}`
   previewVisible.value = true
+}
+
+async function openCesiumPreview(file: { download_url: string }) {
+  try {
+    // Get tileset URL
+    const response = await gsTilesApi.tilesetUrl(props.block.id)
+    cesiumTilesetUrl.value = response.data.tileset_url
+    cesiumPreviewVisible.value = true
+  } catch (error: any) {
+    ElMessage.error(`无法获取 tileset URL: ${error.message || '未知错误'}`)
+  }
+}
+
+async function refreshTilesStatus() {
+  if (loadingTilesStatus.value) return
+  loadingTilesStatus.value = true
+  try {
+    const response = await gsTilesApi.status(props.block.id)
+    const data = response.data
+    tilesStatus.value = data.gs_tiles_status || 'NOT_STARTED'
+    tilesProgress.value = data.gs_tiles_progress || 0
+    tilesCurrentStage.value = data.gs_tiles_current_stage || null
+    tilesError.value = data.gs_tiles_error_message || null
+
+    // Refresh files if conversion is completed
+    if (tilesStatus.value === 'COMPLETED') {
+      await refreshTilesFiles()
+    }
+  } catch (error: any) {
+    ElMessage.error(`刷新状态失败: ${error.message || '未知错误'}`)
+  } finally {
+    loadingTilesStatus.value = false
+  }
+}
+
+async function refreshTilesFiles() {
+  try {
+    const response = await gsTilesApi.files(props.block.id)
+    tilesFiles.value = response.data.files || []
+  } catch (error: any) {
+    console.error('Failed to refresh tiles files:', error)
+  }
+}
+
+async function onStartTilesConversion() {
+  if (loadingTilesAction.value) return
+  loadingTilesAction.value = true
+  try {
+    await gsTilesApi.convert(props.block.id, {
+      iteration: tilesConvertParams.value.iteration,
+      use_spz: tilesConvertParams.value.use_spz,
+      optimize: tilesConvertParams.value.optimize,
+    })
+    ElMessage.success('转换任务已启动')
+    await refreshTilesStatus()
+    // Start polling if conversion is running
+    if (tilesStatus.value === 'RUNNING') {
+      startTilesPolling()
+    }
+  } catch (error: any) {
+    ElMessage.error(`启动转换失败: ${error.message || '未知错误'}`)
+  } finally {
+    loadingTilesAction.value = false
+  }
+}
+
+async function onCancelTilesConversion() {
+  if (loadingTilesAction.value) return
+  loadingTilesAction.value = true
+  try {
+    await gsTilesApi.cancel(props.block.id)
+    ElMessage.success('转换任务已取消')
+    await refreshTilesStatus()
+    stopTilesPolling()
+  } catch (error: any) {
+    ElMessage.error(`取消转换失败: ${error.message || '未知错误'}`)
+  } finally {
+    loadingTilesAction.value = false
+  }
+}
+
+let tilesPollingTimer: number | null = null
+
+function startTilesPolling() {
+  if (tilesPollingTimer) return
+  tilesPollingTimer = window.setInterval(async () => {
+    await refreshTilesStatus()
+    if (tilesStatus.value !== 'RUNNING') {
+      stopTilesPolling()
+    }
+  }, 2000)
+}
+
+function stopTilesPolling() {
+  if (tilesPollingTimer) {
+    clearInterval(tilesPollingTimer)
+    tilesPollingTimer = null
+  }
 }
 
 function openTensorBoardFullscreen() {
@@ -659,10 +971,15 @@ function openTensorBoardNewWindow() {
 onMounted(async () => {
   await refreshAll()
   if (state.value.status === 'RUNNING') startPolling()
+  // Load tiles status if GS training is completed
+  if (state.value.status === 'COMPLETED') {
+    await refreshTilesStatus()
+  }
 })
 
 onUnmounted(() => {
   stopPolling()
+  stopTilesPolling()
 })
 
 watch(
@@ -910,6 +1227,50 @@ watch(
 
 .debug-section {
   margin-top: 12px;
+}
+
+.tiles-card {
+  margin-bottom: 16px;
+}
+
+.tiles-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.tiles-status-section {
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.tiles-actions-section {
+  padding: 16px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.tiles-files-section {
+  padding: 16px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.cesium-preview-wrap {
+  width: 100%;
+  height: 80vh;
+  position: relative;
+}
+
+.cesium-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
 }
 
 .preview-wrap {

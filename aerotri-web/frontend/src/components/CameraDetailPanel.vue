@@ -53,34 +53,37 @@
 
       <!-- Content -->
       <div class="panel-body" v-if="camera">
-        <el-row :gutter="16">
+        <el-row :gutter="16" class="content-row">
           <!-- Image preview -->
           <el-col :span="16">
             <div class="image-section">
-              <div class="image-container" v-loading="imageLoading">
-                <img
-                  v-if="imageUrl && !imageError"
-                  :src="imageUrl"
-                  :alt="camera.image_name"
-                  @load="imageLoading = false"
-                  @error="handleImageError"
-                  class="camera-image"
-                  :style="{ transform: `scale(${imageScale})` }"
-                />
-                <div v-else-if="imageError" class="image-error">
-                  <el-icon :size="48"><Picture /></el-icon>
-                  <p>图像加载失败</p>
+              <div class="image-container-wrapper">
+                <div class="image-container" v-loading="imageLoading" :class="{ 'fit-contain': fitMode === 'contain' }">
+                  <img
+                    v-if="imageUrl && !imageError"
+                    :src="imageUrl"
+                    :alt="camera.image_name"
+                    @load="imageLoading = false"
+                    @error="handleImageError"
+                    class="camera-image"
+                    :class="{ 'fit-contain': fitMode === 'contain', 'fit-original': fitMode === 'original' }"
+                    :style="fitMode === 'original' ? { transform: `scale(${imageScale})` } : {}"
+                  />
+                  <div v-else-if="imageError" class="image-error">
+                    <el-icon :size="48"><Picture /></el-icon>
+                    <p>图像加载失败</p>
+                  </div>
                 </div>
               </div>
               <div class="image-controls">
                 <el-button-group>
-                  <el-button size="small" @click="zoomOut" :disabled="imageScale <= 0.1">
+                  <el-button size="small" @click="zoomOut" :disabled="imageScale <= 0.1 || fitMode === 'contain'">
                     <el-icon><ZoomOut /></el-icon>
                   </el-button>
-                  <el-button size="small" @click="resetZoom">
-                    {{ Math.round(imageScale * 100) }}%
+                  <el-button size="small" @click="resetZoom" :disabled="fitMode === 'contain'">
+                    {{ fitMode === 'contain' ? '适应容器' : `${Math.round(imageScale * 100)}%` }}
                   </el-button>
-                  <el-button size="small" @click="zoomIn" :disabled="imageScale >= 3">
+                  <el-button size="small" @click="zoomIn" :disabled="imageScale >= 3 || fitMode === 'contain'">
                     <el-icon><ZoomIn /></el-icon>
                   </el-button>
                 </el-button-group>
@@ -120,6 +123,11 @@
                 </el-descriptions-item>
                 <el-descriptions-item label="3D点数量">
                   {{ camera.num_points }}
+                </el-descriptions-item>
+                <el-descriptions-item label="重投影误差" v-if="camera.mean_reprojection_error != null">
+                  <el-text :type="camera.mean_reprojection_error > 1.0 ? 'danger' : 'success'">
+                    {{ camera.mean_reprojection_error.toFixed(3) }} px
+                  </el-text>
                 </el-descriptions-item>
                 <el-descriptions-item label="位置" v-if="camera.x !== null && camera.y !== null && camera.z !== null">
                   X: {{ camera.x.toFixed(2) }}<br>
@@ -216,7 +224,13 @@ function zoomOut() {
 }
 
 function resetZoom() {
-  imageScale.value = 1.0
+  if (fitMode.value === 'contain') {
+    // 在适应容器模式下，重置就是回到适应状态
+    imageScale.value = 1.0
+  } else {
+    // 在原始尺寸模式下，重置缩放
+    imageScale.value = 1.0
+  }
 }
 
 function closePanel() {
@@ -369,12 +383,34 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.content-row {
+  height: 100%;
+  display: flex;
+}
+
+.content-row :deep(.el-col) {
+  display: flex;
+  flex-direction: column;
 }
 
 .image-section {
-  height: 100%;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.image-container-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* 限制最大高度：取面板高度的60%和500px中的较小值 */
+  max-height: min(60vh, 500px);
 }
 
 .image-container {
@@ -387,13 +423,36 @@ onUnmounted(() => {
   border-radius: 4px;
   overflow: auto;
   min-height: 200px;
+  max-height: 100%;
+  position: relative;
+  /* 确保容器有明确的高度限制 */
+  height: 100%;
+}
+
+.image-container.fit-contain {
+  overflow: hidden;
 }
 
 .camera-image {
+  transition: transform 0.2s;
+  display: block;
+}
+
+.camera-image.fit-contain {
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
-  transition: transform 0.2s;
+  /* 确保图像不会超出容器 */
+  flex-shrink: 0;
+}
+
+.camera-image.fit-original {
+  /* 原始尺寸模式下，图像可以超出容器，通过滚动查看 */
+  width: auto;
+  height: auto;
+  flex-shrink: 0;
 }
 
 .image-error {
@@ -414,12 +473,26 @@ onUnmounted(() => {
   margin-top: 12px;
   display: flex;
   align-items: center;
+  flex-shrink: 0; /* 控制栏不收缩 */
+}
+
+.info-section {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-right: 4px; /* 为滚动条留出空间 */
 }
 
 .info-section h4 {
   margin: 0 0 12px 0;
   font-size: 14px;
   font-weight: 600;
+  flex-shrink: 0; /* 标题不收缩 */
+}
+
+.info-section :deep(.el-descriptions) {
+  flex-shrink: 0; /* 描述列表不收缩 */
 }
 
 :deep(.el-descriptions__label) {

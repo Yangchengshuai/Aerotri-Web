@@ -13,8 +13,13 @@ import type {
   TilesFileInfo,
 } from '@/types'
 
+const apiBase =
+  import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.trim().length > 0
+    ? import.meta.env.VITE_API_BASE_URL
+    : '/api'
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: apiBase,
   timeout: 30000,
 })
 
@@ -202,6 +207,66 @@ export const gsApi = {
 
   logTail: (blockId: string, lines = 200) =>
     api.get<{ block_id: string; lines: string[] }>(`/blocks/${blockId}/gs/log_tail`, {
+      params: { lines },
+    }),
+}
+
+// 3D GS Tiles API
+export const gsTilesApi = {
+  convert: (blockId: string, payload: {
+    iteration?: number
+    use_spz?: boolean
+    optimize?: boolean
+  }) =>
+    api.post<{
+      block_id: string
+      gs_tiles_status?: string
+      gs_tiles_progress?: number
+      gs_tiles_current_stage?: string
+      gs_tiles_output_path?: string
+      gs_tiles_error_message?: string
+      gs_tiles_statistics?: Record<string, unknown>
+    }>(`/blocks/${blockId}/gs/tiles/convert`, payload),
+  
+  status: (blockId: string) =>
+    api.get<{
+      block_id: string
+      gs_tiles_status?: string
+      gs_tiles_progress?: number
+      gs_tiles_current_stage?: string
+      gs_tiles_output_path?: string
+      gs_tiles_error_message?: string
+      gs_tiles_statistics?: Record<string, unknown>
+    }>(`/blocks/${blockId}/gs/tiles/status`),
+  
+  cancel: (blockId: string) =>
+    api.post<{
+      block_id: string
+      gs_tiles_status?: string
+      gs_tiles_progress?: number
+      gs_tiles_current_stage?: string
+      gs_tiles_output_path?: string
+      gs_tiles_error_message?: string
+      gs_tiles_statistics?: Record<string, unknown>
+    }>(`/blocks/${blockId}/gs/tiles/cancel`),
+  
+  files: (blockId: string) =>
+    api.get<{
+      files: Array<{
+        name: string
+        type: string
+        size_bytes: number
+        mtime: string
+        preview_supported: boolean
+        download_url: string
+      }>
+    }>(`/blocks/${blockId}/gs/tiles/files`),
+  
+  tilesetUrl: (blockId: string) =>
+    api.get<{ tileset_url: string }>(`/blocks/${blockId}/gs/tiles/tileset_url`),
+  
+  logTail: (blockId: string, lines = 200) =>
+    api.get<{ block_id: string; lines: string[] }>(`/blocks/${blockId}/gs/tiles/log_tail`, {
       params: { lines },
     }),
 }

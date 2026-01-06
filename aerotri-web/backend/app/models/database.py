@@ -69,6 +69,13 @@ async def init_db():
                 ("tiles_output_path", "TEXT"),
                 ("tiles_error_message", "TEXT"),
                 ("tiles_statistics", "JSON"),
+                # 3D GS Tiles Conversion fields
+                ("gs_tiles_status", "VARCHAR(32)"),
+                ("gs_tiles_progress", "FLOAT"),
+                ("gs_tiles_current_stage", "VARCHAR(100)"),
+                ("gs_tiles_output_path", "TEXT"),
+                ("gs_tiles_error_message", "TEXT"),
+                ("gs_tiles_statistics", "JSON"),
                 # Partitioned SfM fields
                 ("partition_enabled", "BOOLEAN"),
                 ("partition_strategy", "VARCHAR(64)"),

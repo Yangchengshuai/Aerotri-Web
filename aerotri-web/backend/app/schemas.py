@@ -97,6 +97,12 @@ class BlockResponse(BaseModel):
     gs_output_path: Optional[str] = None
     gs_error_message: Optional[str] = None
     gs_statistics: Optional[Dict[str, Any]] = None
+    gs_tiles_status: Optional[str] = None
+    gs_tiles_progress: Optional[float] = None
+    gs_tiles_current_stage: Optional[str] = None
+    gs_tiles_output_path: Optional[str] = None
+    gs_tiles_error_message: Optional[str] = None
+    gs_tiles_statistics: Optional[Dict[str, Any]] = None
     tiles_status: Optional[str] = None
     tiles_progress: Optional[float] = None
     tiles_current_stage: Optional[str] = None
@@ -320,6 +326,52 @@ class TilesetUrlResponse(BaseModel):
     tileset_url: str
 
 
+# ===== 3D GS Tiles Schemas =====
+
+class GSTilesFileInfo(BaseModel):
+    """Schema for 3D GS Tiles file information."""
+    name: str
+    type: str  # "tileset", "tile", "glb", etc.
+    size_bytes: int
+    mtime: datetime
+    preview_supported: bool
+    download_url: str
+
+
+class GSTilesFilesResponse(BaseModel):
+    """Schema for 3D GS Tiles files response."""
+    files: List[GSTilesFileInfo]
+
+
+class GSTilesStatusResponse(BaseModel):
+    """Schema for 3D GS Tiles status response."""
+    block_id: str
+    gs_tiles_status: Optional[str] = None
+    gs_tiles_progress: Optional[float] = None
+    gs_tiles_current_stage: Optional[str] = None
+    gs_tiles_output_path: Optional[str] = None
+    gs_tiles_error_message: Optional[str] = None
+    gs_tiles_statistics: Optional[Dict[str, Any]] = None
+
+
+class GSTilesLogResponse(BaseModel):
+    """Schema for 3D GS Tiles log response."""
+    block_id: str
+    lines: List[str]
+
+
+class GSTilesConvertRequest(BaseModel):
+    """Schema for 3D GS Tiles conversion request."""
+    iteration: Optional[int] = None  # Which iteration PLY to convert (e.g., 7000, 15000)
+    use_spz: Optional[bool] = False  # Whether to use SPZ compression
+    optimize: Optional[bool] = False  # Whether to optimize (future use)
+
+
+class GSTilesetUrlResponse(BaseModel):
+    """Schema for GS tileset URL response."""
+    tileset_url: str
+
+
 # ===== Partition Schemas =====
 
 class PartitionInfo(BaseModel):
@@ -387,7 +439,7 @@ class CameraInfo(BaseModel):
     x: Optional[float] = None
     y: Optional[float] = None
     z: Optional[float] = None
-    mean_reprojection_error: Optional[float] = None
+    mean_reprojection_error: float = 0.0
 
 
 class Point3D(BaseModel):

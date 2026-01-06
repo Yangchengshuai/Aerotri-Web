@@ -155,6 +155,30 @@ class Block(Base):
     # JSON statistics for 3DGS (stage times, params, iterations, etc.)
     gs_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
+    # ====== 3D GS Tiles Conversion fields ======
+    # Status of 3D GS PLY to 3D Tiles conversion pipeline
+    gs_tiles_status: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        default="NOT_STARTED",
+    )
+    # Overall 3D GS Tiles conversion progress (0-100)
+    gs_tiles_progress: Mapped[Optional[float]] = mapped_column(
+        nullable=True,
+        default=0.0,
+    )
+    # Current coarse 3D GS Tiles stage: ply_to_gltf/gltf_to_tiles/completed/...
+    gs_tiles_current_stage: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    # Root output path for 3D GS Tiles artifacts (e.g. <gs_output_path>/3dtiles)
+    gs_tiles_output_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Human-readable error message for 3D GS Tiles conversion failures
+    gs_tiles_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # JSON statistics for 3D GS Tiles (stage times, file sizes, etc.)
+    gs_tiles_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
     # ====== 3D Tiles Conversion fields ======
     # Status of 3D Tiles conversion pipeline
     tiles_status: Mapped[Optional[str]] = mapped_column(
@@ -251,6 +275,12 @@ class Block(Base):
             "gs_output_path": self.gs_output_path,
             "gs_error_message": self.gs_error_message,
             "gs_statistics": self.gs_statistics,
+            "gs_tiles_status": self.gs_tiles_status,
+            "gs_tiles_progress": self.gs_tiles_progress,
+            "gs_tiles_current_stage": self.gs_tiles_current_stage,
+            "gs_tiles_output_path": self.gs_tiles_output_path,
+            "gs_tiles_error_message": self.gs_tiles_error_message,
+            "gs_tiles_statistics": self.gs_tiles_statistics,
             "tiles_status": self.tiles_status,
             "tiles_progress": self.tiles_progress,
             "tiles_current_stage": self.tiles_current_stage,

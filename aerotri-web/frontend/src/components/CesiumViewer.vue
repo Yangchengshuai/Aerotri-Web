@@ -3,6 +3,21 @@
     <div v-if="loading" class="loading-overlay">
       <el-text>正在加载 CesiumJS...</el-text>
     </div>
+    <div v-if="loadingTileset" class="loading-overlay">
+      <div class="loading-content">
+        <el-text>正在加载 3D Tiles...</el-text>
+        <el-progress
+          v-if="tilesetProgress > 0"
+          :percentage="Math.round(tilesetProgress)"
+          :stroke-width="20"
+          :text-inside="true"
+          style="margin-top: 12px; width: 300px;"
+        />
+        <el-text v-if="tilesetProgressText" type="info" style="margin-top: 8px; display: block;">
+          {{ tilesetProgressText }}
+        </el-text>
+      </div>
+    </div>
     <div v-if="error" class="error-overlay">
       <el-alert
         :title="error"
@@ -55,7 +70,10 @@ const props = defineProps<{
 
 const container = ref<HTMLDivElement | null>(null)
 const loading = ref(true)
+const loadingTileset = ref(false)
 const error = ref<string | null>(null)
+const tilesetProgress = ref(0)
+const tilesetProgressText = ref<string | null>(null)
 let viewer: Cesium.Viewer | null = null
 let currentTileset: Cesium.Cesium3DTileset | null = null
 
@@ -169,6 +187,10 @@ async function initViewer() {
 async function loadTileset() {
   if (!viewer || !props.tilesetUrl) return
 
+  loadingTileset.value = true
+  tilesetProgress.value = 0
+  tilesetProgressText.value = '正在初始化...'
+
   try {
     let tileset: Cesium.Cesium3DTileset
 
@@ -197,6 +219,42 @@ async function loadTileset() {
       return
     }
 
+    // Set up progress tracking before adding to scene
+    tilesetProgressText.value = '正在加载瓦片...'
+    
+    // Listen to tile load progress (check if event exists)
+    if (tileset && tileset.tileLoadProgressEvent) {
+      tileset.tileLoadProgressEvent.addEventListener((numberOfPendingRequests: number, numberOfTilesProcessing: number) => {
+        const total = numberOfPendingRequests + numberOfTilesProcessing
+        if (total > 0) {
+          const loaded = numberOfTilesProcessing
+          tilesetProgress.value = (loaded / total) * 100
+          tilesetProgressText.value = `已加载 ${loaded} / ${total} 个瓦片`
+        } else {
+          tilesetProgress.value = 100
+          tilesetProgressText.value = '加载完成'
+        }
+      })
+    } else {
+      // Fallback: use readyPromise to track completion (if available)
+      console.warn('tileLoadProgressEvent not available, checking readyPromise')
+      if (tileset.readyPromise) {
+        tileset.readyPromise
+          .then(() => {
+            tilesetProgress.value = 100
+            tilesetProgressText.value = '加载完成'
+          })
+          .catch((err: any) => {
+            console.error('Tileset loading error:', err)
+            error.value = `加载失败: ${err.message || '未知错误'}`
+          })
+      } else {
+        // No progress tracking available, just log
+        console.warn('Neither tileLoadProgressEvent nor readyPromise available, using polling approach')
+        tilesetProgressText.value = '正在加载...'
+      }
+    }
+
     // Add tileset to scene
     viewer.scene.primitives.add(tileset)
     console.log('✓ Tileset added to scene primitives')
@@ -210,37 +268,69 @@ async function loadTileset() {
     // Add event listeners for debugging
     const tilesetAny = tileset as any
     
-    // Listen for tile load events
-    tileset.tileLoad.addEventListener((tile: any) => {
-      console.log('✓ Tile loaded:', {
-        content: tile.content,
-        boundingVolume: tile.boundingVolume,
-        uri: tile.content?.uri,
-        url: tile.content?.uri || tile.content?._url
+    // Listen for tile load events (with safety checks)
+    if (tileset.tileLoad) {
+      tileset.tileLoad.addEventListener((tile: any) => {
+        console.log('✓ Tile loaded:', {
+          content: tile.content,
+          boundingVolume: tile.boundingVolume,
+          uri: tile.content?.uri,
+          url: tile.content?.uri || tile.content?._url
+        })
       })
-    })
+    }
     
     // Listen for tile failed events
-    tileset.tileFailed.addEventListener((tile: any, err: any) => {
-      const errorMsg = err?.message || err?.toString() || String(err) || '未知错误'
-      console.error('✗ Tile failed to load:', {
-        tile,
-        error: errorMsg,
-        url: tile?.content?.uri || tile?.content?._url,
-        errorObj: err
+    if (tileset.tileFailed) {
+      tileset.tileFailed.addEventListener((tile: any, err: any) => {
+        // Extract error message more carefully
+        let errorMsg = '未知错误'
+        if (err) {
+          if (typeof err === 'string') {
+            errorMsg = err
+          } else if (err.message) {
+            errorMsg = err.message
+          } else if (err.toString && typeof err.toString === 'function') {
+            const errStr = err.toString()
+            if (errStr !== '[object Object]' && errStr !== 'undefined') {
+              errorMsg = errStr
+            }
+          }
+        }
+        
+        const tileUri = tile?.content?.uri || tile?.content?._url || 'N/A'
+        console.error('✗ Tile failed to load:', {
+          tile,
+          error: errorMsg,
+          url: tileUri,
+          errorObj: err
+        })
+        
+        // Only show error if it's not a 404 (which might be expected for empty tilesets)
+        // and if error message is meaningful (not 'undefined' or empty)
+        if (errorMsg && 
+            errorMsg !== 'undefined' && 
+            errorMsg !== '未知错误' &&
+            !errorMsg.includes('404') && 
+            !errorMsg.includes('Not Found')) {
+          error.value = `模型加载失败: ${errorMsg}`
+        }
       })
-      error.value = `模型加载失败: ${errorMsg}`
-    })
+    }
     
     // Listen for all tiles loaded
-    tileset.allTilesLoaded.addEventListener(() => {
-      console.log('✓ All tiles loaded successfully')
-    })
+    if (tileset.allTilesLoaded) {
+      tileset.allTilesLoaded.addEventListener(() => {
+        console.log('✓ All tiles loaded successfully')
+      })
+    }
     
     // Listen for initial tiles loaded
-    tileset.initialTilesLoaded.addEventListener(() => {
-      console.log('✓ Initial tiles loaded')
-    })
+    if (tileset.initialTilesLoaded) {
+      tileset.initialTilesLoaded.addEventListener(() => {
+        console.log('✓ Initial tiles loaded')
+      })
+    }
     
     // Monitor tileset ready state
     const checkReady = () => {
@@ -276,13 +366,50 @@ async function loadTileset() {
       if (!viewer || !tileset) return
       
       // Debug: Check tileset properties
+      const root = tilesetAny.root
+      const rootContent = root?.content
+      const rootChildren = root?.children || []
+      
+      // Check for root content URI in multiple possible locations
+      const rootContentUri = rootContent?.uri || 
+                            rootContent?._url || 
+                            rootContent?._resource?.url ||
+                            rootContent?._resource?._url ||
+                            (rootContent && typeof rootContent === 'object' ? 'content exists but no URI' : null)
+      
       console.log('Tileset debug info:', {
         url: tilesetAny.url,
-        root: tilesetAny.root,
+        root: root,
+        rootContent: rootContent,
+        rootContentUri: rootContentUri || 'N/A',
+        rootContentType: typeof rootContent,
+        rootChildrenCount: rootChildren.length,
         boundingSphere: tilesetAny.boundingSphere,
         ready: tilesetAny.ready,
         readyPromise: tilesetAny.readyPromise
       })
+      
+      // Check tileset structure for logging
+      // For single-file tileset: root.content.uri exists, root.children is empty
+      // For multi-file tileset: root.children array exists
+      const hasRootContent = rootContent !== null && rootContent !== undefined
+      const hasRootContentUri = rootContentUri && rootContentUri !== 'N/A' && rootContentUri !== 'content exists but no URI'
+      const hasRootChildren = rootChildren.length > 0
+      
+      if (rootChildren.length === 0 && (hasRootContent || hasRootContentUri)) {
+        // Single-file tileset mode (e.g., OBJ to 3D Tiles)
+        // This is valid - root.content.uri points to a single B3DM file
+        console.log('✓ Single-file tileset mode detected (root.content exists)')
+      } else if (hasRootChildren) {
+        // Multi-file tileset - this is valid
+        console.log('✓ Multi-file tileset mode detected (root.children exists)')
+      } else if (rootChildren.length === 0 && !hasRootContent && !hasRootContentUri) {
+        // Potentially empty tileset, but don't show error immediately
+        // Cesium might still be loading the content asynchronously
+        // Let Cesium's tileFailed event handle actual errors
+        console.warn('⚠️ Tileset appears empty (no children and no root content), but waiting for async load...')
+        // Don't set error here - let Cesium's error handling take care of it
+      }
       
       const tryZoom = () => {
         const boundingSphere = tilesetAny.boundingSphere
@@ -450,19 +577,52 @@ async function loadTileset() {
       tilesetAny.readyPromise
         .then(() => {
           console.log('Tileset loaded successfully (via readyPromise)')
+          tilesetProgress.value = 100
+          tilesetProgressText.value = '加载完成'
+          loadingTileset.value = false
           zoomToTileset()
         })
         .catch((err: any) => {
-          error.value = `加载 3D Tiles 失败: ${err.message || err}`
+          // Extract error message more carefully
+          let errorMsg = '未知错误'
+          if (err) {
+            if (typeof err === 'string') {
+              errorMsg = err
+            } else if (err.message) {
+              errorMsg = err.message
+            } else if (err.toString && typeof err.toString === 'function') {
+              const errStr = err.toString()
+              if (errStr !== '[object Object]' && errStr !== 'undefined') {
+                errorMsg = errStr
+              }
+            }
+          }
+          error.value = `加载 3D Tiles 失败: ${errorMsg}`
           console.error('Error loading tileset:', err)
+          loadingTileset.value = false
         })
     } else {
       // No readyPromise, use polling approach
       console.log('No readyPromise available, using polling approach')
+      loadingTileset.value = false
       zoomToTileset()
     }
   } catch (err: any) {
-    error.value = `加载 3D Tiles 失败: ${err.message || err}`
+    // Extract error message more carefully
+    let errorMsg = '未知错误'
+    if (err) {
+      if (typeof err === 'string') {
+        errorMsg = err
+      } else if (err.message) {
+        errorMsg = err.message
+      } else if (err.toString && typeof err.toString === 'function') {
+        const errStr = err.toString()
+        if (errStr !== '[object Object]' && errStr !== 'undefined') {
+          errorMsg = errStr
+        }
+      }
+    }
+    error.value = `加载 3D Tiles 失败: ${errorMsg}`
     console.error('Error loading tileset:', err)
   }
 }
@@ -792,6 +952,13 @@ watch(() => props.tilesetUrl, () => {
 .cesium-container {
   width: 100%;
   height: 100%;
+}
+
+.loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
 .loading-overlay,

@@ -48,6 +48,12 @@
   - 转换流程：OBJ → GLB → 3D Tiles
   - 支持查看转换进度、日志和产物列表
   - 支持获取 tileset.json URL 用于 Cesium 等查看器
+- **3D GS Tiles 转换**: 
+  - 支持将 3DGS 训练产物（PLY 格式）转换为 3D Tiles 格式
+  - 转换流程：PLY → GLTF → 3D Tiles
+  - 支持选择不同迭代版本和 SPZ 压缩
+  - 支持查看转换进度、日志和产物列表
+  - 支持获取 tileset.json URL 用于 Cesium 等查看器
 
 ## 技术栈
 
@@ -66,6 +72,7 @@
 - Element Plus
 - Pinia
 - Three.js
+- Cesium（3D Tiles 查看器）
 
 ## 快速开始
 
@@ -154,7 +161,14 @@ npm run test
 | `/api/blocks/{id}/gs/files` | GET | 3DGS 产物列表 |
 | `/api/blocks/{id}/gs/download` | GET | 3DGS 产物下载 |
 | `/api/blocks/{id}/gs/log_tail` | GET | 3DGS 日志 tail |
-| `/api/blocks/{id}/tiles/convert` | POST | 启动 3D Tiles 转换 |
+| `/api/blocks/{id}/gs/tiles/convert` | POST | 启动 3D GS Tiles 转换 |
+| `/api/blocks/{id}/gs/tiles/status` | GET | 3D GS Tiles 状态 |
+| `/api/blocks/{id}/gs/tiles/cancel` | POST | 取消 3D GS Tiles 转换 |
+| `/api/blocks/{id}/gs/tiles/files` | GET | 3D GS Tiles 产物列表 |
+| `/api/blocks/{id}/gs/tiles/download` | GET | 3D GS Tiles 产物下载 |
+| `/api/blocks/{id}/gs/tiles/log_tail` | GET | 3D GS Tiles 日志 tail |
+| `/api/blocks/{id}/gs/tiles/tileset_url` | GET | 获取 3D GS Tiles tileset.json URL |
+| `/api/blocks/{id}/tiles/convert` | POST | 启动 3D Tiles 转换（OpenMVS 重建结果） |
 | `/api/blocks/{id}/tiles/status` | GET | 3D Tiles 状态 |
 | `/api/blocks/{id}/tiles/cancel` | POST | 取消 3D Tiles 转换 |
 | `/api/blocks/{id}/tiles/files` | GET | 3D Tiles 产物列表 |
@@ -254,6 +268,27 @@ aerotri-web/
 
 - 预览依赖 WebGPU，推荐 Chrome/Edge 较新版本 + 独显环境。
 - 若浏览器/驱动不支持 WebGPU，可使用"下载"将 `point_cloud.ply` 下载到本地离线查看。
+
+## 3D GS Tiles 转换
+
+### 前置条件
+
+- 必须先完成 3DGS 训练（Block 的 `gs_status` 为 `completed`，且存在训练产物 `point_cloud.ply`）。
+
+### 功能特性
+
+- 支持将 3DGS 训练产物（PLY 格式）转换为 3D Tiles 格式
+- 转换流程：PLY → GLTF → 3D Tiles
+- 支持选择不同迭代版本（iteration_7000, iteration_30000 等）
+- 支持 SPZ 压缩格式，可减少约 90% 文件大小
+- 支持查看转换进度、阶段和日志
+- 支持下载转换产物（tileset.json、tiles、GLB 等）
+- 支持获取 tileset.json URL，可在 Cesium 等 3D Tiles 查看器中加载
+
+### Web 端入口
+
+- 在 Block 详情页的 **"3DGS"** 标签页中，切换到 **"3D Tiles 转换"** 子标签页：可启动转换任务、查看进度、日志与产物列表。
+- 产物 `tileset.json` 支持点击 **"Cesium 预览"**：会在对话框中打开 Cesium 查看器进行预览。
 
 ## 支持的算法参数
 
