@@ -68,3 +68,28 @@ openMVS/eigen-3.4.0/
 openMVS/eigen-3.4.0.zip
 openMVS/vcg/
 openMVS/.git/
+
+# Exclude entire directories from version control
+aerotri-web/docs/
+colmap/
+
+# gs_workspace - exclude build artifacts and dependencies
+gs_workspace/**/__pycache__/
+gs_workspace/**/node_modules/
+gs_workspace/**/dist/
+gs_workspace/**/build/
+gs_workspace/**/build_*/
+gs_workspace/**/.pytest_cache/
+gs_workspace/**/venv/
+gs_workspace/**/.venv/
+gs_workspace/**/*.pyc
+gs_workspace/**/*.pyo
+gs_workspace/**/*.pyd
+gs_workspace/**/.git/
+gs_workspace/**/submodules/
+gs_workspace/**/SIBR_viewers/
+gs_workspace/**/lpipsPyTorch/
+gs_workspace/**/output/
+gs_workspace/**/outputs/
+gs_workspace/**/data/
+gs_workspace/**/*.log
