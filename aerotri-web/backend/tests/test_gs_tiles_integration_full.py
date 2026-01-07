@@ -98,6 +98,93 @@ async def test_full_conversion_flow():
 
 
 @pytest.mark.asyncio
+async def test_full_conversion_flow_with_spz():
+    """Test the complete conversion flow with SPZ compression."""
+    from app.services.spz_loader import check_spz_available
+    
+    if not check_spz_available():
+        pytest.skip("SPZ Python bindings not available")
+    
+    async with AsyncSessionLocal() as db:
+        # 1. Check block exists
+        result = await db.execute(select(Block).where(Block.id == TEST_BLOCK_ID))
+        block = result.scalar_one_or_none()
+        if not block:
+            pytest.skip(f"Block {TEST_BLOCK_ID} not found")
+        
+        # 2. Check GS training is completed
+        if not block.gs_output_path or getattr(block, 'gs_status', None) != 'COMPLETED':
+            pytest.skip("GS training not completed")
+        
+        # 3. Start conversion with SPZ compression
+        convert_params = {
+            "iteration": 15000,  # Use latest iteration
+            "use_spz": True,
+            "optimize_compression": True,
+        }
+        
+        await gs_tiles_runner.start_conversion(block, db, convert_params)
+        
+        # 4. Monitor conversion progress
+        max_wait = 300  # 5 minutes max wait (SPZ conversion may take longer)
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait:
+            await asyncio.sleep(2)
+            
+            result = await db.execute(select(Block).where(Block.id == TEST_BLOCK_ID))
+            updated_block = result.scalar_one()
+            status = getattr(updated_block, 'gs_tiles_status', None)
+            
+            if status == "COMPLETED":
+                break
+            elif status == "FAILED":
+                error = getattr(updated_block, 'gs_tiles_error_message', None)
+                pytest.fail(f"Conversion failed: {error}")
+        
+        # 5. Verify conversion completed
+        result = await db.execute(select(Block).where(Block.id == TEST_BLOCK_ID))
+        final_block = result.scalar_one()
+        assert getattr(final_block, 'gs_tiles_status', None) == "COMPLETED"
+        
+        # 6. Verify output path exists
+        output_path = getattr(final_block, 'gs_tiles_output_path', None)
+        assert output_path is not None
+        
+        output_dir = Path(output_path)
+        assert output_dir.exists()
+        
+        # 7. Verify tileset.json exists
+        tileset_path = output_dir / "tileset.json"
+        assert tileset_path.exists(), f"tileset.json not found at {tileset_path}"
+        
+        # 8. Verify SPZ file was created
+        spz_files = list(output_dir.glob("*.spz"))
+        assert len(spz_files) > 0, "SPZ file was not created"
+        
+        # 9. Verify glTF file contains compression extension
+        gltf_files = list(output_dir.glob("*.gltf"))
+        if gltf_files:
+            import json
+            with open(gltf_files[0], 'r') as f:
+                gltf_data = json.load(f)
+                extensions_used = gltf_data.get("extensionsUsed", [])
+                assert "KHR_gaussian_splatting_compression_spz_2" in extensions_used, \
+                    "glTF does not contain SPZ compression extension"
+        
+        # 10. Verify statistics
+        stats = getattr(final_block, 'gs_tiles_statistics', None)
+        if stats:
+            assert stats.get('used_spz', False), "Statistics should indicate SPZ was used"
+            print(f"  SPZ compression ratio: {stats.get('input_file_size_mb', 0) / max(stats.get('output_size_mb', 1), 0.1):.2f}x")
+        
+        print(f"✓ Full conversion flow with SPZ test passed")
+        print(f"  Output path: {output_path}")
+        print(f"  Tileset: {tileset_path}")
+        print(f"  SPZ files: {len(spz_files)}")
+
+
+@pytest.mark.asyncio
 async def test_conversion_progress_tracking():
     """Test conversion progress tracking."""
     async with AsyncSessionLocal() as db:

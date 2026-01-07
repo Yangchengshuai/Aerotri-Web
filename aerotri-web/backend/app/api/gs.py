@@ -179,6 +179,26 @@ def _collect_gs_files(root: Path) -> List[GSFileInfo]:
                     download_url=f"/api/blocks/{{block_id}}/gs/download?file={rel}",
                 )
             )
+    
+    # SPZ files: 3dtiles/*.spz (compressed format, also previewable)
+    spz_root = root / "3dtiles"
+    if spz_root.exists():
+        for spz in sorted(spz_root.glob("*.spz")):
+            if not spz.is_file():
+                continue
+            stat = spz.stat()
+            rel = spz.relative_to(root).as_posix()
+            files.append(
+                GSFileInfo(
+                    stage="3dtiles",
+                    type="gaussian",
+                    name=rel,
+                    size_bytes=stat.st_size,
+                    mtime=datetime.fromtimestamp(stat.st_mtime),
+                    preview_supported=True,  # SPZ files are also previewable with Visionary
+                    download_url=f"/api/blocks/{{block_id}}/gs/download?file={rel}",
+                )
+            )
 
     # Useful metadata files
     meta_candidates = [
@@ -242,7 +262,23 @@ async def download_gs_file(
     if not requested.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {file}")
 
-    return FileResponse(path=str(requested), filename=requested.name)
+    # 根据文件扩展名设置正确的媒体类型
+    content_type = "application/octet-stream"
+    if file.endswith(".ply"):
+        content_type = "application/octet-stream"  # PLY文件使用二进制流
+    elif file.endswith(".spz"):
+        content_type = "application/octet-stream"  # SPZ文件使用二进制流
+    elif file.endswith(".json"):
+        content_type = "application/json"
+    elif file.endswith(".txt") or file.endswith(".log"):
+        content_type = "text/plain"
+
+    return FileResponse(
+        path=str(requested),
+        filename=requested.name,
+        media_type=content_type,
+        # FileResponse 会自动处理大文件流式传输，无需额外配置
+    )
 
 
 @router.get("/blocks/{block_id}/gs/log_tail", response_model=GSLogResponse)

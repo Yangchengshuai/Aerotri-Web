@@ -76,6 +76,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']
+    SuperSplatViewer: typeof import('./src/components/SuperSplatViewer.vue')['default']
     ThreeViewer: typeof import('./src/components/ThreeViewer.vue')['default']
     TilesConversionPanel: typeof import('./src/components/TilesConversionPanel.vue')['default']
   }

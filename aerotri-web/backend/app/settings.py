@@ -60,6 +60,10 @@ NETWORK_GUI_PORT_START = int(os.getenv("NETWORK_GUI_PORT_START", "6009"))
 NETWORK_GUI_PORT_END = int(os.getenv("NETWORK_GUI_PORT_END", "6109"))
 NETWORK_GUI_IP = os.getenv("NETWORK_GUI_IP", "127.0.0.1")
 
+# ===== SPZ (3D Gaussian Splatting compression) configuration =====
+# Python interpreter for SPZ operations (should be in conda spz-env with SPZ Python bindings)
+SPZ_PYTHON = os.getenv("SPZ_PYTHON", "/root/miniconda3/envs/spz-env/bin/python")
+
 
 def ensure_executable(path: Path) -> Path:
     """Return path and allow callers to validate existence/executable bit.

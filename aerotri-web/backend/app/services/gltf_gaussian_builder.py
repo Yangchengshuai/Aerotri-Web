@@ -23,6 +23,8 @@ class GLTFGaussianBuilder:
         self.sh_coefficients = None
         self.sh_degree = 0
         self.num_points = 0
+        self.spz_file = None  # Path to SPZ file for compression
+        self.spz_data = None  # SPZ binary data
     
     def set_gaussian_data(
         self,
@@ -56,6 +58,16 @@ class GLTFGaussianBuilder:
         self.sh_coefficients = sh_coefficients.astype(np.float32).flatten() if sh_coefficients is not None else None
         self.sh_degree = sh_degree
     
+    def set_spz_compression(self, spz_file: Path) -> None:
+        """Set SPZ file for compression extension.
+        
+        Args:
+            spz_file: Path to SPZ file
+        """
+        self.spz_file = spz_file
+        if spz_file.exists():
+            self.spz_data = spz_file.read_bytes()
+    
     def build_gltf(self, output_path: Path, use_glb: bool = False) -> Path:
         """Build glTF file with Gaussian splatting extension.
         
@@ -66,10 +78,329 @@ class GLTFGaussianBuilder:
         Returns:
             Path to generated file
         """
-        if use_glb:
-            return self._build_glb(output_path)
+        # If SPZ compression is enabled, use compression extension
+        if self.spz_file and self.spz_data:
+            if use_glb:
+                return self._build_glb_with_spz(output_path)
+            else:
+                return self._build_gltf_json_with_spz(output_path)
         else:
-            return self._build_gltf_json(output_path)
+            # Use uncompressed format
+            if use_glb:
+                return self._build_glb(output_path)
+            else:
+                return self._build_gltf_json(output_path)
+    
+    def _build_gltf_json_with_spz(self, output_path: Path) -> Path:
+        """Build JSON glTF file with SPZ compression extension."""
+        if not self.spz_data:
+            raise ValueError("SPZ data not set")
+        if self.positions is None:
+            raise ValueError("Positions data not set (required for POSITION accessor)")
+        
+        # Create buffers directory
+        buffers_dir = output_path.parent / f"{output_path.stem}_buffers"
+        buffers_dir.mkdir(exist_ok=True)
+        
+        # Write SPZ binary data
+        buffer_file = buffers_dir / "compressed_data.bin"
+        with open(buffer_file, 'wb') as f:
+            f.write(self.spz_data)
+        
+        buffer_uri = f"{output_path.stem}_buffers/compressed_data.bin"
+        buffer_size = len(self.spz_data)
+        
+        # Calculate actual position bounds (required for Cesium)
+        positions_3d = self.positions.reshape(-1, 3)
+        pos_min = self._calculate_min(positions_3d)
+        pos_max = self._calculate_max(positions_3d)
+        
+        # Write POSITION data to a separate buffer (required by Cesium for bounding box)
+        # Even with SPZ compression, Cesium needs POSITION accessor with valid bounds
+        position_buffer_file = buffers_dir / "positions.bin"
+        positions_bytes = positions_3d.astype(np.float32).tobytes()
+        with open(position_buffer_file, 'wb') as f:
+            f.write(positions_bytes)
+        
+        position_buffer_uri = f"{output_path.stem}_buffers/positions.bin"
+        position_buffer_size = len(positions_bytes)
+        
+        # Build glTF structure with compression extension
+        gltf = {
+            "asset": {
+                "version": "2.0",
+                "generator": "AeroTri 3DGS Tiles Converter (SPZ Compressed)"
+            },
+            "extensionsUsed": [
+                "KHR_gaussian_splatting",
+                "KHR_gaussian_splatting_compression_spz_2"
+            ],
+            "extensionsRequired": [
+                "KHR_gaussian_splatting",
+                "KHR_gaussian_splatting_compression_spz_2"
+            ],
+            "buffers": [
+                {
+                    "uri": position_buffer_uri,
+                    "byteLength": position_buffer_size
+                },
+                {
+                    "uri": buffer_uri,
+                    "byteLength": buffer_size
+                }
+            ],
+            "meshes": [
+                {
+                    "name": "GaussianSplats",
+                    "primitives": [
+                        {
+                            # POSITION and COLOR_0 accessors required by Cesium
+                            # COLOR_0 is required even with SPZ compression (data is in SPZ, but accessor is metadata)
+                            "attributes": {
+                                "POSITION": 0,
+                                "COLOR_0": 1
+                            },
+                            "mode": 0  # POINTS
+                        }
+                    ],
+                    "extensions": {
+                        "KHR_gaussian_splatting": {
+                            "compression": {
+                                "extension": "KHR_gaussian_splatting_compression_spz_2",
+                                "buffer": 1,  # SPZ data is in buffer 1
+                                "byteOffset": 0,
+                                "byteLength": buffer_size
+                            },
+                            # Include count for metadata
+                            "count": self.num_points,
+                            "sphericalHarmonicsDegree": self.sh_degree
+                        }
+                    }
+                }
+            ],
+            "accessors": [
+                {
+                    # POSITION accessor with actual bounds (required by Cesium)
+                    "bufferView": 0,
+                    "componentType": 5126,  # FLOAT
+                    "count": self.num_points,
+                    "type": "VEC3",
+                    "min": pos_min,
+                    "max": pos_max
+                },
+                {
+                    # COLOR_0 accessor (required by Cesium, even with SPZ compression)
+                    # Note: No bufferView - color data is in SPZ compressed buffer
+                    # This accessor serves as metadata for Cesium to understand color structure
+                    "componentType": 5121,  # UNSIGNED_BYTE
+                    "count": self.num_points,
+                    "type": "VEC3",
+                    "normalized": True  # Colors are normalized to [0, 1]
+                }
+            ],
+            "bufferViews": [
+                {
+                    # POSITION buffer view (buffer 0)
+                    "buffer": 0,
+                    "byteOffset": 0,
+                    "byteLength": position_buffer_size,
+                    "target": 34962  # ARRAY_BUFFER
+                }
+            ],
+            "nodes": [
+                {
+                    "mesh": 0,
+                    "children": []
+                }
+            ],
+            "scenes": [
+                {
+                    "nodes": [0]
+                }
+            ],
+            "scene": 0
+        }
+        
+        # Write glTF JSON
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(gltf, f, indent=2, ensure_ascii=False)
+        
+        return output_path
+    
+    def _build_glb_with_spz(self, output_path: Path) -> Path:
+        """Build binary GLB file with SPZ compression extension."""
+        if not self.spz_data:
+            raise ValueError("SPZ data not set")
+        if self.positions is None:
+            raise ValueError("Positions data not set (required for POSITION accessor)")
+        
+        # Build glTF JSON structure
+        gltf_json = self._build_gltf_json_dict_for_glb_with_spz()
+        
+        # Prepare POSITION buffer data
+        positions_3d = self.positions.reshape(-1, 3)
+        position_buffer_data = positions_3d.astype(np.float32).tobytes()
+        
+        # Pad buffers to 4-byte boundaries
+        position_padding = (4 - (len(position_buffer_data) % 4)) % 4
+        position_buffer_data += b'\x00' * position_padding
+        
+        spz_padding = (4 - (len(self.spz_data) % 4)) % 4
+        spz_buffer_data = self.spz_data + b'\x00' * spz_padding
+        
+        # Update buffer byteLengths in JSON
+        gltf_json["buffers"][0]["byteLength"] = len(position_buffer_data)
+        gltf_json["buffers"][1]["byteLength"] = len(spz_buffer_data)
+        
+        # Serialize JSON
+        json_str = json.dumps(gltf_json, separators=(',', ':'), ensure_ascii=False)
+        json_bytes = json_str.encode('utf-8')
+        
+        # Pad JSON to 4-byte boundary
+        json_padding = (4 - (len(json_bytes) % 4)) % 4
+        json_bytes += b' ' * json_padding
+        json_chunk_length = len(json_bytes)
+        
+        # Combine binary buffers: POSITION + SPZ
+        binary_data = position_buffer_data + spz_buffer_data
+        binary_chunk_length = len(binary_data)
+        
+        # GLB structure:
+        # - 12-byte header
+        # - JSON chunk (chunk length + type + data)
+        # - Binary chunk (chunk length + type + data)
+        #   Binary chunk contains: [POSITION buffer][SPZ buffer]
+        
+        # Write GLB file
+        with open(output_path, 'wb') as f:
+            # GLB header (12 bytes)
+            f.write(b'glTF')
+            f.write(struct.pack('<I', 2))  # version
+            total_length = 12 + 8 + json_chunk_length + 8 + binary_chunk_length
+            f.write(struct.pack('<I', total_length))
+            
+            # JSON chunk
+            f.write(struct.pack('<I', json_chunk_length))
+            f.write(b'JSON')
+            f.write(json_bytes)
+            
+            # Binary chunk (POSITION + SPZ data)
+            f.write(struct.pack('<I', binary_chunk_length))
+            f.write(b'BIN\0')
+            f.write(binary_data)
+        
+        return output_path
+    
+    def _build_gltf_json_dict_for_glb_with_spz(self) -> Dict:
+        """Build glTF JSON structure for GLB with SPZ compression (without buffer URI)."""
+        if self.positions is None:
+            raise ValueError("Positions data not set (required for POSITION accessor)")
+        
+        buffer_size = len(self.spz_data)
+        
+        # Calculate actual position bounds (required for Cesium)
+        positions_3d = self.positions.reshape(-1, 3)
+        pos_min = self._calculate_min(positions_3d)
+        pos_max = self._calculate_max(positions_3d)
+        
+        # Calculate position buffer size
+        position_buffer_size = len(positions_3d) * 3 * 4  # N * 3 * sizeof(float32)
+        
+        # In GLB format:
+        # - Buffer 0: POSITION data (for bounding box)
+        # - Buffer 1: SPZ compressed data
+        gltf = {
+            "asset": {
+                "version": "2.0",
+                "generator": "AeroTri 3DGS Tiles Converter (SPZ Compressed)"
+            },
+            "extensionsUsed": [
+                "KHR_gaussian_splatting",
+                "KHR_gaussian_splatting_compression_spz_2"
+            ],
+            "extensionsRequired": [
+                "KHR_gaussian_splatting",
+                "KHR_gaussian_splatting_compression_spz_2"
+            ],
+            "buffers": [
+                {
+                    "byteLength": position_buffer_size
+                },
+                {
+                    "byteLength": buffer_size
+                }
+            ],
+            "meshes": [
+                {
+                    "name": "GaussianSplats",
+                    "primitives": [
+                        {
+                            # POSITION and COLOR_0 accessors required by Cesium
+                            # COLOR_0 is required even with SPZ compression (data is in SPZ, but accessor is metadata)
+                            "attributes": {
+                                "POSITION": 0,
+                                "COLOR_0": 1
+                            },
+                            "mode": 0  # POINTS
+                        }
+                    ],
+                    "extensions": {
+                        "KHR_gaussian_splatting": {
+                            "compression": {
+                                "extension": "KHR_gaussian_splatting_compression_spz_2",
+                                "buffer": 1,  # SPZ data is in buffer 1
+                                "byteOffset": 0,
+                                "byteLength": buffer_size
+                            },
+                            "count": self.num_points,
+                            "sphericalHarmonicsDegree": self.sh_degree
+                        }
+                    }
+                }
+            ],
+            "accessors": [
+                {
+                    # POSITION accessor with actual bounds (required by Cesium)
+                    "bufferView": 0,
+                    "componentType": 5126,  # FLOAT
+                    "count": self.num_points,
+                    "type": "VEC3",
+                    "min": pos_min,
+                    "max": pos_max
+                },
+                {
+                    # COLOR_0 accessor (required by Cesium, even with SPZ compression)
+                    # Note: No bufferView - color data is in SPZ compressed buffer
+                    # This accessor serves as metadata for Cesium to understand color structure
+                    "componentType": 5121,  # UNSIGNED_BYTE
+                    "count": self.num_points,
+                    "type": "VEC3",
+                    "normalized": True  # Colors are normalized to [0, 1]
+                }
+            ],
+            "bufferViews": [
+                {
+                    "buffer": 0,  # POSITION buffer
+                    "byteOffset": 0,
+                    "byteLength": position_buffer_size,
+                    "target": 34962  # ARRAY_BUFFER
+                }
+            ],
+            "nodes": [
+                {
+                    "mesh": 0,
+                    "children": []
+                }
+            ],
+            "scenes": [
+                {
+                    "nodes": [0]
+                }
+            ],
+            "scene": 0
+        }
+        
+        return gltf
     
     def _build_gltf_json(self, output_path: Path) -> Path:
         """Build JSON glTF file."""
@@ -176,13 +507,17 @@ class GLTFGaussianBuilder:
                     "bufferView": 3,
                     "componentType": 5126,  # FLOAT
                     "count": self.num_points,
-                    "type": "VEC3"
+                    "type": "VEC3",
+                    "min": self._calculate_min(self.colors.reshape(-1, 3)),
+                    "max": self._calculate_max(self.colors.reshape(-1, 3))
                 },
                 {
                     "bufferView": 4,
                     "componentType": 5126,  # FLOAT
                     "count": self.num_points,
-                    "type": "SCALAR"
+                    "type": "SCALAR",
+                    "min": [float(self.alphas.min())],
+                    "max": [float(self.alphas.max())]
                 }
             ],
             "meshes": [
@@ -192,8 +527,10 @@ class GLTFGaussianBuilder:
                     # 因此这里至少要提供 POSITION 属性，指向 accessors[0]。
                     "primitives": [
                         {
+                            # POSITION and COLOR_0 accessors required by Cesium
                             "attributes": {
-                                "POSITION": 0
+                                "POSITION": 0,
+                                "COLOR_0": 3  # Colors accessor (index 3 in accessors array)
                             },
                             "mode": 0  # POINTS
                         }
@@ -401,13 +738,17 @@ class GLTFGaussianBuilder:
                     "bufferView": 3,
                     "componentType": 5126,
                     "count": self.num_points,
-                    "type": "VEC3"
+                    "type": "VEC3",
+                    "min": self._calculate_min(self.colors.reshape(-1, 3)),
+                    "max": self._calculate_max(self.colors.reshape(-1, 3))
                 },
                 {
                     "bufferView": 4,
                     "componentType": 5126,
                     "count": self.num_points,
-                    "type": "SCALAR"
+                    "type": "SCALAR",
+                    "min": [float(self.alphas.min())],
+                    "max": [float(self.alphas.max())]
                 }
             ],
             "meshes": [
@@ -421,7 +762,8 @@ class GLTFGaussianBuilder:
                             # 如果缺失则会在访问 accessor.count 时抛出
                             # “Cannot read properties of undefined (reading 'count')”。
                             "attributes": {
-                                "POSITION": 0  # 对应 accessors[0]（positions）
+                                "POSITION": 0,  # 对应 accessors[0]（positions）
+                                "COLOR_0": 3  # Colors accessor (index 3 in accessors array)
                             },
                             "mode": 0  # POINTS
                         }
@@ -510,37 +852,53 @@ class GLTFGaussianBuilder:
 def build_gltf_gaussian(
     gaussian_data: Dict,
     output_path: Path,
-    use_glb: bool = False
+    use_glb: bool = False,
+    spz_file: Optional[Path] = None
 ) -> Path:
     """Convenience function to build glTF Gaussian file.
     
     Args:
-        gaussian_data: Dictionary containing Gaussian data from PLY parser
+        gaussian_data: Dictionary containing Gaussian data from PLY parser or SPZ loader
         output_path: Output file path
         use_glb: Whether to generate binary GLB format
+        spz_file: Optional path to SPZ file for compression extension
         
     Returns:
         Path to generated file
     """
     builder = GLTFGaussianBuilder()
     
-    # Extract data
-    positions = gaussian_data['positions']
-    rotations = gaussian_data['rotations']
-    scales = gaussian_data['scales']
-    colors = gaussian_data['colors']
-    alphas = gaussian_data['alphas']
-    sh_coefficients = gaussian_data.get('sh_coefficients')
-    sh_degree = gaussian_data.get('sh_degree', 0)
-    
-    builder.set_gaussian_data(
-        positions=positions,
-        rotations=rotations,
-        scales=scales,
-        colors=colors,
-        alphas=alphas,
-        sh_coefficients=sh_coefficients,
-        sh_degree=sh_degree
-    )
+    # If SPZ file is provided, use compression extension
+    if spz_file and spz_file.exists():
+        builder.set_spz_compression(spz_file)
+        # Still need to set basic data for metadata (count, etc.)
+        builder.set_gaussian_data(
+            positions=gaussian_data['positions'],
+            rotations=gaussian_data['rotations'],
+            scales=gaussian_data['scales'],
+            colors=gaussian_data['colors'],
+            alphas=gaussian_data['alphas'],
+            sh_coefficients=gaussian_data.get('sh_coefficients'),
+            sh_degree=gaussian_data.get('sh_degree', 0)
+        )
+    else:
+        # Extract data for uncompressed format
+        positions = gaussian_data['positions']
+        rotations = gaussian_data['rotations']
+        scales = gaussian_data['scales']
+        colors = gaussian_data['colors']
+        alphas = gaussian_data['alphas']
+        sh_coefficients = gaussian_data.get('sh_coefficients')
+        sh_degree = gaussian_data.get('sh_degree', 0)
+        
+        builder.set_gaussian_data(
+            positions=positions,
+            rotations=rotations,
+            scales=scales,
+            colors=colors,
+            alphas=alphas,
+            sh_coefficients=sh_coefficients,
+            sh_degree=sh_degree
+        )
     
     return builder.build_gltf(output_path, use_glb=use_glb)

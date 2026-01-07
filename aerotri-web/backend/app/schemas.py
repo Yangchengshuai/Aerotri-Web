@@ -271,6 +271,10 @@ class GSTrainParams(BaseModel):
     quiet: Optional[bool] = None  # Default: False
     disable_viewer: Optional[bool] = None  # Default: False
     
+    # Export options
+    # 是否在 3DGS 训练完成后，自动将最新的 point_cloud.ply 导出为 SPZ 文件
+    export_spz_on_complete: Optional[bool] = None  # Default: False
+    
     class Config:
         extra = "allow"  # Allow extra fields for backward compatibility
 

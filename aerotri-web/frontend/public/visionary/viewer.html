@@ -117,49 +117,60 @@
     <span id="fps" style="display: none;"></span>
     <span id="pointCount" style="display: none;"></span>
     
-    <script type="module">
-        import { App } from './visionary-core.es.js';
-        
-        // Get PLY URL from query parameter
-        const urlParams = new URLSearchParams(window.location.search);
-        const plyUrl = urlParams.get('ply_url');
-        
-        if (!plyUrl) {
-            const errorModal = document.getElementById('errorModal');
-            const errorMessage = document.getElementById('errorMessage');
-            if (errorModal && errorMessage) {
-                errorMessage.textContent = '缺少 PLY URL 参数';
-                errorModal.classList.remove('hidden');
-            }
-        } else {
-            // Initialize Visionary App
-            const app = new App();
-            
-            app.init()
-                .then(() => {
-                    // Use loadSample to load PLY from URL
-                    return app.loadSample(plyUrl);
-                })
-                .then(() => {
-                    const loadingOverlay = document.getElementById('loadingOverlay');
-                    if (loadingOverlay) {
-                        loadingOverlay.classList.add('hidden');
-                    }
-                })
-                .catch((err) => {
-                    console.error('Error:', err);
+    <!-- 使用 UMD 构建版本，避免浏览器直接解析 ESModule 依赖（gl-matrix 等） -->
+    <script src="./visionary-core.umd.js"></script>
+    <script>
+        (async () => {
+            try {
+                // 从查询参数获取文件 URL（兼容旧的 ply_url）
+                const urlParams = new URLSearchParams(window.location.search);
+                const fileUrl = urlParams.get('file_url') || urlParams.get('ply_url');
+
+                if (!fileUrl) {
                     const errorModal = document.getElementById('errorModal');
                     const errorMessage = document.getElementById('errorMessage');
                     if (errorModal && errorMessage) {
-                        errorMessage.textContent = err.message || '加载失败';
+                        errorMessage.textContent = '缺少文件 URL 参数 (file_url 或 ply_url)';
                         errorModal.classList.remove('hidden');
                     }
-                    const loadingOverlay = document.getElementById('loadingOverlay');
-                    if (loadingOverlay) {
-                        loadingOverlay.classList.add('hidden');
+                    return;
+                }
+
+                if (!window.VisionaryCore || !window.VisionaryCore.App) {
+                    console.error('VisionaryCore UMD bundle not loaded correctly');
+                    const errorModal = document.getElementById('errorModal');
+                    const errorMessage = document.getElementById('errorMessage');
+                    if (errorModal && errorMessage) {
+                        errorMessage.textContent = 'Visionary 渲染器未正确加载，请检查静态资源部署';
+                        errorModal.classList.remove('hidden');
                     }
-                });
-        }
+                    return;
+                }
+
+                const { App } = window.VisionaryCore;
+                const app = new App();
+
+                await app.init();
+                await app.loadSample(fileUrl);
+
+                const loadingOverlay = document.getElementById('loadingOverlay');
+                if (loadingOverlay) {
+                    loadingOverlay.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error('Error:', err);
+                const errorModal = document.getElementById('errorModal');
+                const errorMessage = document.getElementById('errorMessage');
+                if (errorModal && errorMessage) {
+                    errorMessage.textContent = err && err.message ? err.message : '加载失败';
+                    errorModal.classList.remove('hidden');
+                }
+                const loadingOverlay = document.getElementById('loadingOverlay');
+                if (loadingOverlay) {
+                    loadingOverlay.classList.add('hidden');
+                }
+            }
+        })();
     </script>
 </body>
 </html>

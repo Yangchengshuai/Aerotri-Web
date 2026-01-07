@@ -50,8 +50,9 @@
   - 支持获取 tileset.json URL 用于 Cesium 等查看器
 - **3D GS Tiles 转换**: 
   - 支持将 3DGS 训练产物（PLY 格式）转换为 3D Tiles 格式
-  - 转换流程：PLY → GLTF → 3D Tiles
-  - 支持选择不同迭代版本和 SPZ 压缩
+  - 转换流程：PLY → [SPZ 压缩] → GLTF → 3D Tiles
+  - 支持选择不同迭代版本和 SPZ 压缩（使用 `KHR_gaussian_splatting_compression_spz_2` 扩展）
+  - SPZ 压缩可减少约 90% 文件大小
   - 支持查看转换进度、日志和产物列表
   - 支持获取 tileset.json URL 用于 Cesium 等查看器
 
@@ -84,9 +85,23 @@ cd backend
 # 安装依赖
 pip install -r requirements.txt
 
+# [可选] 安装 SPZ Python bindings（用于 SPZ 压缩功能）
+# 需要 Python 3.10+，使用 conda 环境
+bash scripts/setup_spz_env.sh
+# 或者手动创建 conda 环境：
+# conda create -n spz-env python=3.10 -y
+# conda activate spz-env
+# cd third_party/spz && pip install -e .
+
 # 启动服务
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+**SPZ 压缩功能配置**:
+- SPZ Python bindings 安装在 conda 环境 `spz-env` 中
+- 后端服务会自动检测并使用 conda 环境的 Python 来加载 SPZ 文件
+- 可以通过环境变量 `SPZ_PYTHON` 指定 SPZ Python 路径（默认: `/root/miniconda3/envs/spz-env/bin/python`）
+- 如果当前 Python 环境已有 SPZ，会优先使用；否则自动使用 conda 环境
 
 ### 2. 前端启动
 

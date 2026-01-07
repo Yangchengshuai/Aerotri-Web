@@ -31,6 +31,8 @@ from ..settings import (
     NETWORK_GUI_PORT_START, NETWORK_GUI_PORT_END, NETWORK_GUI_IP
 )
 
+from .gs_tiles_runner import gs_tiles_runner  # 用于复用 PLY → SPZ 转换逻辑
+
 # Import COLMAP_PATH from task_runner
 try:
     from .task_runner import COLMAP_PATH
@@ -796,6 +798,45 @@ class GSRunner:
                 stats["total_time"] = time.time() - start_ts
                 block.gs_statistics = stats
                 await db.commit()
+
+                # Optional: export SPZ after training completes
+                try:
+                    export_spz = bool(train_params.get("export_spz_on_complete"))
+                except Exception:
+                    export_spz = False
+
+                if export_spz and block.gs_output_path:
+                    try:
+                        from pathlib import Path
+
+                        gs_output_path = Path(block.gs_output_path)
+                        # 复用 3D Tiles runner 的 PLY 查找和 PLY→SPZ 转换逻辑
+                        log("[GSRunner] export_spz_on_complete 已启用，开始自动导出 SPZ...")
+                        ply_file = await gs_tiles_runner._find_ply_file(gs_output_path, iteration=None)
+                        if not ply_file:
+                            log("[GSRunner] 自动导出 SPZ: 未找到任何 point_cloud.ply，跳过")
+                        else:
+                            spz_output_dir = gs_output_path / "3dtiles"
+                            spz_output_dir.mkdir(parents=True, exist_ok=True)
+                            spz_file = await gs_tiles_runner._convert_ply_to_spz(
+                                ply_file, spz_output_dir, block_id
+                            )
+                            if spz_file and spz_file.exists():
+                                size_mb = spz_file.stat().st_size / (1024 * 1024)
+                                log(f"[GSRunner] 自动导出 SPZ 完成: {spz_file} ({size_mb:.2f} MB)")
+                                # 记录到统计信息，方便前端或运维查看
+                                stats = block.gs_statistics or {}
+                                stats.setdefault("export_spz", {})
+                                stats["export_spz"]["enabled"] = True
+                                stats["export_spz"]["spz_path"] = str(spz_file)
+                                stats["export_spz"]["spz_size_mb"] = size_mb
+                                block.gs_statistics = stats
+                                await db.commit()
+                            else:
+                                log("[GSRunner] 自动导出 SPZ: 转换失败或未生成文件")
+                    except Exception as e:
+                        # 导出失败不影响训练结果，只在日志中提示
+                        log(f"[GSRunner] 自动导出 SPZ 失败（忽略错误）: {e}")
 
                 # Note: TensorBoard is kept running after training completes
                 # so users can view the training metrics. It will be stopped

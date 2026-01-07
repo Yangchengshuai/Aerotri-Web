@@ -153,6 +153,7 @@
                         <el-checkbox v-model="params.random_background">随机背景</el-checkbox>
                         <el-checkbox v-model="params.quiet">静默模式</el-checkbox>
                         <el-checkbox v-model="params.disable_viewer">禁用查看器</el-checkbox>
+                        <el-checkbox v-model="params.export_spz_on_complete">训练完成后导出 SPZ</el-checkbox>
                       </div>
                     </div>
                   </div>
@@ -221,10 +222,29 @@
           <template #header>
             <div class="card-header">
               <span>训练产物</span>
-              <el-button text size="small" @click="refreshAll">
-                <el-icon><Refresh /></el-icon>
-                刷新
-              </el-button>
+              <div class="card-header-actions">
+                <el-button
+                  v-if="latestSpzFile"
+                  type="primary"
+                  size="small"
+                  @click="openSpzPreviewDialog"
+                >
+                  <el-icon><FullScreen /></el-icon>
+                  在 Visionary 中预览 SPZ
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="!latestPreviewableFile"
+                  @click="openLatestPreviewInNewTab"
+                >
+                  <el-icon><Link /></el-icon>
+                  在新标签页中使用 Visionary
+                </el-button>
+                <el-button text size="small" @click="refreshAll">
+                  <el-icon><Refresh /></el-icon>
+                  刷新
+                </el-button>
+              </div>
             </div>
           </template>
           <el-table :data="state.files" size="small" style="width: 100%">
@@ -243,15 +263,30 @@
             <el-table-column label="操作" width="180">
               <template #default="{ row }">
                 <el-button
-                  v-if="row.preview_supported"
+                  v-if="row.preview_supported && row.name.endsWith('.spz')"
                   type="primary"
                   text
                   size="small"
-                  @click="openPreview(row)"
+                  @click="openSpzPreviewDialog(row)"
                 >
-                  预览
+                  预览 (SPZ)
                 </el-button>
-                <el-button type="primary" text size="small" :href="row.download_url" target="_blank">
+                <el-button
+                  v-if="row.preview_supported"
+                  text
+                  size="small"
+                  @click="openPreviewInNewTab(row)"
+                >
+                  <el-icon><Link /></el-icon>
+                  在新标签页中打开
+                </el-button>
+                <el-button 
+                  type="primary" 
+                  text 
+                  size="small" 
+                  :loading="downloadingFiles[row.name]"
+                  @click="downloadFile(row)"
+                >
                   下载
                 </el-button>
               </template>
@@ -376,7 +411,13 @@
                     >
                       Cesium 预览
                     </el-button>
-                    <el-button type="primary" text size="small" :href="row.download_url" target="_blank">
+                    <el-button 
+                      type="primary" 
+                      text 
+                      size="small" 
+                      :loading="downloadingTilesFiles[row.name]"
+                      @click="downloadTilesFile(row)"
+                    >
                       下载
                     </el-button>
                   </template>
@@ -444,6 +485,19 @@
     </el-tabs>
 
 
+    <!-- Visionary SPZ 内嵌预览对话框（谨慎版，仅加载 SPZ） -->
+    <el-dialog
+      v-model="spzPreviewVisible"
+      :title="spzPreviewTitle"
+      width="80%"
+      top="3vh"
+      destroy-on-close
+    >
+      <div class="preview-wrap">
+        <iframe v-if="spzPreviewUrl" class="preview-iframe" :src="spzPreviewUrl" />
+      </div>
+    </el-dialog>
+
     <!-- TensorBoard 全屏对话框 -->
     <el-dialog
       v-model="tensorboardFullscreenVisible"
@@ -484,19 +538,32 @@
       </div>
     </el-dialog>
 
-    <!-- Visionary 预览对话框 -->
-    <el-dialog v-model="previewVisible" title="3DGS 预览 (Visionary)" width="80%" top="3vh" destroy-on-close>
-      <div class="preview-wrap">
-        <iframe v-if="previewUrl" class="preview-iframe" :src="previewUrl" />
-      </div>
-    </el-dialog>
-
     <!-- Cesium 预览对话框 -->
     <el-dialog v-model="cesiumPreviewVisible" title="3DGS 预览 (Cesium)" width="90%" top="2vh" destroy-on-close>
       <div class="cesium-preview-wrap">
         <CesiumViewer v-if="cesiumTilesetUrl" :tileset-url="cesiumTilesetUrl" />
         <div v-else class="cesium-loading">
           <el-text>正在加载 tileset...</el-text>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 下载进度对话框 -->
+    <el-dialog
+      v-model="currentDownloadDialogVisible"
+      :title="currentDownloadDialogTitle"
+      width="400px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="false"
+    >
+      <div style="padding: 20px">
+        <el-progress
+          :percentage="currentDownloadProgress"
+          :status="currentDownloadStatus"
+        />
+        <div style="margin-top: 10px; text-align: center; color: #909399; font-size: 12px">
+          {{ currentDownloadStatus === 'success' ? '下载完成' : '正在下载...' }}
         </div>
       </div>
     </el-dialog>
@@ -555,6 +622,8 @@ const params = ref({
   checkpoint_iterations: [] as number[],  // train.py default: []
   quiet: false,  // train.py default: False (action="store_true")
   disable_viewer: false,  // train.py default: False (action="store_true")
+  // Export options
+  export_spz_on_complete: false,
 })
 
 const advancedParamsExpanded = ref<string[]>([])
@@ -772,10 +841,22 @@ function formatTime(iso: string): string {
   }
 }
 
-const previewVisible = ref(false)
-const previewUrl = ref<string | null>(null)
+// Visionary 内嵌预览（谨慎版，仅针对 SPZ） + 新标签页预览
+const spzPreviewVisible = ref(false)
+const spzPreviewUrl = ref<string | null>(null)
+const spzPreviewFileName = ref<string | null>(null)
 const cesiumPreviewVisible = ref(false)
 const cesiumTilesetUrl = ref<string | null>(null)
+
+// 下载相关状态
+const downloadingFiles = ref<Record<string, boolean>>({})
+const downloadingTilesFiles = ref<Record<string, boolean>>({})
+const downloadProgress = ref<Record<string, number>>({})
+const currentDownloadDialogVisible = ref(false)
+const currentDownloadDialogTitle = ref('')
+const currentDownloadProgress = ref(0)
+const currentDownloadStatus = ref<'success' | 'exception' | undefined>(undefined)
+const currentDownloadFileName = ref('')
 
 // 3D Tiles 转换相关状态
 const tilesStatus = ref<string>('NOT_STARTED')
@@ -853,14 +934,97 @@ const canStartTilesConversion = computed(() => {
     state.value.status === 'COMPLETED'
 })
 
-function openPreview(file: GSFileInfo) {
-  // Use Visionary viewer page with PLY URL parameter
-  const plyUrl = file.download_url
-  previewUrl.value = `/visionary/viewer.html?ply_url=${encodeURIComponent(plyUrl)}`
-  previewVisible.value = true
+// Get the latest previewable file (prefer .spz, then .ply)
+const latestPreviewableFile = computed(() => {
+  const previewableFiles = state.value.files.filter(f => f.preview_supported)
+  if (previewableFiles.length === 0) return null
+  
+  // Prefer .spz files, then .ply files
+  const spzFiles = previewableFiles.filter(f => f.name.endsWith('.spz'))
+  if (spzFiles.length > 0) {
+    // Return the latest SPZ file
+    return spzFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
+  }
+  
+  // Return the latest PLY file
+  const plyFiles = previewableFiles.filter(f => f.name.endsWith('.ply'))
+  if (plyFiles.length > 0) {
+    return plyFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
+  }
+  
+  // Fallback to any previewable file
+  return previewableFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
+})
+
+// Latest SPZ file (Cautious: 内嵌预览只针对 SPZ，避免加载超级大的 PLY)
+const latestSpzFile = computed<GSFileInfo | null>(() => {
+  const spzFiles = state.value.files.filter(
+    f => f.preview_supported && f.name.endsWith('.spz')
+  )
+  if (spzFiles.length === 0) return null
+  return spzFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
+})
+
+const spzPreviewTitle = computed(() => {
+  if (!spzPreviewFileName.value) return '3DGS 预览 (Visionary - SPZ)'
+  const short = spzPreviewFileName.value.split('/').pop() || spzPreviewFileName.value
+  return `3DGS 预览 (Visionary - SPZ) - ${short}`
+})
+
+function openSpzPreviewDialog(file?: GSFileInfo) {
+  const target = file ?? latestSpzFile.value
+  if (!target) {
+    ElMessage.warning('没有可用于内嵌预览的 SPZ 文件')
+    return
+  }
+  if (!target.name.endsWith('.spz')) {
+    ElMessage.warning('内嵌预览目前仅支持 SPZ 文件')
+    return
+  }
+  const absUrl = buildAbsoluteGsUrl(target.download_url)
+  // 谨慎版本：内嵌预览直接复用 Simple Viewer（与“新标签页”相同的稳定代码路径）
+  const base = getVisionarySimpleBaseUrl()
+  spzPreviewUrl.value = `${base}?file_url=${encodeURIComponent(absUrl)}`
+  spzPreviewFileName.value = target.name
+  spzPreviewVisible.value = true
 }
 
-async function openCesiumPreview(file: { download_url: string }) {
+function buildAbsoluteGsUrl(downloadUrl: string): string {
+  if (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://')) {
+    return downloadUrl
+  }
+  if (downloadUrl.startsWith('/')) {
+    return `${window.location.origin}${downloadUrl}`
+  }
+  // 相对路径的兜底处理
+  const base = window.location.origin.replace(/\/$/, '')
+  return `${base}/${downloadUrl.replace(/^\//, '')}`
+}
+
+function getVisionarySimpleBaseUrl(): string {
+  // 允许通过环境变量注入自定义 Visionary Simple Viewer 地址
+  // 例如 VITE_VISIONARY_SIMPLE_URL=http://localhost:3001/demo/simple/index.html
+  // @ts-expect-error: Vite env 注入在运行时存在
+  const envUrl = import.meta.env?.VITE_VISIONARY_SIMPLE_URL as string | undefined
+  return envUrl || 'http://localhost:3001/demo/simple/index.html'
+}
+
+function openPreviewInNewTab(file: GSFileInfo) {
+  const absFileUrl = buildAbsoluteGsUrl(file.download_url)
+  const base = getVisionarySimpleBaseUrl()
+  const url = `${base}?file_url=${encodeURIComponent(absFileUrl)}`
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+function openLatestPreviewInNewTab() {
+  if (!latestPreviewableFile.value) {
+    ElMessage.warning('没有可预览的文件')
+    return
+  }
+  openPreviewInNewTab(latestPreviewableFile.value)
+}
+
+async function openCesiumPreview(_file: { download_url: string }) {
   try {
     // Get tileset URL
     const response = await gsTilesApi.tilesetUrl(props.block.id)
@@ -965,6 +1129,252 @@ function openTensorBoardFullscreen() {
 function openTensorBoardNewWindow() {
   if (tensorboardUrl.value) {
     window.open(tensorboardUrl.value, '_blank', 'noopener,noreferrer')
+  }
+}
+
+// 下载文件函数
+async function downloadFile(file: GSFileInfo) {
+  const fileName = file.name
+  if (downloadingFiles.value[fileName]) {
+    return // 正在下载中，避免重复点击
+  }
+
+  // 对于超大文件（>1GB），使用直接下载方式，避免内存问题
+  const fileSizeGB = file.size_bytes / (1024 * 1024 * 1024)
+  const useDirectDownload = fileSizeGB > 1
+
+  downloadingFiles.value[fileName] = true
+  
+  if (!useDirectDownload) {
+    downloadProgress.value[fileName] = 0
+    currentDownloadFileName.value = fileName
+    currentDownloadDialogTitle.value = `下载 ${fileName.split('/').pop()}`
+    currentDownloadProgress.value = 0
+    currentDownloadStatus.value = undefined
+    currentDownloadDialogVisible.value = true
+  } else {
+    ElMessage.info('文件较大，正在启动下载...')
+  }
+
+  try {
+    // 构建完整的下载URL
+    // 后端返回的 download_url 格式是 /api/blocks/...，直接使用相对路径即可
+    // 浏览器会自动使用当前域名和端口（如 http://localhost:3000）
+    // 注意：不要添加 apiBase，因为 download_url 已经包含了 /api 前缀
+    const downloadUrl = file.download_url
+
+    if (useDirectDownload) {
+      // 对于大文件，直接使用浏览器下载
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      const actualFileName = fileName.split('/').pop() || fileName
+      link.setAttribute('download', actualFileName)
+      link.setAttribute('target', '_blank')
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      ElMessage.success(`文件 ${actualFileName} 下载已开始`)
+    } else {
+      // 对于小文件，使用流式下载并显示进度
+      const response = await fetch(downloadUrl)
+      
+      if (!response.ok) {
+        throw new Error(`下载失败: ${response.status} ${response.statusText}`)
+      }
+
+      const contentLength = response.headers.get('content-length')
+      const total = contentLength ? parseInt(contentLength, 10) : 0
+
+      // 创建ReadableStream来读取响应
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法读取响应流')
+      }
+
+      const chunks: Uint8Array[] = []
+      let receivedLength = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        
+        if (done) {
+          break
+        }
+
+        chunks.push(value)
+        receivedLength += value.length
+
+        // 更新进度
+        if (total > 0) {
+          const progress = Math.round((receivedLength / total) * 100)
+          downloadProgress.value[fileName] = progress
+          if (currentDownloadFileName.value === fileName) {
+            currentDownloadProgress.value = progress
+          }
+        }
+      }
+
+      // 创建Blob并触发下载
+      const blob = new Blob(chunks as BlobPart[])
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      
+      // 从文件路径中提取文件名
+      const actualFileName = fileName.split('/').pop() || fileName
+      link.setAttribute('download', actualFileName)
+      
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+
+      ElMessage.success(`文件 ${actualFileName} 下载成功`)
+    }
+  } catch (error: any) {
+    console.error('下载失败:', error)
+    ElMessage.error(`下载失败: ${error.message || '未知错误'}`)
+    if (currentDownloadFileName.value === fileName) {
+      currentDownloadStatus.value = 'exception'
+    }
+  } finally {
+    downloadingFiles.value[fileName] = false
+    // 延迟隐藏进度条，让用户看到100%
+    if (!useDirectDownload) {
+      if (currentDownloadFileName.value === fileName) {
+        if (currentDownloadStatus.value !== 'exception') {
+          currentDownloadProgress.value = 100
+          currentDownloadStatus.value = 'success'
+        }
+        setTimeout(() => {
+          currentDownloadDialogVisible.value = false
+          downloadProgress.value[fileName] = 0
+          currentDownloadFileName.value = ''
+          currentDownloadStatus.value = undefined
+        }, 1000)
+      }
+    }
+  }
+}
+
+// 下载3D Tiles文件函数
+async function downloadTilesFile(file: { name: string; download_url: string; size_bytes?: number }) {
+  const fileName = file.name
+  if (downloadingTilesFiles.value[fileName]) {
+    return // 正在下载中，避免重复点击
+  }
+
+  // 对于超大文件（>1GB），使用直接下载方式，避免内存问题
+  const fileSizeGB = (file.size_bytes || 0) / (1024 * 1024 * 1024)
+  const useDirectDownload = fileSizeGB > 1
+
+  downloadingTilesFiles.value[fileName] = true
+  
+  if (!useDirectDownload) {
+    downloadProgress.value[fileName] = 0
+    currentDownloadFileName.value = fileName
+    currentDownloadDialogTitle.value = `下载 ${fileName}`
+    currentDownloadProgress.value = 0
+    currentDownloadStatus.value = undefined
+    currentDownloadDialogVisible.value = true
+  } else {
+    ElMessage.info('文件较大，正在启动下载...')
+  }
+
+  try {
+    // 构建完整的下载URL
+    // 后端返回的 download_url 格式是 /api/blocks/...，直接使用相对路径即可
+    // 浏览器会自动使用当前域名和端口（如 http://localhost:3000）
+    // 注意：不要添加 apiBase，因为 download_url 已经包含了 /api 前缀
+    const downloadUrl = file.download_url
+
+    if (useDirectDownload) {
+      // 对于大文件，直接使用浏览器下载
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.setAttribute('download', fileName)
+      link.setAttribute('target', '_blank')
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      ElMessage.success(`文件 ${fileName} 下载已开始`)
+    } else {
+      // 对于小文件，使用流式下载并显示进度
+      const response = await fetch(downloadUrl)
+      
+      if (!response.ok) {
+        throw new Error(`下载失败: ${response.status} ${response.statusText}`)
+      }
+
+      const contentLength = response.headers.get('content-length')
+      const total = contentLength ? parseInt(contentLength, 10) : 0
+
+      // 创建ReadableStream来读取响应
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法读取响应流')
+      }
+
+      const chunks: Uint8Array[] = []
+      let receivedLength = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        
+        if (done) {
+          break
+        }
+
+        chunks.push(value)
+        receivedLength += value.length
+
+        // 更新进度
+        if (total > 0) {
+          const progress = Math.round((receivedLength / total) * 100)
+          downloadProgress.value[fileName] = progress
+          if (currentDownloadFileName.value === fileName) {
+            currentDownloadProgress.value = progress
+          }
+        }
+      }
+
+      // 创建Blob并触发下载
+      const blob = new Blob(chunks as BlobPart[])
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', fileName)
+      
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+
+      ElMessage.success(`文件 ${fileName} 下载成功`)
+    }
+  } catch (error: any) {
+    console.error('下载失败:', error)
+    ElMessage.error(`下载失败: ${error.message || '未知错误'}`)
+    if (currentDownloadFileName.value === fileName) {
+      currentDownloadStatus.value = 'exception'
+    }
+  } finally {
+    downloadingTilesFiles.value[fileName] = false
+    // 延迟隐藏进度条，让用户看到100%
+    if (!useDirectDownload) {
+      if (currentDownloadFileName.value === fileName) {
+        if (currentDownloadStatus.value !== 'exception') {
+          currentDownloadProgress.value = 100
+          currentDownloadStatus.value = 'success'
+        }
+        setTimeout(() => {
+          currentDownloadDialogVisible.value = false
+          downloadProgress.value[fileName] = 0
+          currentDownloadFileName.value = ''
+          currentDownloadStatus.value = undefined
+        }, 1000)
+      }
+    }
   }
 }
 
@@ -1181,6 +1591,12 @@ watch(
 }
 
 .card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.card-header-actions {
   display: flex;
   gap: 8px;
   align-items: center;

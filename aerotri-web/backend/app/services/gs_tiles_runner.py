@@ -27,6 +27,7 @@ from ..models.block import Block
 from ..models.database import AsyncSessionLocal
 from .ply_parser import parse_ply_file
 from .gltf_gaussian_builder import build_gltf_gaussian
+from .spz_loader import load_spz_file, check_spz_available
 from .tiles_slicer import TilesSlicer, TileInfo
 
 
@@ -69,6 +70,8 @@ class GSTilesRunner:
     def __init__(self) -> None:
         # Per-block in-memory log buffers (keyed by block_id)
         self._log_buffers: Dict[str, Deque[str]] = {}
+        # Per-block log file paths (keyed by block_id)
+        self._log_files: Dict[str, Optional[Path]] = {}
         # Track running conversion subprocesses for cancellation
         self._processes: Dict[str, asyncio.subprocess.Process] = {}
         # Simple cancelled flags per block
@@ -76,7 +79,13 @@ class GSTilesRunner:
         self._recovery_done = False
 
     def _log(self, block_id: str, message: str) -> None:
-        """Log a message for a block."""
+        """Log a message for a block.
+        
+        Logs are written to:
+        1. Console (stdout)
+        2. In-memory buffer (for API access)
+        3. Log file (if log file path is set for this block)
+        """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_line = f"[{timestamp}] {message}"
         print(log_line)
@@ -84,6 +93,16 @@ class GSTilesRunner:
         if block_id not in self._log_buffers:
             self._log_buffers[block_id] = deque(maxlen=10000)
         self._log_buffers[block_id].append(log_line)
+        
+        # Write to log file if available
+        log_file = self._log_files.get(block_id)
+        if log_file:
+            try:
+                with open(log_file, "a", encoding="utf-8", errors="replace") as fp:
+                    fp.write(log_line + "\n")
+            except Exception:
+                # Silently ignore file write errors (e.g., disk full, permissions)
+                pass
 
     def get_log_tail(self, block_id: str, lines: int = 200) -> List[str]:
         """Get the last N lines of logs for a block."""
@@ -173,6 +192,25 @@ class GSTilesRunner:
         """Run the conversion pipeline."""
         block_id = block.id
         
+        # Set up log file path
+        log_file = None
+        try:
+            gs_output_path = Path(block.gs_output_path)
+            if gs_output_path.exists():
+                log_file = gs_output_path / "run_3dtiles.log"
+                # Ensure directory exists
+                log_file.parent.mkdir(parents=True, exist_ok=True)
+                # Initialize log file (create or truncate)
+                with open(log_file, "w", encoding="utf-8") as fp:
+                    fp.write(f"=== 3D GS Tiles Conversion Log ===\n")
+                    fp.write(f"Block ID: {block_id}\n")
+                    fp.write(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    fp.write("=" * 50 + "\n\n")
+                self._log_files[block_id] = log_file
+        except Exception:
+            # If log file setup fails, continue without file logging
+            self._log_files[block_id] = None
+        
         try:
             self._log(block_id, "开始 3D GS PLY 转 3D Tiles 转换")
             
@@ -205,33 +243,52 @@ class GSTilesRunner:
             self._log(block_id, "阶段 1: 处理输入文件")
             use_spz = convert_params.get("use_spz", False)
             optimize_compression = convert_params.get("optimize_compression", False)
+            # 配置 3D Tiles 版本：True = 1.1 (直接使用 GLB), False = 1.0 (使用 B3DM)
+            use_3dtiles_1_1 = convert_params.get("use_3dtiles_1_1", True)  # 默认使用 1.1
             
             gaussian_data = None
+            spz_file = None
             
             if use_spz:
-                # Convert PLY to SPZ first
-                self._log(block_id, "使用 SPZ 压缩")
-                spz_file = await self._convert_ply_to_spz(ply_file, output_dir, block_id)
-                if spz_file:
-                    # For now, we still need to parse PLY for glTF generation
-                    # TODO: Implement SPZ loading when Python bindings are available
-                    self._log(block_id, "SPZ 文件已生成，继续解析 PLY 用于 glTF 生成")
-                else:
-                    self._log(block_id, "SPZ 转换失败，回退到直接解析 PLY")
+                # Check if SPZ Python bindings are available
+                if not check_spz_available():
+                    self._log(block_id, "警告: SPZ Python bindings 不可用，回退到 PLY 解析")
                     use_spz = False
+                else:
+                    # Convert PLY to SPZ first
+                    self._log(block_id, "使用 SPZ 压缩")
+                    spz_file = await self._convert_ply_to_spz(ply_file, output_dir, block_id)
+                    if spz_file:
+                        # Use SPZ Python bindings to load SPZ file
+                        self._log(block_id, "使用 SPZ Python bindings 加载 SPZ 文件")
+                        try:
+                            file_size_mb = spz_file.stat().st_size / (1024 * 1024)
+                            if file_size_mb > 500:
+                                self._log(block_id, f"大文件检测 ({file_size_mb:.2f} MB)，使用优化加载")
+                            gaussian_data = await run_in_thread(load_spz_file, spz_file)
+                            self._log(block_id, f"SPZ 加载完成: {gaussian_data['num_points']} 个 splats")
+                            self._log(block_id, f"SH 度数: {gaussian_data.get('sh_degree', 0)}")
+                        except Exception as e:
+                            self._log(block_id, f"SPZ 加载失败: {str(e)}，回退到 PLY 解析")
+                            use_spz = False
+                            spz_file = None
+                    else:
+                        self._log(block_id, "SPZ 转换失败，回退到直接解析 PLY")
+                        use_spz = False
             
-            # Parse PLY file (with memory optimization for large files)
-            self._log(block_id, "解析 PLY 文件")
-            try:
-                # For large files, parse in thread to avoid blocking
-                file_size_mb = ply_file.stat().st_size / (1024 * 1024)
-                if file_size_mb > 500:  # Files larger than 500MB
-                    self._log(block_id, f"大文件检测 ({file_size_mb:.2f} MB)，使用优化解析")
-                gaussian_data = await run_in_thread(parse_ply_file, ply_file)
-                self._log(block_id, f"PLY 解析完成: {gaussian_data['num_points']} 个 splats")
-                self._log(block_id, f"SH 度数: {gaussian_data.get('sh_degree', 0)}")
-            except Exception as e:
-                raise ValueError(f"PLY 解析失败: {str(e)}")
+            # Parse PLY file if SPZ is not used or failed
+            if not use_spz or gaussian_data is None:
+                self._log(block_id, "解析 PLY 文件")
+                try:
+                    # For large files, parse in thread to avoid blocking
+                    file_size_mb = ply_file.stat().st_size / (1024 * 1024)
+                    if file_size_mb > 500:  # Files larger than 500MB
+                        self._log(block_id, f"大文件检测 ({file_size_mb:.2f} MB)，使用优化解析")
+                    gaussian_data = await run_in_thread(parse_ply_file, ply_file)
+                    self._log(block_id, f"PLY 解析完成: {gaussian_data['num_points']} 个 splats")
+                    self._log(block_id, f"SH 度数: {gaussian_data.get('sh_degree', 0)}")
+                except Exception as e:
+                    raise ValueError(f"PLY 解析失败: {str(e)}")
             
             # Update progress
             async with AsyncSessionLocal() as update_db:
@@ -249,7 +306,13 @@ class GSTilesRunner:
             gltf_output = output_dir / "gaussian.gltf"
             try:
                 use_glb = optimize_compression
-                build_gltf_gaussian(gaussian_data, gltf_output, use_glb=use_glb)
+                # Pass SPZ file if using SPZ compression
+                build_gltf_gaussian(
+                    gaussian_data, 
+                    gltf_output, 
+                    use_glb=use_glb,
+                    spz_file=spz_file if use_spz and spz_file else None
+                )
                 gltf_size = gltf_output.stat().st_size / (1024 * 1024)
                 self._log(block_id, f"glTF 生成完成: {gltf_output.name} ({gltf_size:.2f} MB)")
             except Exception as e:
@@ -265,7 +328,7 @@ class GSTilesRunner:
             
             # Stage 3: Spatial slicing
             self._log(block_id, "阶段 3: 空间切片")
-            max_splats_per_tile = convert_params.get("max_splats_per_tile", 100000)
+            max_splats_per_tile = convert_params.get("max_splats_per_tile", 50000)  # 降低默认值，提高局部密度
             slicer = TilesSlicer(max_splats_per_tile=max_splats_per_tile)
             
             try:
@@ -308,13 +371,20 @@ class GSTilesRunner:
             async with AsyncSessionLocal() as update_db:
                 result = await update_db.execute(select(Block).where(Block.id == block_id))
                 update_block = result.scalar_one()
+                if use_3dtiles_1_1:
+                    setattr(update_block, 'gs_tiles_current_stage', "生成 GLB tiles")
+                else:
+                    setattr(update_block, 'gs_tiles_current_stage', "B3DM 转换")
                 setattr(update_block, 'gs_tiles_progress', 70.0)
-                setattr(update_block, 'gs_tiles_current_stage', "B3DM 转换")
                 await update_db.commit()
             
-            # Stage 5: Convert glTF to B3DM for each tile
-            self._log(block_id, "阶段 5: B3DM 转换")
-            b3dm_tiles = []
+            # Stage 5: Generate GLB tiles (3D Tiles 1.1) or Convert to B3DM (3D Tiles 1.0)
+            if use_3dtiles_1_1:
+                self._log(block_id, "阶段 5: 生成 GLB tiles (3D Tiles 1.1)")
+            else:
+                self._log(block_id, "阶段 5: B3DM 转换 (3D Tiles 1.0)")
+            glb_tiles = []
+            b3dm_tiles = []  # 保留用于向后兼容
             total_tiles = sum(len(tiles) for tiles in lod_tiles.values())
             processed_tiles = 0
             
@@ -336,63 +406,88 @@ class GSTilesRunner:
                         if tile_gaussian_data['sh_coefficients'] is not None:
                             tile_gaussian_data['sh_coefficients'] = tile_gaussian_data['sh_coefficients'][tile.indices]
                         
-                        # 修复颜色值处理：PLY 中的颜色值（f_dc）是 SH 系数，需要归一化到 [0, 1] 范围
+                        # 放大 scale，让 splat 之间多一点 overlap，视觉会"厚一些"
+                        scale_multiplier = convert_params.get("scale_multiplier", 1.5)
+                        tile_gaussian_data['scales'] = tile_gaussian_data['scales'] * scale_multiplier
+                        
+                        # 修复颜色值处理：使用正确的 SH f_dc 归一化公式
+                        # SPZ 文档：compute 0.5 + 0.282095 * x to get color value between 0 and 1
+                        # 0.282095 是 SH 零阶基函数的值
                         colors = tile_gaussian_data['colors']
                         if colors.max() > 1.0 or colors.min() < 0.0:
-                            # Clip 到合理范围并归一化
-                            # f_dc 值通常在 [-3, 3] 范围内，映射到 [0, 1]
-                            colors = np.clip(colors, -3.0, 3.0)
-                            colors = (colors + 3.0) / 6.0  # 从 [-3, 3] 映射到 [0, 1]
+                            # 使用正确的 SH 归一化公式
+                            colors = 0.5 + 0.282095 * colors
                             colors = np.clip(colors, 0.0, 1.0)  # 确保在 [0, 1] 范围
                             tile_gaussian_data['colors'] = colors
                         
                         # Generate GLB for this tile
                         # 说明：
-                        # - 之前这里生成的是 .gltf（JSON + 外部二进制），然后交给 3d-tiles-tools glbToB3dm
-                        # - glbToB3dm 在处理 JSON glTF 时会重新打包 GLB，但会在 JSON chunk 末尾填充 0 字节，
-                        #   Cesium 在解析 JSON 时会因为这些 0 字节导致
-                        #   「Unexpected token \\u0000 in JSON」以及后续的 length 相关错误
-                        # - 这里直接生成符合 GLB 规范（JSON 使用空格 padding）的 .glb，
-                        #   再交给 glbToB3dm 包装为 B3DM，可以避免 JSON 解析错误
+                        # - 对于 tile 级别的 GLB，不使用 SPZ 压缩（SPZ 压缩用于完整模型）
+                        # - 3D Tiles 1.1: 直接使用 GLB 文件
+                        # - 3D Tiles 1.0: 将 GLB 转换为 B3DM
                         tile_glb = output_dir / f"tile_{tile.tile_id}_L{lod_level}.glb"
-                        build_gltf_gaussian(tile_gaussian_data, tile_glb, use_glb=True)
+                        build_gltf_gaussian(tile_gaussian_data, tile_glb, use_glb=True, spz_file=None)
                         
-                        # Convert GLB to B3DM
-                        tile_b3dm = output_dir / f"tile_{tile.tile_id}_L{lod_level}.b3dm"
-                        b3dm_file = await self._convert_gltf_to_b3dm(tile_glb, tile_b3dm, block_id)
-                        
-                        if b3dm_file:
-                            b3dm_tiles.append((tile, b3dm_file, lod_level))
-                            processed_tiles += 1
+                        if use_3dtiles_1_1:
+                            # 3D Tiles 1.1: 直接使用 GLB
+                            if tile_glb.exists():
+                                glb_tiles.append((tile, tile_glb, lod_level))
+                                processed_tiles += 1
+                                
+                                # Update progress
+                                progress = 70.0 + (processed_tiles / total_tiles) * 20.0
+                                async with AsyncSessionLocal() as update_db:
+                                    result = await update_db.execute(select(Block).where(Block.id == block_id))
+                                    update_block = result.scalar_one()
+                                    setattr(update_block, 'gs_tiles_progress', progress)
+                                    setattr(update_block, 'gs_tiles_current_stage', f"生成 GLB tiles ({processed_tiles}/{total_tiles})")
+                                    await update_db.commit()
+                        else:
+                            # 3D Tiles 1.0: 转换为 B3DM
+                            tile_b3dm = output_dir / f"tile_{tile.tile_id}_L{lod_level}.b3dm"
+                            b3dm_file = await self._convert_gltf_to_b3dm(tile_glb, tile_b3dm, block_id)
                             
-                            # Update progress
-                            progress = 70.0 + (processed_tiles / total_tiles) * 20.0
-                            async with AsyncSessionLocal() as update_db:
-                                result = await update_db.execute(select(Block).where(Block.id == block_id))
-                                update_block = result.scalar_one()
-                                setattr(update_block, 'gs_tiles_progress', progress)
-                                setattr(update_block, 'gs_tiles_current_stage', f"B3DM 转换 ({processed_tiles}/{total_tiles})")
-                                await update_db.commit()
-                        
-                        # Clean up intermediate GLB file
-                        if tile_glb.exists():
-                            tile_glb.unlink()
+                            if b3dm_file:
+                                b3dm_tiles.append((tile, b3dm_file, lod_level))
+                                processed_tiles += 1
+                                
+                                # Update progress
+                                progress = 70.0 + (processed_tiles / total_tiles) * 20.0
+                                async with AsyncSessionLocal() as update_db:
+                                    result = await update_db.execute(select(Block).where(Block.id == block_id))
+                                    update_block = result.scalar_one()
+                                    setattr(update_block, 'gs_tiles_progress', progress)
+                                    setattr(update_block, 'gs_tiles_current_stage', f"B3DM 转换 ({processed_tiles}/{total_tiles})")
+                                    await update_db.commit()
+                            
+                            # Clean up intermediate GLB file (only for B3DM mode)
+                            if tile_glb.exists():
+                                tile_glb.unlink()
                             
                     except Exception as e:
                         self._log(block_id, f"Tile {tile.tile_id} L{lod_level} 转换失败: {str(e)}")
                         continue
             
-            self._log(block_id, f"B3DM 转换完成: {len(b3dm_tiles)} 个 tiles")
-            
-            # Check if we have any successful B3DM files
-            if len(b3dm_tiles) == 0:
-                # Log detailed error information
-                self._log(block_id, "错误: 没有成功转换的 B3DM 文件")
-                self._log(block_id, f"总 tiles 数: {total_tiles}, 已处理: {processed_tiles}")
-                if total_tiles == 0:
-                    raise ValueError("没有 tiles 需要转换，可能是空间切片失败")
-                else:
-                    raise ValueError(f"所有 {total_tiles} 个 tiles 的 B3DM 转换都失败了，请检查转换日志")
+            if use_3dtiles_1_1:
+                self._log(block_id, f"GLB tiles 生成完成: {len(glb_tiles)} 个 tiles")
+                # Check if we have any successful GLB files
+                if len(glb_tiles) == 0:
+                    self._log(block_id, "错误: 没有成功生成的 GLB 文件")
+                    self._log(block_id, f"总 tiles 数: {total_tiles}, 已处理: {processed_tiles}")
+                    if total_tiles == 0:
+                        raise ValueError("没有 tiles 需要转换，可能是空间切片失败")
+                    else:
+                        raise ValueError(f"所有 {total_tiles} 个 tiles 的 GLB 生成都失败了，请检查转换日志")
+            else:
+                self._log(block_id, f"B3DM 转换完成: {len(b3dm_tiles)} 个 tiles")
+                # Check if we have any successful B3DM files
+                if len(b3dm_tiles) == 0:
+                    self._log(block_id, "错误: 没有成功转换的 B3DM 文件")
+                    self._log(block_id, f"总 tiles 数: {total_tiles}, 已处理: {processed_tiles}")
+                    if total_tiles == 0:
+                        raise ValueError("没有 tiles 需要转换，可能是空间切片失败")
+                    else:
+                        raise ValueError(f"所有 {total_tiles} 个 tiles 的 B3DM 转换都失败了，请检查转换日志")
             
             # Update progress
             async with AsyncSessionLocal() as update_db:
@@ -406,17 +501,22 @@ class GSTilesRunner:
             self._log(block_id, "阶段 6: 生成 tileset.json")
             try:
                 # Extract tiles for tileset generation (use LOD 0 tiles)
-                tileset_tiles = [tile for tile, _, lod in b3dm_tiles if lod == 0]
-                
-                if len(tileset_tiles) == 0:
-                    # Fallback: use all tiles if no LOD 0 tiles
-                    self._log(block_id, "警告: 没有 LOD 0 tiles，使用所有 tiles")
-                    tileset_tiles = [tile for tile, _, _ in b3dm_tiles]
+                if use_3dtiles_1_1:
+                    tileset_tiles = [tile for tile, _, lod in glb_tiles if lod == 0]
+                    if len(tileset_tiles) == 0:
+                        self._log(block_id, "警告: 没有 LOD 0 tiles，使用所有 tiles")
+                        tileset_tiles = [tile for tile, _, _ in glb_tiles]
+                    tileset_path = self._create_tileset_json(tileset_tiles, output_dir, block_id, glb_tiles, use_3dtiles_1_1=True)
+                else:
+                    tileset_tiles = [tile for tile, _, lod in b3dm_tiles if lod == 0]
+                    if len(tileset_tiles) == 0:
+                        self._log(block_id, "警告: 没有 LOD 0 tiles，使用所有 tiles")
+                        tileset_tiles = [tile for tile, _, _ in b3dm_tiles]
+                    tileset_path = self._create_tileset_json(tileset_tiles, output_dir, block_id, b3dm_tiles, use_3dtiles_1_1=False)
                 
                 if len(tileset_tiles) == 0:
                     raise ValueError("没有可用的 tiles 用于生成 tileset.json")
                 
-                tileset_path = self._create_tileset_json(tileset_tiles, output_dir, block_id, b3dm_tiles)
                 self._log(block_id, f"tileset.json 生成完成: {tileset_path}")
                 self._log(block_id, f"包含 {len(tileset_tiles)} 个 tiles")
             except Exception as e:
@@ -466,6 +566,17 @@ class GSTilesRunner:
             # Clean up
             if block_id in self._processes:
                 del self._processes[block_id]
+            # Write final log entry if log file exists
+            if block_id in self._log_files and self._log_files[block_id]:
+                try:
+                    log_file = self._log_files[block_id]
+                    with open(log_file, "a", encoding="utf-8", errors="replace") as fp:
+                        fp.write("\n" + "=" * 50 + "\n")
+                        fp.write(f"Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                except Exception:
+                    pass
+            # Keep log file path for potential future access, but clear it after a while
+            # (log_files dict will be cleaned up when block is removed)
     
     async def _convert_ply_to_spz(
         self,
@@ -616,7 +727,8 @@ class GSTilesRunner:
         tiles: List[TileInfo],
         output_dir: Path,
         block_id: str,
-        b3dm_files: Optional[List[Tuple[TileInfo, Path, int]]] = None
+        tile_files: Optional[List[Tuple[TileInfo, Path, int]]] = None,
+        use_3dtiles_1_1: bool = True
     ) -> Path:
         """Create tileset.json file.
         
@@ -624,16 +736,19 @@ class GSTilesRunner:
             tiles: List of tile information
             output_dir: Output directory
             block_id: Block ID for logging
-            b3dm_files: Optional list of (tile, b3dm_path, lod_level) tuples for file name mapping
+            tile_files: Optional list of (tile, file_path, lod_level) tuples for file name mapping
+                        Can be GLB files (3D Tiles 1.1) or B3DM files (3D Tiles 1.0)
+            use_3dtiles_1_1: If True, use 3D Tiles 1.1 format (GLB), else use 3D Tiles 1.0 (B3DM)
             
         Returns:
             Path to tileset.json
         """
-        # Create mapping from tile_id to actual B3DM file name
-        tile_to_b3dm = {}
-        if b3dm_files:
-            for tile, b3dm_path, lod_level in b3dm_files:
-                tile_to_b3dm[tile.tile_id] = b3dm_path.name
+        # Create mapping from tile_id to actual file name
+        tile_to_file = {}
+        if tile_files:
+            for tile, file_path, lod_level in tile_files:
+                if lod_level == 0:  # Only map LOD 0 tiles for tileset
+                    tile_to_file[tile.tile_id] = file_path.name
         
         # Calculate root bounding box
         if tiles:
@@ -663,9 +778,11 @@ class GSTilesRunner:
             root_box = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
         
         # Build tileset structure
+        # Use appropriate version based on format
+        tileset_version = "1.1" if use_3dtiles_1_1 else "1.0"
         tileset = {
             "asset": {
-                "version": "1.1"
+                "version": tileset_version
             },
             "geometricError": 1000.0,
             "root": {
@@ -694,12 +811,15 @@ class GSTilesRunner:
                 0, 0, half_z
             ]
             
-            # Get the actual B3DM file name
-            if tile.tile_id in tile_to_b3dm:
-                b3dm_filename = tile_to_b3dm[tile.tile_id]
+            # Get the actual file name (GLB for 3D Tiles 1.1, B3DM for 3D Tiles 1.0)
+            if tile.tile_id in tile_to_file:
+                tile_filename = tile_to_file[tile.tile_id]
             else:
                 # Fallback: construct filename
-                b3dm_filename = f"tile_{tile.tile_id}_L0.b3dm"
+                if use_3dtiles_1_1:
+                    tile_filename = f"tile_{tile.tile_id}_L0.glb"
+                else:
+                    tile_filename = f"tile_{tile.tile_id}_L0.b3dm"
             
             child = {
                 "boundingVolume": {
@@ -707,7 +827,7 @@ class GSTilesRunner:
                 },
                 "geometricError": tile.geometric_error,
                 "content": {
-                    "uri": b3dm_filename
+                    "uri": tile_filename
                 }
             }
             tileset["root"]["children"].append(child)
