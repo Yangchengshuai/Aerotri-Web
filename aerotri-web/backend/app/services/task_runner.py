@@ -3,6 +3,7 @@ import os
 import asyncio
 import time
 import shutil
+import multiprocessing
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from collections import deque
@@ -38,6 +39,14 @@ GLOMAP_PATH = os.environ.get(
 INSTANTSFM_PATH = os.environ.get(
     "INSTANTSFM_PATH",
     "ins-sfm"  # Use conda environment's ins-sfm command
+)
+OPENMVG_BIN_DIR = os.environ.get(
+    "OPENMVG_BIN_DIR",
+    "/root/work/openMVG/openMVG_Build/Linux-x86_64-Release"
+)
+OPENMVG_SENSOR_DB = os.environ.get(
+    "OPENMVG_SENSOR_DB",
+    "/root/work/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt"
 )
 
 # Library paths for runtime dependencies
@@ -289,6 +298,11 @@ class TaskRunner:
                     # Special pipeline: GLOMAP mapper_resume only (no feature/matching stages)
                     if getattr(block, "glomap_mode", None) == GlomapMode.MAPPER_RESUME:
                         await self._run_glomap_resume_pipeline(block, gpu_index, ctx, db)
+                        return
+
+                    # Special pipeline: OpenMVG Global SfM (completely different workflow)
+                    if block.algorithm == AlgorithmType.OPENMVG_GLOBAL:
+                        await self._run_openmvg_pipeline(block, gpu_index, ctx, db)
                         return
 
                     database_path = os.path.join(block.output_path or "", "database.db")
@@ -2272,6 +2286,455 @@ class TaskRunner:
             raise
         finally:
             partition_log_fp.close()
+    
+    async def _run_openmvg_pipeline(
+        self,
+        block: Block,
+        gpu_index: int,
+        ctx: TaskContext,
+        db: AsyncSession,
+    ):
+        """Run OpenMVG Global SfM pipeline.
+        
+        Pipeline stages:
+        1. SfMInit_ImageListing - Initialize image list and camera intrinsics
+        2. ComputeFeatures - Extract SIFT features
+        3. ComputeMatches - Match features between images
+        4. GeometricFilter - Filter matches using Essential/Fundamental matrix
+        5. GlobalSfM - Global structure-from-motion reconstruction
+        6. openMVG2Colmap - Convert to COLMAP format for visualization
+        
+        Args:
+            block: Block instance
+            gpu_index: GPU index (not used for OpenMVG, but kept for consistency)
+            ctx: Task context
+            db: Database session
+        """
+        output_path = block.output_path or ""
+        image_dir = block.working_image_path or block.image_path
+        
+        # Get OpenMVG parameters (defaults match OpenMVG's built-in defaults)
+        openmvg_params = block.openmvg_params or {}
+        camera_model = openmvg_params.get("camera_model", 3)  # Default: 3 = PINHOLE_CAMERA_RADIAL3 (OpenMVG default)
+        focal_length = openmvg_params.get("focal_length", 3000)  # Default: 3000 pixels (recommended if EXIF has no intrinsics)
+        feature_preset = openmvg_params.get("feature_preset", "NORMAL")  # Default: "NORMAL" (OpenMVG default, alternative: "HIGH")
+        geometric_model = openmvg_params.get("geometric_model", "e")  # Default: "e" = Essential matrix (required for GlobalSfM, alternative: "f" = Fundamental)
+        
+        # Thread count: intelligent auto-tuning based on multiple factors
+        # Strategy: Balance performance (utilize hardware) vs stability (avoid OOM)
+        # Factors considered:
+        #   1. Image count (more images = more memory per thread)
+        #   2. Available system memory (ensure we don't exhaust memory)
+        #   3. CPU cores (utilize but don't oversubscribe)
+        #   4. User preference (if specified, respect it)
+        user_specified_threads = openmvg_params.get("num_threads")
+        if user_specified_threads is not None:
+            # User explicitly set thread count - respect their choice
+            num_threads = max(1, int(user_specified_threads))
+            ctx.write_log_line(f"Using user-specified thread count: {num_threads}")
+        else:
+            # Auto-tune: will be recalculated after ImageListing with actual image count and memory info
+            # Use conservative initial estimate to avoid OOM during ImageListing
+            cpu_count = multiprocessing.cpu_count()
+            num_threads = min(8, max(1, cpu_count // 4))  # Conservative: use 1/4 of CPU cores initially
+        
+        # OpenMVG workspace directory (all intermediate files)
+        openmvg_workspace = os.path.join(output_path, "openmvg_workspace")
+        matches_dir = os.path.join(openmvg_workspace, "matches")
+        reconstruction_dir = os.path.join(openmvg_workspace, "reconstruction_global")
+        colmap_output_dir = os.path.join(output_path, "openmvg_global", "sparse", "0")
+        
+        os.makedirs(matches_dir, exist_ok=True)
+        os.makedirs(reconstruction_dir, exist_ok=True)
+        os.makedirs(colmap_output_dir, exist_ok=True)
+        
+        # Paths for OpenMVG executables
+        openmvg_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_SfMInit_ImageListing")
+        compute_features_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_ComputeFeatures")
+        compute_matches_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_ComputeMatches")
+        geometric_filter_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_GeometricFilter")
+        global_sfm_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_SfM")
+        openmvg2colmap_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_openMVG2Colmap")
+        
+        sfm_data_json = os.path.join(matches_dir, "sfm_data.json")
+        matches_bin = os.path.join(matches_dir, "matches.bin")
+        matches_filtered_bin = os.path.join(matches_dir, f"matches.{geometric_model}.bin")
+        sfm_data_bin = os.path.join(reconstruction_dir, "sfm_data.bin")
+        
+        stage_times = {}
+        
+        try:
+            # Stage 1: ImageListing
+            stage_start = datetime.now()
+            ctx.current_stage = "feature_extraction"  # Use standard stage name for frontend
+            block.current_stage = "feature_extraction"
+            block.current_detail = "ImageListing"
+            block.progress = 0.0
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline Stage 1: ImageListing")
+            ctx.write_log_line("=" * 80)
+            
+            cmd = [
+                openmvg_bin,
+                "-i", image_dir,
+                "-o", matches_dir,
+                "-d", OPENMVG_SENSOR_DB,
+                "-c", str(camera_model),
+                "-f", str(focal_length),
+            ]
+            
+            ctx.write_log_line(f"Command: {' '.join(cmd)}")
+            await self._run_process(cmd, ctx, db, block.id, coarse_stage="feature_extraction")
+            if ctx.cancelled:
+                return
+            
+            # Verify sfm_data.json was created
+            if not os.path.exists(sfm_data_json):
+                raise RuntimeError(f"ImageListing failed: {sfm_data_json} not found")
+            
+            # Intelligent thread count optimization after ImageListing
+            # Recalculate based on actual image count, available memory, and CPU resources
+            if user_specified_threads is None:
+                try:
+                    import json
+                    import psutil
+                    
+                    # Get actual image count
+                    with open(sfm_data_json, 'r') as f:
+                        sfm_data = json.load(f)
+                        num_images = len(sfm_data.get("views", []))
+                    
+                    # Get system resources
+                    cpu_count = multiprocessing.cpu_count()
+                    mem_info = psutil.virtual_memory()
+                    available_memory_gb = mem_info.available / (1024 ** 3)  # Convert to GB
+                    total_memory_gb = mem_info.total / (1024 ** 3)
+                    
+                    # Estimate memory requirements for SIFT feature extraction
+                    # Empirical data: Each image typically needs 50-200MB during feature extraction
+                    # Conservative estimate: 150MB per image for feature extraction
+                    # With threading, memory usage is distributed but not perfectly linear
+                    # Estimate: each thread processes ~num_images/num_threads images
+                    # But we need to account for shared data structures and peak usage
+                    estimated_memory_per_image_mb = 150  # MB per image during feature extraction
+                    base_memory_mb = 1000  # Base memory for OpenMVG process and shared structures (MB)
+                    
+                    # Reserve 20% of total memory for system and other processes
+                    reserved_memory_gb = total_memory_gb * 0.20
+                    usable_memory_gb = max(0, available_memory_gb - reserved_memory_gb)
+                    usable_memory_mb = usable_memory_gb * 1024
+                    
+                    # Calculate max threads based on memory constraint
+                    # Formula: usable_memory >= base_memory + (num_images * memory_per_image / num_threads)
+                    # Solving for num_threads: num_threads >= (num_images * memory_per_image) / (usable_memory - base_memory)
+                    # But we also need to ensure we don't use too many threads (diminishing returns)
+                    if usable_memory_mb > base_memory_mb:
+                        # Calculate how many threads we can support based on memory
+                        # Each thread needs to process images, so memory per thread ≈ (total_image_memory / num_threads)
+                        total_image_memory_mb = num_images * estimated_memory_per_image_mb
+                        available_for_images_mb = usable_memory_mb - base_memory_mb
+                        
+                        # If we have enough memory for all images, we can use many threads
+                        # Otherwise, limit threads based on available memory
+                        if available_for_images_mb >= total_image_memory_mb:
+                            # Memory is not the constraint, use a high limit
+                            max_threads_by_memory = 128  # Effectively unlimited by memory
+                        else:
+                            # Memory is constrained: estimate threads based on memory
+                            # Rough estimate: each thread can handle images worth of memory
+                            # But this is conservative - in practice, threading helps
+                            max_threads_by_memory = max(1, int(
+                                (total_image_memory_mb * 0.7) / max(1, available_for_images_mb)
+                            ))
+                    else:
+                        max_threads_by_memory = 1  # Not enough memory, use single thread
+                    
+                    # Calculate optimal threads based on image count and memory availability
+                    # Strategy: More aggressive for high-memory systems, conservative for low-memory
+                    memory_ratio = usable_memory_gb / total_memory_gb  # How much memory is available
+                    
+                    if num_images < 50:
+                        # Small dataset: memory is not the bottleneck, can use more threads
+                        base_threads = min(16, max(4, cpu_count // 8))
+                        # Scale up if memory is abundant (>80% available)
+                        if memory_ratio > 0.8:
+                            optimal_threads_by_images = min(32, base_threads * 2)
+                        else:
+                            optimal_threads_by_images = base_threads
+                    elif num_images < 200:
+                        # Medium dataset: balance between speed and memory
+                        base_threads = min(8, max(2, cpu_count // 16))
+                        if memory_ratio > 0.8:
+                            optimal_threads_by_images = min(16, base_threads * 2)
+                        else:
+                            optimal_threads_by_images = base_threads
+                    elif num_images < 500:
+                        # Large dataset: prioritize memory safety, but still utilize resources
+                        # For high-memory systems (either high ratio OR high absolute value), be more aggressive
+                        if usable_memory_gb > 200 or (memory_ratio > 0.7 and usable_memory_gb > 100):
+                            # Very high memory system (>200GB usable OR >70% available with >100GB): can use more threads
+                            optimal_threads_by_images = min(16, max(8, cpu_count // 8))
+                        elif usable_memory_gb > 100 or (memory_ratio > 0.6 and usable_memory_gb > 50):
+                            # High memory system (>100GB usable OR >60% available with >50GB): moderate threads
+                            optimal_threads_by_images = min(8, max(4, cpu_count // 16))
+                        else:
+                            # Normal memory: conservative
+                            optimal_threads_by_images = min(4, max(1, cpu_count // 32))
+                    else:
+                        # Very large dataset: be conservative but not too conservative
+                        base_threads = min(2, max(1, cpu_count // 64))
+                        if memory_ratio > 0.8 and usable_memory_gb > 200:  # Very high memory system
+                            optimal_threads_by_images = min(4, base_threads * 2)
+                        else:
+                            optimal_threads_by_images = base_threads
+                    
+                    # Take the minimum of memory-constrained and image-constrained thread counts
+                    # This ensures we don't exceed either constraint
+                    # But also consider: for high-memory systems, we can be more aggressive
+                    num_threads = min(
+                        max_threads_by_memory,
+                        optimal_threads_by_images,
+                        cpu_count - 1,  # Never use all cores (leave one for system)
+                    )
+                    
+                    # Additional safety: never exceed 50% of CPU cores for very large datasets
+                    if num_images > 500:
+                        num_threads = min(num_threads, max(1, int(cpu_count * 0.5)))
+                    elif num_images > 200:
+                        num_threads = min(num_threads, max(1, int(cpu_count * 0.75)))
+                    
+                    # Ensure at least 1 thread
+                    num_threads = max(1, num_threads)
+                    
+                    ctx.write_log_line("=" * 80)
+                    ctx.write_log_line("Thread Count Optimization Analysis:")
+                    ctx.write_log_line(f"  Images detected: {num_images}")
+                    ctx.write_log_line(f"  CPU cores: {cpu_count}")
+                    ctx.write_log_line(f"  Total memory: {total_memory_gb:.1f} GB")
+                    ctx.write_log_line(f"  Available memory: {available_memory_gb:.1f} GB ({memory_ratio*100:.1f}% available)")
+                    ctx.write_log_line(f"  Usable memory (after 20% reserve): {usable_memory_gb:.1f} GB")
+                    ctx.write_log_line(f"  Estimated memory per image: {estimated_memory_per_image_mb} MB")
+                    ctx.write_log_line(f"  Max threads by memory constraint: {max_threads_by_memory}")
+                    ctx.write_log_line(f"  Optimal threads by image count: {optimal_threads_by_images}")
+                    ctx.write_log_line(f"  Final optimized thread count: {num_threads}")
+                    ctx.write_log_line(f"  Performance target: {'High throughput' if num_threads >= 8 else 'Balanced' if num_threads >= 4 else 'Memory-safe'}")
+                    ctx.write_log_line("=" * 80)
+                    
+                except ImportError:
+                    # psutil not available, fall back to image-count-only strategy
+                    try:
+                        import json
+                        with open(sfm_data_json, 'r') as f:
+                            sfm_data = json.load(f)
+                            num_images = len(sfm_data.get("views", []))
+                        
+                        cpu_count = multiprocessing.cpu_count()
+                        
+                        # Fallback: image-count-based only (no memory info)
+                        if num_images < 50:
+                            num_threads = min(16, max(4, cpu_count // 8))
+                        elif num_images < 200:
+                            num_threads = min(8, max(2, cpu_count // 16))
+                        elif num_images < 500:
+                            num_threads = min(4, max(1, cpu_count // 32))
+                        else:
+                            num_threads = min(2, max(1, cpu_count // 64))
+                        
+                        ctx.write_log_line(f"Detected {num_images} images (psutil unavailable, using image-count-only strategy)")
+                        ctx.write_log_line(f"Adjusted to {num_threads} threads (CPU cores: {cpu_count})")
+                    except Exception as e:
+                        ctx.write_log_line(f"Warning: Could not optimize thread count: {e}. Using conservative default: {num_threads}")
+                except Exception as e:
+                    ctx.write_log_line(f"Warning: Could not read image count or system info: {e}. Using previously calculated thread count: {num_threads}")
+            
+            stage_times["imagelisting"] = (datetime.now() - stage_start).total_seconds()
+            
+            # Stage 2: ComputeFeatures
+            stage_start = datetime.now()
+            block.current_detail = "ComputeFeatures"
+            block.progress = 10.0
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline Stage 2: ComputeFeatures")
+            ctx.write_log_line("=" * 80)
+            
+            cmd = [
+                compute_features_bin,
+                "-i", sfm_data_json,
+                "-o", matches_dir,
+                "-m", "SIFT",
+                "-p", feature_preset,
+                "-n", str(num_threads),  # Use configured or auto-detected thread count
+            ]
+            
+            ctx.write_log_line(f"Using {num_threads} threads for feature extraction (CPU cores: {multiprocessing.cpu_count()})")
+            
+            ctx.write_log_line(f"Command: {' '.join(cmd)}")
+            await self._run_process(cmd, ctx, db, block.id, coarse_stage="feature_extraction")
+            if ctx.cancelled:
+                return
+            
+            stage_times["compute_features"] = (datetime.now() - stage_start).total_seconds()
+            
+            # Stage 3: ComputeMatches
+            stage_start = datetime.now()
+            ctx.current_stage = "matching"  # Use standard stage name for frontend
+            block.current_stage = "matching"
+            block.current_detail = "ComputeMatches"
+            block.progress = 30.0
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline Stage 3: ComputeMatches")
+            ctx.write_log_line("=" * 80)
+            
+            cmd = [
+                compute_matches_bin,
+                "-i", sfm_data_json,
+                "-o", matches_bin,
+            ]
+            
+            ctx.write_log_line(f"Command: {' '.join(cmd)}")
+            await self._run_process(cmd, ctx, db, block.id, coarse_stage="matching")
+            if ctx.cancelled:
+                return
+            
+            # Verify matches.bin was created
+            if not os.path.exists(matches_bin):
+                raise RuntimeError(f"ComputeMatches failed: {matches_bin} not found")
+            
+            stage_times["compute_matches"] = (datetime.now() - stage_start).total_seconds()
+            
+            # Stage 4: GeometricFilter
+            stage_start = datetime.now()
+            block.current_detail = "GeometricFilter"
+            block.progress = 50.0
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline Stage 4: GeometricFilter")
+            ctx.write_log_line("=" * 80)
+            
+            cmd = [
+                geometric_filter_bin,
+                "-i", sfm_data_json,
+                "-m", matches_bin,
+                "-g", geometric_model,
+                "-o", matches_filtered_bin,
+            ]
+            
+            ctx.write_log_line(f"Command: {' '.join(cmd)}")
+            await self._run_process(cmd, ctx, db, block.id, coarse_stage="matching")
+            if ctx.cancelled:
+                return
+            
+            # Verify filtered matches file was created
+            if not os.path.exists(matches_filtered_bin):
+                raise RuntimeError(f"GeometricFilter failed: {matches_filtered_bin} not found")
+            
+            # Check file size (should be reasonable, not just a few bytes)
+            file_size = os.path.getsize(matches_filtered_bin)
+            if file_size < 1024:  # Less than 1KB is suspicious
+                ctx.write_log_line(f"Warning: Filtered matches file is very small ({file_size} bytes). This may indicate poor matches or missing camera intrinsics.")
+            
+            stage_times["geometric_filter"] = (datetime.now() - stage_start).total_seconds()
+            
+            # Stage 5: GlobalSfM
+            stage_start = datetime.now()
+            ctx.current_stage = "mapping"  # Use standard stage name for frontend
+            block.current_stage = "mapping"
+            block.current_detail = "GlobalSfM"
+            block.progress = 60.0
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline Stage 5: GlobalSfM")
+            ctx.write_log_line("=" * 80)
+            
+            cmd = [
+                global_sfm_bin,
+                "--sfm_engine", "GLOBAL",
+                "--input_file", sfm_data_json,
+                "--match_file", matches_filtered_bin,
+                "--output_dir", reconstruction_dir,
+            ]
+            
+            ctx.write_log_line(f"Command: {' '.join(cmd)}")
+            await self._run_process(cmd, ctx, db, block.id, coarse_stage="mapping")
+            if ctx.cancelled:
+                return
+            
+            # Verify sfm_data.bin was created
+            if not os.path.exists(sfm_data_bin):
+                raise RuntimeError(f"GlobalSfM failed: {sfm_data_bin} not found")
+            
+            stage_times["global_sfm"] = (datetime.now() - stage_start).total_seconds()
+            
+            # Stage 6: openMVG2Colmap
+            stage_start = datetime.now()
+            block.current_detail = "openMVG2Colmap"
+            block.progress = 90.0
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline Stage 6: openMVG2Colmap")
+            ctx.write_log_line("=" * 80)
+            
+            cmd = [
+                openmvg2colmap_bin,
+                "-i", sfm_data_bin,
+                "-o", colmap_output_dir,
+            ]
+            
+            ctx.write_log_line(f"Command: {' '.join(cmd)}")
+            await self._run_process(cmd, ctx, db, block.id, coarse_stage="mapping")
+            if ctx.cancelled:
+                return
+            
+            # Verify COLMAP output files were created
+            required_colmap_files = ["cameras.txt", "images.txt", "points3D.txt"]
+            for filename in required_colmap_files:
+                filepath = os.path.join(colmap_output_dir, filename)
+                if not os.path.exists(filepath):
+                    raise RuntimeError(f"openMVG2Colmap failed: {filepath} not found")
+            
+            stage_times["openmvg2colmap"] = (datetime.now() - stage_start).total_seconds()
+            
+            # Set output_colmap_path for result reader
+            block.output_colmap_path = colmap_output_dir
+            
+            # Mark as completed
+            block.status = BlockStatus.COMPLETED
+            block.completed_at = datetime.utcnow()
+            block.current_stage = "completed"
+            block.current_detail = None
+            block.progress = 100.0
+            block.statistics = {
+                "stage_times": stage_times,
+                "total_time": sum(stage_times.values()),
+                "algorithm_params": {
+                    "algorithm": block.algorithm.value,
+                    "openmvg_params": openmvg_params,
+                },
+            }
+            await db.commit()
+            
+            ctx.write_log_line("=" * 80)
+            ctx.write_log_line("OpenMVG Pipeline completed successfully!")
+            ctx.write_log_line(f"Total time: {sum(stage_times.values()):.2f} seconds")
+            ctx.write_log_line("=" * 80)
+            
+        except Exception as e:
+            block.status = BlockStatus.FAILED
+            block.error_message = str(e)
+            block.completed_at = datetime.utcnow()
+            block.current_stage = "failed"
+            await db.commit()
+            ctx.write_log_line(f"OpenMVG Pipeline failed: {e}")
+            raise
 
 
 # Singleton TaskRunner instance shared across API and WebSocket.

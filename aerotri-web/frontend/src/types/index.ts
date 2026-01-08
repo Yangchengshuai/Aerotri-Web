@@ -1,6 +1,6 @@
 // Block types
 export type BlockStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled'
-export type AlgorithmType = 'colmap' | 'glomap' | 'instantsfm'
+export type AlgorithmType = 'colmap' | 'glomap' | 'instantsfm' | 'openmvg_global'
 export type MatchingMethod = 'sequential' | 'exhaustive' | 'vocab_tree' | 'spatial'
 
 export interface FeatureParams {
@@ -106,6 +106,14 @@ export interface InstantsfmMapperParams {
   min_triangulation_angle: number
 }
 
+export interface OpenmvgParams {
+  camera_model: number  // 1: Pinhole, 2: Pinhole radial 1, 3: Pinhole radial 3, 4: Pinhole brown 2
+  focal_length: number  // Default focal length in pixels (e.g., 3000)
+  feature_preset: 'NORMAL' | 'HIGH'  // Feature density preset
+  geometric_model: 'e' | 'f'  // e: Essential matrix (requires intrinsics), f: Fundamental matrix
+  num_threads?: number  // Number of threads for feature extraction (default: auto-detect CPU cores - 1)
+}
+
 export interface Block {
   id: string
   name: string
@@ -117,6 +125,7 @@ export interface Block {
   feature_params: FeatureParams | null
   matching_params: MatchingParams | null
   mapper_params: ColmapMapperParams | GlomapMapperParams | InstantsfmMapperParams | null
+  openmvg_params: OpenmvgParams | null
   statistics: BlockStatistics | null
   current_stage: string | null
   progress: number | null

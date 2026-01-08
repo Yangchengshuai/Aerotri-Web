@@ -42,6 +42,7 @@ async def create_block(
         feature_params=block_data.feature_params.model_dump() if block_data.feature_params else None,
         matching_params=block_data.matching_params.model_dump() if block_data.matching_params else None,
         mapper_params=block_data.mapper_params,
+        openmvg_params=block_data.openmvg_params,
     )
     
     db.add(block)

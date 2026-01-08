@@ -53,6 +53,11 @@ async def get_cameras(
         )
     
     try:
+        # Prioritize block.output_colmap_path if set (e.g. for openMVG)
+        if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+            cameras = ResultReader.read_cameras(block.output_colmap_path)
+            return cameras
+        
         # For partitioned blocks without merged result, return empty list
         # (user should use partition-specific API instead)
         if block.partition_enabled and block.current_stage == "partitions_completed":
@@ -115,6 +120,11 @@ async def get_points(
         )
     
     try:
+        # Prioritize block.output_colmap_path if set (e.g. for openMVG)
+        if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+            points, total = ResultReader.read_points3d(block.output_colmap_path, limit=limit)
+            return {"points": points, "total": total}
+        
         # For partitioned blocks without merged result, return empty
         # (user should use partition-specific API instead)
         if block.partition_enabled and block.current_stage == "partitions_completed":
@@ -230,7 +240,11 @@ async def get_stats(
     
     if not recon_stats:
         try:
-            recon_stats = ResultReader.get_stats(block.output_path)
+            # Prioritize block.output_colmap_path if set (e.g. for openMVG)
+            if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+                recon_stats = ResultReader.get_stats(block.output_colmap_path)
+            else:
+                recon_stats = ResultReader.get_stats(block.output_path)
         except Exception:
             recon_stats = {}
     
@@ -302,7 +316,12 @@ async def download_points3d_ply(
         )
     
     # Find sparse directory
-    sparse_dir = ResultReader._find_sparse_dir(block.output_path)
+    # Prioritize block.output_colmap_path if set (e.g. for openMVG)
+    if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+        sparse_dir = block.output_colmap_path
+    else:
+        sparse_dir = ResultReader._find_sparse_dir(block.output_path)
+    
     if not sparse_dir:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

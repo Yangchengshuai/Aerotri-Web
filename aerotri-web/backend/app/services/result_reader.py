@@ -272,6 +272,7 @@ class ResultReader:
         candidates = [
             os.path.join(output_path, "merged", "sparse", "0"),  # Partitioned merge result
             os.path.join(output_path, "sparse", "0"),  # Regular or symlinked result
+            os.path.join(output_path, "openmvg_global", "sparse", "0"),  # openMVG export
             os.path.join(output_path, "sparse"),  # Fallback
             os.path.join(output_path, "0"),  # Alternative layout
             output_path,  # Direct output
@@ -1162,6 +1163,23 @@ class ResultReader:
             y_tan = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
             xd = xrad + x_tan
             yd = yrad + y_tan
+        elif model == "FULL_OPENCV" and len(p) >= 12:
+            # FULL_OPENCV model: fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6
+            # Uses rational distortion model: (1 + k1*r2 + k2*r2^2 + k3*r2^3) / (1 + k4*r2 + k5*r2^2 + k6*r2^3)
+            fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, k5, k6 = p[:12]
+            r2 = x * x + y * y
+            # Rational radial distortion
+            numerator = 1.0 + k1 * r2 + k2 * r2 * r2 + k3 * r2 * r2 * r2
+            denominator = 1.0 + k4 * r2 + k5 * r2 * r2 + k6 * r2 * r2 * r2
+            # Avoid division by zero
+            if abs(denominator) < 1e-8:
+                denominator = 1e-8 if denominator >= 0 else -1e-8
+            radial = numerator / denominator
+            # Tangential distortion
+            x_tan = 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x)
+            y_tan = p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y
+            xd = x * radial + x_tan
+            yd = y * radial + y_tan
         else:
             # Unknown/unsupported model -> fall back to pinhole if possible
             if len(p) >= 4:

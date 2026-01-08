@@ -6,12 +6,13 @@
 
 - **Block 管理**: 创建、编辑、删除测量项目
 - **图像预览**: 支持缩略图浏览、分页加载、删除图像
-- **算法配置**: 
-  - 支持 COLMAP (增量式)、GLOMAP (全局式) 和 InstantSfM (快速全局式) 算法
+ - **算法配置**: 
+  - 支持 COLMAP (增量式)、GLOMAP (全局式)、InstantSfM (快速全局式) 和 OpenMVG (CPU 友好全局式) 算法
   - 可配置特征提取、匹配、Mapper 参数
   - GPU 加速支持
   - **Pose Prior 支持**: 使用 EXIF GPS 位置先验加速重建（COLMAP/GLOMAP）
   - **GLOMAP mapper_resume**: 支持基于已有 COLMAP 结果进行 GLOMAP 全局优化
+  - **OpenMVG Global SfM**: 前端提供 OpenMVG 参数面板，可设置相机模型/默认焦距/特征预设/几何解算方式，后端将自动运行 ImageListing→ComputeFeatures→ComputeMatches→GlobalSfM 并导出 COLMAP 格式结果；默认线程数会根据系统内存与图像数量自动调整，亦可强制指定 `openmvg_params.num_threads`
   - **版本管理**: 支持查看和管理同一 Block 的不同版本（原始结果 + 优化版本）
 - **GPU 监控**: 实时显示 GPU 状态，选择空闲 GPU；组件每 2 秒自动轮询 GPU 数据以更新状态（轮询期间刷新按钮会隐藏，避免界面闪烁）
 - **进度监控**: 
@@ -97,6 +98,8 @@ bash scripts/setup_spz_env.sh
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+> 提示：依赖中包含 `psutil`，用于 OpenMVG 阶段的线程/内存自适应分析；安装后即可让 OpenMVG pipeline 自动检测系统资源。
+
 **SPZ 压缩功能配置**:
 - SPZ Python bindings 安装在 conda 环境 `spz-env` 中
 - 后端服务会自动检测并使用 conda 环境的 Python 来加载 SPZ 文件
@@ -142,6 +145,8 @@ npm run test
 | `INSTANTSFM_PATH` | InstantSfM 可执行文件路径 | 根据安装路径配置（例如 `ins-sfm`） |
 | `GS_REPO_PATH` | 3DGS 训练仓库路径（包含 `train.py`） | `/root/work/gs_workspace/gaussian-splatting` |
 | `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 gaussian-splatting 依赖与 CUDA 扩展） | `/root/work/gs_workspace/gs_env/bin/python`（默认值，可通过环境变量覆盖） |
+| `OPENMVG_BIN_DIR` | OpenMVG 可执行文件目录 | `/root/work/openMVG/openMVG_Build/Linux-x86_64-Release` |
+| `OPENMVG_SENSOR_DB` | OpenMVG 相机传感器数据库 | `/root/work/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt` |
 
 ## API 文档
 

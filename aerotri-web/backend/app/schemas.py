@@ -48,6 +48,8 @@ class BlockCreate(BaseModel):
     feature_params: Optional[FeatureParams] = None
     matching_params: Optional[MatchingParams] = None
     mapper_params: Optional[Dict[str, Any]] = None
+    # openMVG-specific low-level parameters (kept flexible as dict for now)
+    openmvg_params: Optional[Dict[str, Any]] = None
 
 
 class BlockUpdate(BaseModel):
@@ -58,6 +60,7 @@ class BlockUpdate(BaseModel):
     feature_params: Optional[FeatureParams] = None
     matching_params: Optional[MatchingParams] = None
     mapper_params: Optional[Dict[str, Any]] = None
+    openmvg_params: Optional[Dict[str, Any]] = None
 
 
 class BlockResponse(BaseModel):
@@ -74,6 +77,7 @@ class BlockResponse(BaseModel):
     feature_params: Optional[Dict[str, Any]] = None
     matching_params: Optional[Dict[str, Any]] = None
     mapper_params: Optional[Dict[str, Any]] = None
+    openmvg_params: Optional[Dict[str, Any]] = None
     glomap_mode: Optional[str] = None
     parent_block_id: Optional[str] = None
     input_colmap_path: Optional[str] = None

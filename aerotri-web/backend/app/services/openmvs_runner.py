@@ -263,24 +263,55 @@ class OpenMVSRunner:
                     return
 
                 # Basic sanity checks: require existing sparse output
-                # Prioritize merged/sparse/0 for partitioned SfM, fallback to sparse/0
-                merged_sparse = os.path.join(block.output_path or "", "merged", "sparse", "0")
-                regular_sparse = os.path.join(block.output_path or "", "sparse", "0")
+                # Priority order:
+                # 1. block.output_colmap_path (set by openMVG, GLOMAP, etc.)
+                # 2. merged/sparse/0 (partitioned SfM)
+                # 3. sparse/0 (regular COLMAP)
+                # 4. openmvg_global/sparse/0 (openMVG fallback)
+                sparse_dir = None
+                checked_paths = []
                 
-                if os.path.isdir(merged_sparse) and (
-                    os.path.exists(os.path.join(merged_sparse, "images.bin"))
-                    or os.path.exists(os.path.join(merged_sparse, "images.txt"))
-                ):
-                    sparse_dir = merged_sparse
-                elif os.path.isdir(regular_sparse) and (
-                    os.path.exists(os.path.join(regular_sparse, "images.bin"))
-                    or os.path.exists(os.path.join(regular_sparse, "images.txt"))
-                ):
-                    sparse_dir = regular_sparse
-                else:
+                # Check block.output_colmap_path first (e.g. openMVG sets this)
+                if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+                    if (os.path.exists(os.path.join(block.output_colmap_path, "images.bin"))
+                        or os.path.exists(os.path.join(block.output_colmap_path, "images.txt"))):
+                        sparse_dir = block.output_colmap_path
+                    checked_paths.append(block.output_colmap_path)
+                
+                # Check merged/sparse/0 for partitioned SfM
+                if not sparse_dir:
+                    merged_sparse = os.path.join(block.output_path or "", "merged", "sparse", "0")
+                    if os.path.isdir(merged_sparse) and (
+                        os.path.exists(os.path.join(merged_sparse, "images.bin"))
+                        or os.path.exists(os.path.join(merged_sparse, "images.txt"))
+                    ):
+                        sparse_dir = merged_sparse
+                    checked_paths.append(merged_sparse)
+                
+                # Check regular sparse/0
+                if not sparse_dir:
+                    regular_sparse = os.path.join(block.output_path or "", "sparse", "0")
+                    if os.path.isdir(regular_sparse) and (
+                        os.path.exists(os.path.join(regular_sparse, "images.bin"))
+                        or os.path.exists(os.path.join(regular_sparse, "images.txt"))
+                    ):
+                        sparse_dir = regular_sparse
+                    checked_paths.append(regular_sparse)
+                
+                # Check openmvg_global/sparse/0 as fallback
+                if not sparse_dir:
+                    openmvg_sparse = os.path.join(block.output_path or "", "openmvg_global", "sparse", "0")
+                    if os.path.isdir(openmvg_sparse) and (
+                        os.path.exists(os.path.join(openmvg_sparse, "images.bin"))
+                        or os.path.exists(os.path.join(openmvg_sparse, "images.txt"))
+                    ):
+                        sparse_dir = openmvg_sparse
+                    checked_paths.append(openmvg_sparse)
+                
+                if not sparse_dir:
                     block.recon_status = "FAILED"
                     block.recon_error_message = (
-                        f"Sparse output not found for reconstruction: checked {merged_sparse} and {regular_sparse}"
+                        f"Sparse output not found for reconstruction: checked {', '.join(checked_paths)}"
                     )
                     await db.commit()
                     return

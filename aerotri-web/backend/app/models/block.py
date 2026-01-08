@@ -22,6 +22,7 @@ class AlgorithmType(str, enum.Enum):
     COLMAP = "colmap"  # Incremental SfM
     GLOMAP = "glomap"  # Global SfM
     INSTANTSFM = "instantsfm"  # InstantSfM (Fast Global SfM)
+    OPENMVG_GLOBAL = "openmvg_global"  # openMVG Global SfM (CPU-based)
 
 
 class GlomapMode(str, enum.Enum):
@@ -94,6 +95,8 @@ class Block(Base):
     version_index: Mapped[Optional[int]] = mapped_column(nullable=True)
     # Raw GLOMAP parameters snapshot (especially for mapper_resume)
     glomap_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # openMVG-specific parameters snapshot (for GlobalSfM runs)
+    openmvg_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
     # Processing statistics
     statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
@@ -252,6 +255,7 @@ class Block(Base):
             "feature_params": self.feature_params,
             "matching_params": self.matching_params,
             "mapper_params": self.mapper_params,
+            "openmvg_params": self.openmvg_params,
             "glomap_mode": self.glomap_mode.value if self.glomap_mode else None,
             "parent_block_id": self.parent_block_id,
             "input_colmap_path": self.input_colmap_path,

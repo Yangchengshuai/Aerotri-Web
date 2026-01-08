@@ -200,7 +200,19 @@ async function loadVersions() {
     const raw = res.data.versions || []
     versions.value = raw.map((v: any) => {
       const isRoot = v.version_index == null
-      const labelBase = isRoot ? 'V0 原始结果' : `V${v.version_index} GLOMAP 优化`
+      // Check algorithm type to determine label
+      let labelBase = 'V0 原始结果'
+      if (!isRoot) {
+        labelBase = `V${v.version_index} GLOMAP 优化`
+      } else if (v.algorithm === 'openmvg_global') {
+        labelBase = 'V0 openMVG 全局重建'
+      } else if (v.algorithm === 'glomap') {
+        labelBase = 'V0 GLOMAP 全局重建'
+      } else if (v.algorithm === 'colmap') {
+        labelBase = 'V0 COLMAP 增量重建'
+      } else if (v.algorithm === 'instantsfm') {
+        labelBase = 'V0 InstantSfM 快速全局重建'
+      }
       const statusSuffix =
         v.status === 'completed'
           ? ''

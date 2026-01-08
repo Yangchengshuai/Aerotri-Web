@@ -9,6 +9,7 @@
           <el-radio value="glomap">GLOMAP (全局式)</el-radio>
           <el-radio value="colmap">COLMAP (增量式)</el-radio>
           <el-radio value="instantsfm">InstantSfM (快速全局式)</el-radio>
+          <el-radio value="openmvg_global">openMVG (全局式)</el-radio>
         </el-radio-group>
       </el-form-item>
 
@@ -961,6 +962,70 @@
           </el-text>
         </el-form-item>
       </template>
+
+      <template v-else-if="formData.algorithm === 'openmvg_global'">
+        <!-- openMVG Basic Parameters -->
+        <el-divider content-position="left">openMVG 基本参数</el-divider>
+        
+        <el-form-item label="特征密度预设">
+          <el-select v-model="formData.openmvg_params.feature_preset" style="width: 100%">
+            <el-option label="NORMAL (默认)" value="NORMAL" />
+            <el-option label="HIGH (高密度)" value="HIGH" />
+          </el-select>
+          <el-text type="info" size="small" style="margin-left: 8px">
+            控制特征提取的密度
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="几何模型">
+          <el-select v-model="formData.openmvg_params.geometric_model" style="width: 100%">
+            <el-option label="Essential Matrix (需要内参，推荐)" value="e" />
+            <el-option label="Fundamental Matrix (不需要内参)" value="f" />
+          </el-select>
+          <el-text type="info" size="small" style="margin-left: 8px">
+            Essential Matrix 需要相机内参，质量更高；Fundamental Matrix 不需要内参但精度较低
+          </el-text>
+        </el-form-item>
+
+        <el-collapse v-model="openmvgActiveNames" style="margin-top: 16px">
+          <el-collapse-item name="camera_params" title="相机参数（高级）">
+            <el-form-item label="相机模型">
+              <el-select v-model="formData.openmvg_params.camera_model" style="width: 100%">
+                <el-option :label="'1: Pinhole'" :value="1" />
+                <el-option :label="'2: Pinhole radial 1'" :value="2" />
+                <el-option :label="'3: Pinhole radial 3 (默认)'" :value="3" />
+                <el-option :label="'4: Pinhole brown 2'" :value="4" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="默认焦距（像素）">
+              <el-input-number
+                v-model="formData.openmvg_params.focal_length"
+                :min="500"
+                :max="10000"
+                :step="100"
+                :placeholder="3000"
+              />
+              <el-text type="info" size="small" style="margin-left: 8px">
+                如果图像 EXIF 中没有内参，将使用此默认焦距（推荐：3000 像素）
+              </el-text>
+            </el-form-item>
+
+            <el-form-item label="线程数">
+              <el-input-number
+                v-model="formData.openmvg_params.num_threads"
+                :min="1"
+                :max="32"
+                :step="1"
+                :placeholder="自动检测"
+              />
+              <el-text type="info" size="small" style="margin-left: 8px">
+                特征提取使用的线程数（留空则自动检测：CPU核心数-1，默认至少1线程）
+              </el-text>
+            </el-form-item>
+          </el-collapse-item>
+        </el-collapse>
+      </template>
     </el-form>
 
     <div class="form-actions">
@@ -985,6 +1050,8 @@ const emit = defineEmits<{
 
 // Collapse panel active names for GLOMAP parameters (default: all collapsed)
 const glomapActiveNames = ref<string[]>([])
+// Collapse panel active names for openMVG parameters (default: all collapsed)
+const openmvgActiveNames = ref<string[]>([])
 
 // Default parameters
 const defaultFeatureParams: FeatureParams = {
@@ -1085,10 +1152,23 @@ const defaultInstantsfmParams: InstantsfmMapperParams = {
   visualization_port: null,
 }
 
+// Default openMVG parameters (match OpenMVG's built-in defaults)
+// - camera_model: 3 = PINHOLE_CAMERA_RADIAL3 (OpenMVG default)
+// - focal_length: 3000 pixels (recommended if EXIF has no intrinsics)
+// - feature_preset: 'NORMAL' (OpenMVG default, alternative: 'HIGH')
+// - geometric_model: 'e' = Essential matrix (required for GlobalSfM, alternative: 'f' = Fundamental)
+const defaultOpenmvgParams: OpenmvgParams = {
+  camera_model: 3,
+  focal_length: 3000,
+  feature_preset: 'NORMAL',
+  geometric_model: 'e',
+}
+
 const formData = reactive({
   algorithm: props.block.algorithm,
   matching_method: props.block.matching_method,
   feature_params: { ...defaultFeatureParams, ...(props.block.feature_params || {}) },
+  openmvg_params: { ...defaultOpenmvgParams, ...(props.block.openmvg_params || {}) },
   matching_params: { ...defaultMatchingParams, ...(props.block.matching_params || {}) },
   mapper_params: props.block.algorithm === 'glomap'
     ? { ...defaultGlomapParams, ...(props.block.mapper_params as GlomapMapperParams || {}) }
@@ -1103,6 +1183,11 @@ watch(() => formData.algorithm, (algorithm) => {
     formData.mapper_params = { ...defaultGlomapParams }
   } else if (algorithm === 'instantsfm') {
     formData.mapper_params = { ...defaultInstantsfmParams }
+  } else if (algorithm === 'openmvg_global') {
+    // openMVG doesn't use mapper_params, but ensure openmvg_params is initialized
+    if (!formData.openmvg_params) {
+      formData.openmvg_params = { ...defaultOpenmvgParams }
+    }
   } else {
     formData.mapper_params = { ...defaultColmapParams }
   }
@@ -1114,13 +1199,18 @@ watch(() => formData.matching_method, (method) => {
 }, { immediate: true })
 
 function handleSave() {
-  emit('save', {
+  const saveData: Partial<Block> = {
     algorithm: formData.algorithm,
     matching_method: formData.matching_method,
     feature_params: formData.feature_params,
     matching_params: formData.matching_params,
     mapper_params: formData.mapper_params,
-  })
+  }
+  // Include openmvg_params if algorithm is openmvg_global
+  if (formData.algorithm === 'openmvg_global') {
+    saveData.openmvg_params = formData.openmvg_params
+  }
+  emit('save', saveData)
 }
 </script>
 

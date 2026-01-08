@@ -396,7 +396,76 @@ class GSRunner:
             Tuple of (images_source_path, sparse0_source_path)
         """
         images_src = block.working_image_path or block.image_path
-        sparse0_src = os.path.join(block.output_path or "", "sparse", "0")
+        
+        # Find sparse reconstruction directory
+        # Priority order (same as openmvs_runner):
+        # 1. block.output_colmap_path (set by OpenMVG, GLOMAP, etc.)
+        # 2. merged/sparse/0 (partitioned SfM)
+        # 3. openmvg_global/sparse/0 (OpenMVG fallback)
+        # 4. sparse/0 (standard COLMAP)
+        sparse0_src = None
+        checked_paths = []
+        output_path = block.output_path or ""
+        
+        # Check block.output_colmap_path first (e.g. OpenMVG sets this)
+        if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+            # Validate that required files exist
+            has_cameras = (
+                os.path.exists(os.path.join(block.output_colmap_path, "cameras.bin"))
+                or os.path.exists(os.path.join(block.output_colmap_path, "cameras.txt"))
+            )
+            if has_cameras:
+                sparse0_src = block.output_colmap_path
+                if log_func:
+                    log_func(f"[GSRunner] Using output_colmap_path: {sparse0_src}")
+            checked_paths.append(block.output_colmap_path)
+        
+        # Check merged/sparse/0 for partitioned SfM
+        if not sparse0_src:
+            merged_sparse = os.path.join(output_path, "merged", "sparse", "0")
+            if os.path.isdir(merged_sparse):
+                has_cameras = (
+                    os.path.exists(os.path.join(merged_sparse, "cameras.bin"))
+                    or os.path.exists(os.path.join(merged_sparse, "cameras.txt"))
+                )
+                if has_cameras:
+                    sparse0_src = merged_sparse
+                    if log_func:
+                        log_func(f"[GSRunner] Using merged/sparse/0: {sparse0_src}")
+                checked_paths.append(merged_sparse)
+        
+        # Check openmvg_global/sparse/0 as fallback
+        if not sparse0_src:
+            openmvg_sparse = os.path.join(output_path, "openmvg_global", "sparse", "0")
+            if os.path.isdir(openmvg_sparse):
+                has_cameras = (
+                    os.path.exists(os.path.join(openmvg_sparse, "cameras.bin"))
+                    or os.path.exists(os.path.join(openmvg_sparse, "cameras.txt"))
+                )
+                if has_cameras:
+                    sparse0_src = openmvg_sparse
+                    if log_func:
+                        log_func(f"[GSRunner] Using openmvg_global/sparse/0: {sparse0_src}")
+                checked_paths.append(openmvg_sparse)
+        
+        # Check standard sparse/0
+        if not sparse0_src:
+            standard_sparse = os.path.join(output_path, "sparse", "0")
+            if os.path.isdir(standard_sparse):
+                has_cameras = (
+                    os.path.exists(os.path.join(standard_sparse, "cameras.bin"))
+                    or os.path.exists(os.path.join(standard_sparse, "cameras.txt"))
+                )
+                if has_cameras:
+                    sparse0_src = standard_sparse
+                    if log_func:
+                        log_func(f"[GSRunner] Using sparse/0: {sparse0_src}")
+            checked_paths.append(standard_sparse)
+        
+        if not sparse0_src:
+            raise ValueError(
+                f"No valid sparse reconstruction found. Checked paths: {checked_paths}"
+            )
 
         os.makedirs(dataset_dir, exist_ok=True)
 

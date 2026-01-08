@@ -277,6 +277,7 @@ async def list_block_versions(
                 "id": b.id,
                 "name": b.name,
                 "status": b.status.value,
+                "algorithm": b.algorithm.value if b.algorithm else None,  # Include algorithm type for frontend labeling
                 "glomap_mode": b.glomap_mode.value if getattr(b, "glomap_mode", None) else None,
                 "parent_block_id": b.parent_block_id,
                 "version_index": b.version_index,

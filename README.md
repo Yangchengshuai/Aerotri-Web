@@ -40,6 +40,7 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 支持 COLMAP（增量式）、GLOMAP（全局式）与 InstantSfM（快速全局式）管线
   - **Pose Prior 支持**: COLMAP/GLOMAP 支持使用 EXIF GPS 位置先验加速重建
   - **GLOMAP mapper_resume**: 支持基于已有 COLMAP 结果进行 GLOMAP 全局优化，创建优化版本
+  - **OpenMVG Global SfM（CPU 友好全局式）**: 支持 OpenMVG 全局 SfM 流水线，自动执行 ImageListing/ComputeFeatures/ComputeMatches/GeometricFilter/GlobalSfM，并导出 COLMAP 格式结果供前端可视化和后续处理；可在前端设置相机模型、默认焦距、几何模型与线程数
   - **版本管理**: 支持查看和管理同一 Block 的不同版本（原始结果 + GLOMAP 优化版本）
   - **分区 SfM 功能**: 支持大规模数据集的分区重建和合并
     - 分区配置：可配置分区大小、重叠区域、SfM 流水线模式
@@ -108,7 +109,9 @@ python3 -m pip install -r requirements.txt
 python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-> 如需启用 GLOMAP / InstantSfM / OpenMVS，请根据文档提前准备好对应可执行程序与环境变量（如 `GLOMAP_PATH`、`INSTANTSFM_PATH` 等）。
+> 注意：`pip install -r requirements.txt` 会安装 `psutil`，供 OpenMVG pipeline 的线程/内存自适应逻辑使用（无需额外配置）。
+
+> 如需启用 GLOMAP / InstantSfM / OpenMVS / OpenMVG，请根据文档提前准备好对应可执行程序与环境变量（如 `GLOMAP_PATH`、`INSTANTSFM_PATH`、`OPENMVG_BIN_DIR`、`OPENMVG_SENSOR_DB` 等）。
 
 ### 前端
 

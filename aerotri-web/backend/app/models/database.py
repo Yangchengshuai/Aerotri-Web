@@ -89,6 +89,8 @@ async def init_db():
                 ("output_colmap_path", "TEXT"),
                 ("version_index", "INTEGER"),
                 ("glomap_params", "JSON"),
+                # openMVG-specific parameters snapshot
+                ("openmvg_params", "JSON"),
             ]
 
             for col, col_type in migrations:
