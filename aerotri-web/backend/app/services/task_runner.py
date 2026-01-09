@@ -119,6 +119,8 @@ class TaskRunner:
         This checks the database for tasks in RUNNING state and:
         1. Checks if their processes still exist
         2. If not, marks them as FAILED with appropriate error message
+        
+        Also validates QUEUED tasks - they remain in queue (no action needed).
         """
         if self._recovery_done:
             return
@@ -135,7 +137,19 @@ class TaskRunner:
                 )
                 running_blocks = result.scalars().all()
                 
+                # Find all QUEUED tasks
+                result = await db.execute(
+                    select(Block).where(Block.status == BlockStatus.QUEUED)
+                )
+                queued_blocks = result.scalars().all()
+                
+                if queued_blocks:
+                    print(f"Found {len(queued_blocks)} tasks in QUEUED state, will be processed by scheduler")
+                
                 if not running_blocks:
+                    if queued_blocks:
+                        await db.commit()
+                    print("Task recovery completed (no running tasks to recover)")
                     return
                 
                 print(f"Found {len(running_blocks)} tasks in RUNNING state, checking for orphaned processes...")
@@ -451,6 +465,13 @@ class TaskRunner:
             if block_id in self.running_tasks:
                 ctx.close_log_file()
                 del self.running_tasks[block_id]
+            
+            # Trigger queue scheduler to dispatch next task
+            try:
+                from .queue_scheduler import queue_scheduler
+                await queue_scheduler.trigger_dispatch()
+            except Exception as e:
+                print(f"Failed to trigger queue scheduler: {e}")
     
     async def _run_global_feature_and_matching(
         self,
@@ -1974,6 +1995,13 @@ class TaskRunner:
             if block_id in self.running_tasks:
                 ctx.close_log_file()
                 del self.running_tasks[block_id]
+            
+            # Trigger queue scheduler to dispatch next task
+            try:
+                from .queue_scheduler import queue_scheduler
+                await queue_scheduler.trigger_dispatch()
+            except Exception as e:
+                print(f"Failed to trigger queue scheduler: {e}")
     
     async def _run_merge_only(
         self,
@@ -2090,6 +2118,13 @@ class TaskRunner:
             if block_id in self.running_tasks:
                 ctx.close_log_file()
                 del self.running_tasks[block_id]
+            
+            # Trigger queue scheduler to dispatch next task
+            try:
+                from .queue_scheduler import queue_scheduler
+                await queue_scheduler.trigger_dispatch()
+            except Exception as e:
+                print(f"Failed to trigger queue scheduler: {e}")
     
     async def _run_partition_mapper(
         self,
@@ -2319,6 +2354,14 @@ class TaskRunner:
         focal_length = openmvg_params.get("focal_length", 3000)  # Default: 3000 pixels (recommended if EXIF has no intrinsics)
         feature_preset = openmvg_params.get("feature_preset", "NORMAL")  # Default: "NORMAL" (OpenMVG default, alternative: "HIGH")
         geometric_model = openmvg_params.get("geometric_model", "e")  # Default: "e" = Essential matrix (required for GlobalSfM, alternative: "f" = Fundamental)
+        
+        # OpenMVG-specific matching parameters (from main_ComputeMatches.cpp)
+        matching_method = openmvg_params.get("matching_method", "AUTO")  # Default: AUTO (will use FASTCASCADEHASHINGL2 for SIFT)
+        ratio = openmvg_params.get("ratio", 0.8)  # Default: 0.8 (distance ratio to discard non-meaningful matches)
+        
+        # OpenMVG-specific pair generation parameters (from main_PairGenerator.cpp)
+        pair_mode = openmvg_params.get("pair_mode", "EXHAUSTIVE")  # Default: EXHAUSTIVE (build all possible pairs)
+        contiguous_count = openmvg_params.get("contiguous_count", 5)  # Used when pair_mode is CONTIGUOUS
         
         # Thread count: intelligent auto-tuning based on multiple factors
         # Strategy: Balance performance (utilize hardware) vs stability (avoid OOM)
@@ -2591,11 +2634,40 @@ class TaskRunner:
             ctx.write_log_line("OpenMVG Pipeline Stage 3: ComputeMatches")
             ctx.write_log_line("=" * 80)
             
+            # Build ComputeMatches command with OpenMVG-specific parameters
+            # Parameters from main_ComputeMatches.cpp:
+            # -n: nearest_matching_method (AUTO, BRUTEFORCEL2, CASCADEHASHINGL2, FASTCASCADEHASHINGL2, HNSWL2, HNSWL1, BRUTEFORCEHAMMING, HNSWHAMMING)
+            # -r: ratio (distance ratio to discard non-meaningful matches, default: 0.8)
+            # -p: pair_list (predefined pair list file, optional)
             cmd = [
                 compute_matches_bin,
                 "-i", sfm_data_json,
                 "-o", matches_bin,
+                "-n", matching_method,  # Matching method (AUTO, BRUTEFORCEL2, etc.)
+                "-r", str(ratio),  # Distance ratio threshold
             ]
+            
+            # If pair_mode is CONTIGUOUS, we need to generate pair list first using PairGenerator
+            pair_list_path = None
+            if pair_mode == "CONTIGUOUS":
+                pair_generator_bin = os.path.join(OPENMVG_BIN_DIR, "openMVG_main_PairGenerator")
+                pair_list_path = os.path.join(matches_dir, "pairs.txt")
+                
+                ctx.write_log_line(f"Pair mode is CONTIGUOUS, generating pair list with contiguous_count={contiguous_count}")
+                pair_gen_cmd = [
+                    pair_generator_bin,
+                    "-i", sfm_data_json,
+                    "-o", pair_list_path,
+                    "-m", "CONTIGUOUS",
+                    "-c", str(contiguous_count),
+                ]
+                ctx.write_log_line(f"PairGenerator Command: {' '.join(pair_gen_cmd)}")
+                await self._run_process(pair_gen_cmd, ctx, db, block.id, coarse_stage="matching")
+                if ctx.cancelled:
+                    return
+                
+                # Add pair list to ComputeMatches command
+                cmd.extend(["-p", pair_list_path])
             
             ctx.write_log_line(f"Command: {' '.join(cmd)}")
             await self._run_process(cmd, ctx, db, block.id, coarse_stage="matching")

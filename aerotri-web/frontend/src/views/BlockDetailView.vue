@@ -11,6 +11,16 @@
         <el-tag :type="statusType" v-if="block">{{ statusText }}</el-tag>
       </div>
       <div class="header-right">
+        <!-- 队列状态显示 -->
+        <el-tag 
+          v-if="block?.status === 'queued'" 
+          type="warning"
+          size="large"
+          class="queue-status-tag"
+        >
+          排队中 #{{ block?.queue_position }}
+        </el-tag>
+        
         <el-button 
           v-if="block?.status === 'running'"
           type="danger"
@@ -20,6 +30,14 @@
           停止
         </el-button>
         <el-button
+          v-else-if="block?.status === 'queued'"
+          type="warning"
+          @click="handleDequeue"
+        >
+          <el-icon><Close /></el-icon>
+          取消排队
+        </el-button>
+        <el-button
           v-else-if="block?.current_stage === 'partitions_completed'"
           type="success"
           @click="handleMerge"
@@ -27,22 +45,31 @@
           <el-icon><Connection /></el-icon>
           合并分区结果
         </el-button>
-        <el-button
-          v-else-if="block?.status !== 'running'"
-          type="primary"
-          @click="handleRun"
-          :disabled="!canRun"
-        >
-          <el-icon><VideoPlay /></el-icon>
-          运行空三
-        </el-button>
+        <template v-else-if="block?.status !== 'running' && block?.status !== 'queued'">
           <el-button
-            v-if="canResumeGlomap"
-            type="warning"
-            @click="openResumeDialog"
+            type="primary"
+            @click="handleRun"
+            :disabled="!canRun"
           >
-            使用 GLOMAP 继续优化
+            <el-icon><VideoPlay /></el-icon>
+            立即运行
           </el-button>
+          <el-button
+            type="warning"
+            @click="handleEnqueue"
+            :disabled="!canRun"
+          >
+            <el-icon><Clock /></el-icon>
+            加入队列
+          </el-button>
+        </template>
+        <el-button
+          v-if="canResumeGlomap"
+          type="warning"
+          @click="openResumeDialog"
+        >
+          使用 GLOMAP 继续优化
+        </el-button>
       </div>
     </el-header>
 
@@ -252,10 +279,11 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, VideoPlay, VideoPause, Connection } from '@element-plus/icons-vue'
+import { ArrowLeft, VideoPlay, VideoPause, Connection, Clock, Close } from '@element-plus/icons-vue'
 import { useBlocksStore } from '@/stores/blocks'
+import { useQueueStore } from '@/stores/queue'
 import { useWebSocket } from '@/composables/useWebSocket'
-import { taskApi } from '@/api'
+import { taskApi, queueApi } from '@/api'
 import type { Block, ProgressMessage } from '@/types'
 
 import ImagePreview from '@/components/ImagePreview.vue'
@@ -277,6 +305,7 @@ import CameraDetailPanel from '@/components/CameraDetailPanel.vue'
 const route = useRoute()
 const router = useRouter()
 const blocksStore = useBlocksStore()
+const queueStore = useQueueStore()
 
 const blockId = computed(() => route.params.id as string)
 const block = computed(() => blocksStore.currentBlock)
@@ -296,6 +325,7 @@ const statusType = computed(() => {
   switch (block.value?.status) {
     case 'completed': return 'success'
     case 'running': return 'primary'
+    case 'queued': return 'warning'
     case 'failed': return 'danger'
     case 'cancelled': return 'warning'
     default: return 'info'
@@ -305,6 +335,7 @@ const statusType = computed(() => {
 const statusText = computed(() => {
   switch (block.value?.status) {
     case 'created': return '待处理'
+    case 'queued': return '排队中'
     case 'running': return '运行中'
     case 'completed': return '已完成'
     case 'failed': return '失败'
@@ -376,6 +407,27 @@ async function handleRun() {
     await blocksStore.fetchBlock(blockId.value)
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '提交失败')
+  }
+}
+
+async function handleEnqueue() {
+  try {
+    await queueApi.enqueue(blockId.value)
+    ElMessage.success('已加入队列')
+    await blocksStore.fetchBlock(blockId.value)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加入队列失败')
+  }
+}
+
+async function handleDequeue() {
+  try {
+    await ElMessageBox.confirm('确定要从队列中移除此任务吗？', '确认移除', { type: 'warning' })
+    await queueApi.dequeue(blockId.value)
+    ElMessage.success('已从队列移除')
+    await blocksStore.fetchBlock(blockId.value)
+  } catch {
+    // User cancelled
   }
 }
 

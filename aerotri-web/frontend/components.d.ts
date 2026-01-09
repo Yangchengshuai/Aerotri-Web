@@ -71,12 +71,12 @@ declare module 'vue' {
     PartitionList: typeof import('./src/components/PartitionList.vue')['default']
     PartitionSelector: typeof import('./src/components/PartitionSelector.vue')['default']
     ProgressView: typeof import('./src/components/ProgressView.vue')['default']
+    ReconParamsConfig: typeof import('./src/components/ReconParamsConfig.vue')['default']
     ReconstructionPanel: typeof import('./src/components/ReconstructionPanel.vue')['default']
     ReconstructionViewer: typeof import('./src/components/ReconstructionViewer.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']
-    SuperSplatViewer: typeof import('./src/components/SuperSplatViewer.vue')['default']
     ThreeViewer: typeof import('./src/components/ThreeViewer.vue')['default']
     TilesConversionPanel: typeof import('./src/components/TilesConversionPanel.vue')['default']
   }

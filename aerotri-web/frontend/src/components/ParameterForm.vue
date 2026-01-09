@@ -13,7 +13,8 @@
         </el-radio-group>
       </el-form-item>
 
-      <el-form-item label="匹配方法">
+      <!-- COLMAP/GLOMAP/InstantSfM matching method (not for OpenMVG) -->
+      <el-form-item label="匹配方法" v-if="formData.algorithm !== 'openmvg_global'">
         <el-select v-model="formData.matching_method" style="width: 100%">
           <el-option label="序列匹配 (Sequential)" value="sequential" />
           <el-option label="穷举匹配 (Exhaustive)" value="exhaustive" />
@@ -22,105 +23,107 @@
         </el-select>
       </el-form-item>
 
-      <!-- Feature Extraction -->
-      <el-divider content-position="left">特征提取</el-divider>
+      <!-- Feature Extraction (COLMAP/GLOMAP/InstantSfM only) -->
+      <template v-if="formData.algorithm !== 'openmvg_global'">
+        <el-divider content-position="left">特征提取</el-divider>
 
-      <el-form-item label="GPU 加速">
-        <el-switch v-model="formData.feature_params.use_gpu" />
-      </el-form-item>
+        <el-form-item label="GPU 加速">
+          <el-switch v-model="formData.feature_params.use_gpu" />
+        </el-form-item>
 
-      <el-form-item label="相机模型">
-        <el-select v-model="formData.feature_params.camera_model" style="width: 100%">
-          <el-option label="SIMPLE_RADIAL" value="SIMPLE_RADIAL" />
-          <el-option label="PINHOLE" value="PINHOLE" />
-          <el-option label="SIMPLE_PINHOLE" value="SIMPLE_PINHOLE" />
-          <el-option label="RADIAL" value="RADIAL" />
-          <el-option label="OPENCV" value="OPENCV" />
-        </el-select>
-      </el-form-item>
+        <el-form-item label="相机模型">
+          <el-select v-model="formData.feature_params.camera_model" style="width: 100%">
+            <el-option label="SIMPLE_RADIAL" value="SIMPLE_RADIAL" />
+            <el-option label="PINHOLE" value="PINHOLE" />
+            <el-option label="SIMPLE_PINHOLE" value="SIMPLE_PINHOLE" />
+            <el-option label="RADIAL" value="RADIAL" />
+            <el-option label="OPENCV" value="OPENCV" />
+          </el-select>
+        </el-form-item>
 
-      <el-form-item label="单相机模式">
-        <el-switch v-model="formData.feature_params.single_camera" />
-        <el-text type="info" size="small" style="margin-left: 8px">
-          所有图像使用相同相机参数
-        </el-text>
-      </el-form-item>
+        <el-form-item label="单相机模式">
+          <el-switch v-model="formData.feature_params.single_camera" />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            所有图像使用相同相机参数
+          </el-text>
+        </el-form-item>
 
-      <el-form-item label="最大图像尺寸">
-        <el-input-number
-          v-model="formData.feature_params.max_image_size"
-          :min="500"
-          :max="8000"
-          :step="100"
-        />
-        <el-text type="info" size="small" style="margin-left: 8px">
-          像素
-        </el-text>
-      </el-form-item>
-
-      <el-form-item label="最大特征数">
-        <el-input-number
-          v-model="formData.feature_params.max_num_features"
-          :min="1000"
-          :max="50000"
-          :step="1000"
-        />
-      </el-form-item>
-
-      <!-- Matching Parameters -->
-      <el-divider content-position="left">特征匹配</el-divider>
-
-      <el-form-item label="匹配 GPU 加速">
-        <el-switch v-model="formData.matching_params.use_gpu" />
-      </el-form-item>
-
-      <el-form-item label="序列重叠" v-if="formData.matching_method === 'sequential'">
-        <el-input-number
-          v-model="formData.matching_params.overlap"
-          :min="5"
-          :max="100"
-          :step="5"
-        />
-        <el-text type="info" size="small" style="margin-left: 8px">
-          窗口大小
-        </el-text>
-      </el-form-item>
-
-      <!-- Vocab Tree parameters -->
-      <el-form-item
-        label="词汇树路径"
-        v-if="formData.matching_method === 'vocab_tree'"
-      >
-        <el-input
-          v-model="formData.matching_params.vocab_tree_path"
-          placeholder="例如：/path/to/vocab_tree.bin，留空则使用服务器默认配置（如有）"
-          clearable
-        />
-      </el-form-item>
-
-      <!-- Spatial matching parameters -->
-      <template v-if="formData.matching_method === 'spatial'">
-        <el-form-item label="最大邻居数">
+        <el-form-item label="最大图像尺寸">
           <el-input-number
-            v-model="formData.matching_params.spatial_max_num_neighbors"
-            :min="1"
-            :max="200"
-            :step="1"
+            v-model="formData.feature_params.max_image_size"
+            :min="500"
+            :max="8000"
+            :step="100"
           />
           <el-text type="info" size="small" style="margin-left: 8px">
-            每张影像匹配的空间最近邻影像数量
+            像素
           </el-text>
         </el-form-item>
 
-        <el-form-item label="忽略高度 (Z)">
-          <el-switch v-model="formData.matching_params.spatial_ignore_z" />
+        <el-form-item label="最大特征数">
+          <el-input-number
+            v-model="formData.feature_params.max_num_features"
+            :min="1000"
+            :max="50000"
+            :step="1000"
+          />
+        </el-form-item>
+
+        <!-- Matching Parameters (COLMAP/GLOMAP/InstantSfM only) -->
+        <el-divider content-position="left">特征匹配</el-divider>
+
+        <el-form-item label="匹配 GPU 加速">
+          <el-switch v-model="formData.matching_params.use_gpu" />
+        </el-form-item>
+
+        <el-form-item label="序列重叠" v-if="formData.matching_method === 'sequential'">
+          <el-input-number
+            v-model="formData.matching_params.overlap"
+            :min="5"
+            :max="100"
+            :step="5"
+          />
           <el-text type="info" size="small" style="margin-left: 8px">
-            对只有平面精度的航测数据，可忽略高度分量，只按平面距离匹配
+            窗口大小
           </el-text>
         </el-form-item>
-        <el-text type="info" size="small" style="display: block; margin-top: -8px; margin-bottom: 16px; color: var(--el-text-color-secondary)">
-          注意：COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定
-        </el-text>
+
+        <!-- Vocab Tree parameters -->
+        <el-form-item
+          label="词汇树路径"
+          v-if="formData.matching_method === 'vocab_tree'"
+        >
+          <el-input
+            v-model="formData.matching_params.vocab_tree_path"
+            placeholder="例如：/path/to/vocab_tree.bin，留空则使用服务器默认配置（如有）"
+            clearable
+          />
+        </el-form-item>
+
+        <!-- Spatial matching parameters -->
+        <template v-if="formData.matching_method === 'spatial'">
+          <el-form-item label="最大邻居数">
+            <el-input-number
+              v-model="formData.matching_params.spatial_max_num_neighbors"
+              :min="1"
+              :max="200"
+              :step="1"
+            />
+            <el-text type="info" size="small" style="margin-left: 8px">
+              每张影像匹配的空间最近邻影像数量
+            </el-text>
+          </el-form-item>
+
+          <el-form-item label="忽略高度 (Z)">
+            <el-switch v-model="formData.matching_params.spatial_ignore_z" />
+            <el-text type="info" size="small" style="margin-left: 8px">
+              对只有平面精度的航测数据，可忽略高度分量，只按平面距离匹配
+            </el-text>
+          </el-form-item>
+          <el-text type="info" size="small" style="display: block; margin-top: -8px; margin-bottom: 16px; color: var(--el-text-color-secondary)">
+            注意：COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定
+          </el-text>
+        </template>
       </template>
 
       <!-- Mapper Parameters -->
@@ -987,6 +990,59 @@
           </el-text>
         </el-form-item>
 
+        <!-- OpenMVG-specific matching parameters -->
+        <el-divider content-position="left">特征匹配</el-divider>
+
+        <el-form-item label="图像对生成模式">
+          <el-select v-model="formData.openmvg_params.pair_mode" style="width: 100%">
+            <el-option label="穷举模式 (EXHAUSTIVE) - 匹配所有可能的图像对" value="EXHAUSTIVE" />
+            <el-option label="连续模式 (CONTIGUOUS) - 仅匹配连续图像（适合视频）" value="CONTIGUOUS" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="连续匹配窗口" v-if="formData.openmvg_params.pair_mode === 'CONTIGUOUS'">
+          <el-input-number
+            v-model="formData.openmvg_params.contiguous_count"
+            :min="1"
+            :max="20"
+            :step="1"
+            :placeholder="5"
+          />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            例如：2 表示图像0匹配(1,2)，图像1匹配(2,3)...
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="匹配算法">
+          <el-select v-model="formData.openmvg_params.matching_method" style="width: 100%">
+            <el-option label="AUTO (自动选择，推荐)" value="AUTO" />
+            <el-option label="FASTCASCADEHASHINGL2 (快速级联哈希L2，默认)" value="FASTCASCADEHASHINGL2" />
+            <el-option label="CASCADEHASHINGL2 (级联哈希L2)" value="CASCADEHASHINGL2" />
+            <el-option label="BRUTEFORCEL2 (暴力L2，精确但慢)" value="BRUTEFORCEL2" />
+            <el-option label="HNSWL2 (近似L2，HNSW图)" value="HNSWL2" />
+            <el-option label="HNSWL1 (近似L1，适合量化描述符)" value="HNSWL1" />
+            <el-option label="BRUTEFORCEHAMMING (暴力Hamming，二值描述符)" value="BRUTEFORCEHAMMING" />
+            <el-option label="HNSWHAMMING (近似Hamming，二值描述符)" value="HNSWHAMMING" />
+          </el-select>
+          <el-text type="info" size="small" style="margin-left: 8px">
+            描述符匹配方法
+          </el-text>
+        </el-form-item>
+
+        <el-form-item label="距离比率阈值">
+          <el-input-number
+            v-model="formData.openmvg_params.ratio"
+            :min="0.5"
+            :max="1.0"
+            :step="0.05"
+            :precision="2"
+            :placeholder="0.8"
+          />
+          <el-text type="info" size="small" style="margin-left: 8px">
+            过滤非有效匹配的距离比率（默认：0.8，越小越严格）
+          </el-text>
+        </el-form-item>
+
         <el-collapse v-model="openmvgActiveNames" style="margin-top: 16px">
           <el-collapse-item name="camera_params" title="相机参数（高级）">
             <el-form-item label="相机模型">
@@ -1037,7 +1093,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
-import type { Block, FeatureParams, MatchingParams, GlomapMapperParams, ColmapMapperParams, InstantsfmMapperParams } from '@/types'
+import type { Block, FeatureParams, MatchingParams, GlomapMapperParams, ColmapMapperParams, InstantsfmMapperParams, OpenmvgParams } from '@/types'
 
 const props = defineProps<{
   block: Block
@@ -1157,11 +1213,19 @@ const defaultInstantsfmParams: InstantsfmMapperParams = {
 // - focal_length: 3000 pixels (recommended if EXIF has no intrinsics)
 // - feature_preset: 'NORMAL' (OpenMVG default, alternative: 'HIGH')
 // - geometric_model: 'e' = Essential matrix (required for GlobalSfM, alternative: 'f' = Fundamental)
+// - matching_method: 'AUTO' = auto choice from regions type (default for SIFT: FASTCASCADEHASHINGL2)
+// - ratio: 0.8 = distance ratio to discard non-meaningful matches
+// - pair_mode: 'EXHAUSTIVE' = build all possible pairs (default)
 const defaultOpenmvgParams: OpenmvgParams = {
   camera_model: 3,
   focal_length: 3000,
   feature_preset: 'NORMAL',
   geometric_model: 'e',
+  // OpenMVG-specific matching parameters
+  matching_method: 'AUTO',
+  ratio: 0.8,
+  pair_mode: 'EXHAUSTIVE',
+  contiguous_count: 5,
 }
 
 const formData = reactive({

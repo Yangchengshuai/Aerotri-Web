@@ -8,6 +8,7 @@ interface CameraSelectionState {
   cameras: CameraInfo[]
   isPanelOpen: boolean
   blockId: string | null
+  errorThreshold: number  // 问题相机阈值（像素）
 }
 
 export const useCameraSelectionStore = defineStore('cameraSelection', {
@@ -18,10 +19,16 @@ export const useCameraSelectionStore = defineStore('cameraSelection', {
     cameras: [],
     isPanelOpen: false,
     blockId: null,
+    errorThreshold: 1.0,  // 默认阈值 1.0 px
   }),
 
   getters: {
     hasSelection: (state) => state.selectedCameraId !== null,
+    // 判断相机是否为问题相机（误差 > 阈值）
+    isProblemCamera: (state) => (camera: CameraInfo): boolean => {
+      return camera.mean_reprojection_error != null && 
+             camera.mean_reprojection_error > state.errorThreshold
+    },
   },
 
   actions: {
@@ -98,6 +105,11 @@ export const useCameraSelectionStore = defineStore('cameraSelection', {
       if (this.selectedCameraId === cameraId) {
         this.clearSelection()
       }
+    },
+
+    setErrorThreshold(threshold: number) {
+      // 限制范围在 0 - 2.0 之间
+      this.errorThreshold = Math.max(0, Math.min(2.0, threshold))
     },
   },
 })

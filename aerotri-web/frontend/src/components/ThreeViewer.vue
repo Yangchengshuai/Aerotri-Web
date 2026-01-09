@@ -22,6 +22,22 @@
       <el-checkbox v-model="showCameras">显示相机</el-checkbox>
       <el-checkbox v-model="showPoints">显示点云</el-checkbox>
       <el-checkbox v-model="showOnlyProblemCameras" @change="handleFilterChange">只显示问题相机</el-checkbox>
+      <div class="threshold-control">
+        <span class="control-label">阈值</span>
+        <el-input-number
+          v-model="errorThreshold"
+          :min="0"
+          :max="2.0"
+          :step="0.1"
+          :precision="1"
+          :controls="true"
+          controls-position="right"
+          size="small"
+          @change="handleThresholdChange"
+          style="width: 100px;"
+        />
+        <span class="threshold-unit">px</span>
+      </div>
       <div v-if="showCameras" class="camera-size-control">
         <span class="control-label">相机大小</span>
         <el-slider
@@ -105,7 +121,7 @@
  * Note: Currently only loads camera data to reduce memory usage. Point cloud rendering
  * is reserved for future use (loadPoints function is intentionally unused).
  */
-import { ref, onMounted, onUnmounted, watch, reactive, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, reactive, nextTick, computed } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Aim, Refresh, Loading, Download } from '@element-plus/icons-vue'
@@ -128,9 +144,14 @@ const showPoints = ref(true)
 const cameraSizeMultiplier = ref(1.0) // 用户可调节的相机大小倍数
 let baseCameraScale = 0.2 // 基础相机尺寸（会根据场景自动计算）
 
-// Error visualization
-const ERROR_THRESHOLD = 1.0 // 问题相机阈值（像素）
+// Error visualization - use store for threshold
 const showOnlyProblemCameras = ref(false) // 只显示问题相机
+
+// Computed property to sync with store's errorThreshold
+const errorThreshold = computed({
+  get: () => cameraSelectionStore.errorThreshold,
+  set: (val: number) => cameraSelectionStore.setErrorThreshold(val)
+})
 
 // Partition mode state
 const viewMode = ref<'partition' | 'merged'>('merged')
@@ -176,7 +197,9 @@ let raycaster: THREE.Raycaster
 let mouse: THREE.Vector2
 let selectedCameraObject: THREE.Object3D | null = null
 const highlightColor = 0x409eff // Element Plus primary color
-const defaultColor = 0xffff00 // Yellow
+const goodColor = 0x22c55e // 绿色 - 正常相机
+const problemColor = 0x3b82f6 // 蓝色 - 问题相机
+const noDataColor = 0xffff00 // 黄色 - 无误差数据
 
 onMounted(async () => {
   // Initialize camera selection store
@@ -704,15 +727,16 @@ function loadCameras(cameras: CameraInfo[]) {
   }
   
   // Debug: check error data
+  const threshold = cameraSelectionStore.errorThreshold
   const camerasWithError = validCameras.filter(c => c.mean_reprojection_error != null)
   console.log(`[ThreeViewer] Loaded ${validCameras.length} cameras, ${camerasWithError.length} with error data`)
   if (camerasWithError.length > 0) {
-    const problemCount = camerasWithError.filter(c => (c.mean_reprojection_error ?? 0) > ERROR_THRESHOLD).length
-    console.log(`[ThreeViewer] Problem cameras (error > ${ERROR_THRESHOLD}): ${problemCount}`)
+    const problemCount = camerasWithError.filter(c => (c.mean_reprojection_error ?? 0) > threshold).length
+    console.log(`[ThreeViewer] Problem cameras (error > ${threshold}): ${problemCount}`)
   }
 
   // Update error styling and filtering
-  updateCameraErrorStyling(ERROR_THRESHOLD)
+  updateCameraErrorStyling(threshold)
   applyCameraFilter()
 
   // Update highlight based on store selection
@@ -735,37 +759,48 @@ function updateCameraErrorStyling(threshold: number) {
   if (!camerasGroup) return
   
   let problemCount = 0
+  let goodCount = 0
+  let noErrorCount = 0
+  
   camerasGroup.children.forEach((child) => {
-    if (child instanceof THREE.Group && child.userData.errorPlane) {
+    if (child instanceof THREE.Group && child.userData.lineMaterial) {
       const error = child.userData.error
-      const errorPlane = child.userData.errorPlane as THREE.Mesh
+      const lineMaterial = child.userData.lineMaterial as THREE.LineBasicMaterial
       
-      // 显示红色平面如果误差超过阈值
-      if (error != null && error > threshold) {
-        errorPlane.visible = true
-        problemCount++
+      // 根据误差值设置线条颜色：蓝色（问题相机）/ 绿色（正常相机）/ 黄色（无误差数据）
+      if (error != null) {
+        if (error > threshold) {
+          // 蓝色 - 问题相机（误差 > 阈值）
+          lineMaterial.color.setHex(0x3b82f6)
+          problemCount++
+        } else {
+          // 绿色 - 正常相机（误差 ≤ 阈值）
+          lineMaterial.color.setHex(0x22c55e)
+          goodCount++
+        }
       } else {
-        errorPlane.visible = false
+        // 黄色 - 无误差数据
+        lineMaterial.color.setHex(0xffff00)
+        noErrorCount++
       }
     }
   })
   
   // Debug log
-  if (problemCount > 0) {
-    console.log(`[ThreeViewer] Updated error styling: ${problemCount} problem cameras (error > ${threshold} px)`)
-  }
+  console.log(`[ThreeViewer] Updated error styling: ${goodCount} good (green), ${problemCount} problem (blue, error > ${threshold} px), ${noErrorCount} no data (yellow)`)
 }
 
 function applyCameraFilter() {
   if (!camerasGroup) return
   
+  const threshold = cameraSelectionStore.errorThreshold
   camerasGroup.children.forEach((child) => {
     if (child instanceof THREE.Group) {
       const error = child.userData.error
       
       if (showOnlyProblemCameras.value) {
         // 只显示问题相机（误差 > 阈值）
-        if (error != null && error > ERROR_THRESHOLD) {
+        if (error != null && error > threshold) {
           child.visible = true
         } else {
           child.visible = false
@@ -780,6 +815,15 @@ function applyCameraFilter() {
 
 function handleFilterChange() {
   applyCameraFilter()
+}
+
+function handleThresholdChange() {
+  // 更新相机颜色样式
+  updateCameraErrorStyling(cameraSelectionStore.errorThreshold)
+  // 如果开启了"只显示问题相机"，需要重新过滤
+  if (showOnlyProblemCameras.value) {
+    applyCameraFilter()
+  }
 }
 
 // Reserved function for future point cloud rendering
@@ -846,34 +890,19 @@ function createCameraFrustum(scale: number = 0.3): THREE.Object3D {
   
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   
-  // 黄色加粗线条
-  const material = new THREE.LineBasicMaterial({ 
-    color: 0xffff00, // 黄色
-    linewidth: 3, // 加粗（注意：linewidth 在某些渲染器可能不支持，但 Three.js 会尽量应用）
-    opacity: 0.8, 
+  // 默认绿色线条（正常相机），颜色会根据误差动态更新
+  const lineMaterial = new THREE.LineBasicMaterial({ 
+    color: 0x22c55e, // 默认绿色
+    linewidth: 3,
+    opacity: 0.9, 
     transparent: true 
   })
-  const lines = new THREE.LineSegments(geometry, material)
+  const lines = new THREE.LineSegments(geometry, lineMaterial)
   group.add(lines)
   
-  // 添加红色平面用于标识问题相机（默认隐藏）
-  const planeWidth = w * 0.8
-  const planeHeight = h * 0.6
-  const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight)
-  const planeMaterial = new THREE.MeshBasicMaterial({
-    color: 0xff0000, // 红色
-    transparent: true,
-    opacity: 0.6,
-    side: THREE.DoubleSide
-  })
-  const errorPlane = new THREE.Mesh(planeGeometry, planeMaterial)
-  // 将平面放置在相机前方
-  errorPlane.position.set(0, 0, d * 0.5)
-  errorPlane.visible = false // 默认隐藏
-  group.add(errorPlane)
-  
-  // 保存引用以便后续控制
-  group.userData.errorPlane = errorPlane
+  // 保存线条引用以便后续修改颜色
+  group.userData.lines = lines
+  group.userData.lineMaterial = lineMaterial
   
   return group
 }
@@ -952,22 +981,30 @@ function updateCameraHighlight() {
   if (!camerasGroup) return
 
   const selectedId = cameraSelectionStore.selectedCameraId
+  const threshold = cameraSelectionStore.errorThreshold
 
-  // Reset all cameras to default color
+  // Reset all cameras to error-based color (green/blue/yellow)
   camerasGroup.children.forEach((child) => {
     if (child instanceof THREE.Group) {
+      const error = child.userData.error
+      let colorHex = noDataColor // 默认黄色（无数据）
+      
+      if (error != null) {
+        colorHex = error > threshold ? problemColor : goodColor
+      }
+      
       child.traverse((obj) => {
         if (obj instanceof THREE.LineSegments) {
           const material = obj.material as THREE.LineBasicMaterial
           if (material) {
-            material.color.setHex(defaultColor)
+            material.color.setHex(colorHex)
           }
         }
       })
     }
   })
 
-  // Highlight selected camera
+  // Highlight selected camera with special color
   if (selectedId !== null) {
     camerasGroup.children.forEach((child) => {
       if (child instanceof THREE.Group && child.userData.camera) {
@@ -1120,6 +1157,19 @@ function formatNumber(num: number): string {
   align-items: center;
   gap: 8px;
   padding: 4px 0;
+}
+
+.threshold-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.threshold-unit {
+  font-size: 12px;
+  color: #606266;
+  margin-left: 4px;
 }
 
 .control-label {

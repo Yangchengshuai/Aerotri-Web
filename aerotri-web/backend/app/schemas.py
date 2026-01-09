@@ -118,6 +118,8 @@ class BlockResponse(BaseModel):
     partition_params: Optional[Dict[str, Any]] = None
     sfm_pipeline_mode: Optional[str] = None
     merge_strategy: Optional[str] = None
+    queue_position: Optional[int] = None
+    queued_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     started_at: Optional[datetime] = None
@@ -159,9 +161,61 @@ class GlomapResumeRequest(BaseModel):
 
 # ===== Reconstruction Schemas =====
 
+# Stage-specific parameter schemas
+class DensifyParams(BaseModel):
+    """Parameters for DensifyPointCloud stage."""
+    resolution_level: Optional[int] = Field(None, ge=0, le=4, description="分辨率级别 (0=原始)")
+    number_views: Optional[int] = Field(None, ge=2, le=12, description="每点使用视图数")
+    number_views_fuse: Optional[int] = Field(None, ge=2, le=8, description="融合时最小视图数")
+
+    class Config:
+        extra = "allow"
+
+
+class MeshParams(BaseModel):
+    """Parameters for ReconstructMesh stage."""
+    decimate: Optional[float] = Field(None, ge=0.1, le=1.0, description="网格简化比例")
+    thickness_factor: Optional[float] = Field(None, ge=0.5, le=3.0, description="厚度因子")
+    quality_factor: Optional[float] = Field(None, ge=0.5, le=2.0, description="质量因子")
+
+    class Config:
+        extra = "allow"
+
+
+class RefineParams(BaseModel):
+    """Parameters for RefineMesh stage."""
+    resolution_level: Optional[int] = Field(None, ge=0, le=4, description="优化分辨率级别")
+    max_face_area: Optional[int] = Field(None, ge=16, le=512, description="最大面积阈值")
+    scales: Optional[int] = Field(None, ge=1, le=4, description="多尺度级数")
+
+    class Config:
+        extra = "allow"
+
+
+class TextureParams(BaseModel):
+    """Parameters for TextureMesh stage."""
+    resolution_level: Optional[int] = Field(None, ge=0, le=3, description="纹理分辨率级别")
+    min_resolution: Optional[int] = Field(None, ge=256, le=4096, description="最小分辨率")
+
+    class Config:
+        extra = "allow"
+
+
+class ReconstructionParams(BaseModel):
+    """Container for all stage parameters."""
+    densify: Optional[DensifyParams] = None
+    mesh: Optional[MeshParams] = None
+    refine: Optional[RefineParams] = None
+    texture: Optional[TextureParams] = None
+
+    class Config:
+        extra = "allow"
+
+
 class ReconstructRequest(BaseModel):
     """Schema for reconstruction request."""
-    quality_preset: Optional[str] = "medium"  # low, medium, high
+    quality_preset: Optional[str] = "balanced"  # fast, balanced, high
+    custom_params: Optional[ReconstructionParams] = None
 
 
 class ReconstructionFileInfo(BaseModel):
@@ -194,6 +248,18 @@ class ReconstructionStatusResponse(BaseModel):
 class ReconstructionLogResponse(BaseModel):
     """Schema for reconstruction log response."""
     lines: List[str]
+
+
+class ReconstructionPresetsResponse(BaseModel):
+    """Schema for reconstruction presets response."""
+    presets: Dict[str, Dict[str, Dict[str, Any]]]
+    stage_labels: Dict[str, str]
+
+
+class ReconstructionParamsSchemaResponse(BaseModel):
+    """Schema for reconstruction parameters schema response."""
+    schema: Dict[str, Dict[str, Dict[str, Any]]]
+    stage_labels: Dict[str, str]
 
 
 # ===== 3DGS Schemas =====
@@ -510,4 +576,51 @@ class GPUInfo(BaseModel):
 class GPUListResponse(BaseModel):
     """Schema for GPU list response."""
     gpus: List[GPUInfo]
+
+
+# ===== Queue Schemas =====
+
+class QueueItemResponse(BaseModel):
+    """Schema for a single queue item."""
+    id: str
+    name: str
+    algorithm: str
+    matching_method: str
+    queue_position: int
+    queued_at: datetime
+    image_path: str
+
+    class Config:
+        from_attributes = True
+
+
+class QueueListResponse(BaseModel):
+    """Schema for queue list response."""
+    items: List[QueueItemResponse]
+    total: int
+    running_count: int
+    max_concurrent: int
+
+
+class QueueConfigResponse(BaseModel):
+    """Schema for queue configuration."""
+    max_concurrent: int
+
+
+class QueueConfigUpdate(BaseModel):
+    """Schema for updating queue configuration."""
+    max_concurrent: int = Field(..., ge=1, le=10)
+
+
+class EnqueueResponse(BaseModel):
+    """Schema for enqueue response."""
+    block_id: str
+    queue_position: int
+    queued_at: datetime
+
+
+class DequeueResponse(BaseModel):
+    """Schema for dequeue response."""
+    block_id: str
+    status: BlockStatus
 

@@ -1,5 +1,5 @@
 // Block types
-export type BlockStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type BlockStatus = 'created' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type AlgorithmType = 'colmap' | 'glomap' | 'instantsfm' | 'openmvg_global'
 export type MatchingMethod = 'sequential' | 'exhaustive' | 'vocab_tree' | 'spatial'
 
@@ -106,12 +106,32 @@ export interface InstantsfmMapperParams {
   min_triangulation_angle: number
 }
 
+// OpenMVG matching method types (from main_ComputeMatches.cpp)
+export type OpenmvgMatchingMethod = 
+  | 'AUTO'                    // Auto choice from regions type (default)
+  | 'BRUTEFORCEL2'            // L2 BruteForce matching
+  | 'HNSWL2'                  // L2 Approximate Matching with HNSW graphs
+  | 'HNSWL1'                  // L1 Approximate Matching with HNSW graphs
+  | 'CASCADEHASHINGL2'        // L2 Cascade Hashing matching
+  | 'FASTCASCADEHASHINGL2'    // L2 Cascade Hashing with precomputed hashed regions (faster, more memory)
+  | 'BRUTEFORCEHAMMING'       // BruteForce Hamming matching (for binary descriptors)
+  | 'HNSWHAMMING'             // Hamming Approximate Matching with HNSW graphs
+
+// OpenMVG pair generation mode types (from main_PairGenerator.cpp)
+export type OpenmvgPairMode = 'EXHAUSTIVE' | 'CONTIGUOUS'
+
 export interface OpenmvgParams {
   camera_model: number  // 1: Pinhole, 2: Pinhole radial 1, 3: Pinhole radial 3, 4: Pinhole brown 2
   focal_length: number  // Default focal length in pixels (e.g., 3000)
   feature_preset: 'NORMAL' | 'HIGH'  // Feature density preset
   geometric_model: 'e' | 'f'  // e: Essential matrix (requires intrinsics), f: Fundamental matrix
   num_threads?: number  // Number of threads for feature extraction (default: auto-detect CPU cores - 1)
+  // OpenMVG-specific matching parameters (from main_ComputeMatches.cpp)
+  matching_method?: OpenmvgMatchingMethod  // Nearest matching method (default: AUTO)
+  ratio?: number  // Distance ratio to discard non-meaningful matches (default: 0.8)
+  // OpenMVG-specific pair generation parameters (from main_PairGenerator.cpp)
+  pair_mode?: OpenmvgPairMode  // Pair generation mode (default: EXHAUSTIVE)
+  contiguous_count?: number  // Number of contiguous links when pair_mode is CONTIGUOUS (e.g., 2 = match 0 with (1,2), 1 with (2,3), ...)
 }
 
 export interface Block {
@@ -154,6 +174,9 @@ export interface Block {
   tiles_tileset_url?: string | null
   // Partition fields
   partition_enabled?: boolean
+  // Queue fields
+  queue_position?: number | null
+  queued_at?: string | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -190,6 +213,75 @@ export interface ReconstructionState {
   progress: number
   currentStage: string | null
   files: ReconFileInfo[]
+}
+
+// Reconstruction parameter types
+export interface DensifyParams {
+  resolution_level?: number
+  number_views?: number
+  number_views_fuse?: number
+}
+
+export interface MeshParams {
+  decimate?: number
+  thickness_factor?: number
+  quality_factor?: number
+}
+
+export interface RefineParams {
+  resolution_level?: number
+  max_face_area?: number
+  scales?: number
+}
+
+export interface TextureParams {
+  resolution_level?: number
+  min_resolution?: number
+}
+
+export interface ReconstructionParams {
+  densify?: DensifyParams
+  mesh?: MeshParams
+  refine?: RefineParams
+  texture?: TextureParams
+}
+
+export type ReconQualityPreset = 'fast' | 'balanced' | 'high'
+
+export interface ReconPresets {
+  [preset: string]: {
+    densify: DensifyParams
+    mesh: MeshParams
+    refine: RefineParams
+    texture: TextureParams
+  }
+}
+
+export interface ParamSchemaMeta {
+  type: 'int' | 'float'
+  min: number
+  max: number
+  step?: number
+  default: number
+  description: string
+  label: string
+}
+
+export interface ReconParamsSchema {
+  densify: Record<string, ParamSchemaMeta>
+  mesh: Record<string, ParamSchemaMeta>
+  refine: Record<string, ParamSchemaMeta>
+  texture: Record<string, ParamSchemaMeta>
+}
+
+export interface ReconPresetsResponse {
+  presets: ReconPresets
+  stage_labels: Record<string, string>
+}
+
+export interface ReconParamsSchemaResponse {
+  schema: ReconParamsSchema
+  stage_labels: Record<string, string>
 }
 
 // 3DGS types

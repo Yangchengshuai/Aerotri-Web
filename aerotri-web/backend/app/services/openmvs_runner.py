@@ -47,7 +47,8 @@ class OpenMVSProcessError(Exception):
         return msg
 
 
-QUALITY_PRESETS: Dict[str, Dict[str, float]] = {
+# Legacy flat presets (kept for backward compatibility)
+QUALITY_PRESETS_LEGACY: Dict[str, Dict[str, float]] = {
     "fast": {
         "reconstruct_decimate": 0.3,
         "reconstruct_thickness": 1.0,
@@ -66,6 +67,184 @@ QUALITY_PRESETS: Dict[str, Dict[str, float]] = {
         "refine_resolution_level": 0,
         "refine_max_face_area": 64,
     },
+}
+
+# New structured presets with parameters grouped by stage
+QUALITY_PRESETS: Dict[str, Dict[str, Dict[str, any]]] = {
+    "fast": {
+        "densify": {
+            "resolution_level": 2,
+            "number_views": 3,
+            "number_views_fuse": 2,
+        },
+        "mesh": {
+            "decimate": 0.3,
+            "thickness_factor": 1.0,
+            "quality_factor": 1.0,
+        },
+        "refine": {
+            "resolution_level": 2,
+            "max_face_area": 256,
+            "scales": 2,
+        },
+        "texture": {
+            "resolution_level": 1,
+            "min_resolution": 512,
+        },
+    },
+    "balanced": {
+        "densify": {
+            "resolution_level": 1,
+            "number_views": 5,
+            "number_views_fuse": 3,
+        },
+        "mesh": {
+            "decimate": 0.5,
+            "thickness_factor": 1.5,
+            "quality_factor": 1.0,
+        },
+        "refine": {
+            "resolution_level": 1,
+            "max_face_area": 128,
+            "scales": 2,
+        },
+        "texture": {
+            "resolution_level": 0,
+            "min_resolution": 1024,
+        },
+    },
+    "high": {
+        "densify": {
+            "resolution_level": 0,
+            "number_views": 7,
+            "number_views_fuse": 4,
+        },
+        "mesh": {
+            "decimate": 0.7,
+            "thickness_factor": 2.0,
+            "quality_factor": 1.0,
+        },
+        "refine": {
+            "resolution_level": 0,
+            "max_face_area": 64,
+            "scales": 3,
+        },
+        "texture": {
+            "resolution_level": 0,
+            "min_resolution": 2048,
+        },
+    },
+}
+
+# Parameter schema with metadata (type, range, description)
+PARAMS_SCHEMA: Dict[str, Dict[str, Dict[str, any]]] = {
+    "densify": {
+        "resolution_level": {
+            "type": "int",
+            "min": 0,
+            "max": 4,
+            "default": 1,
+            "description": "分辨率级别 (0=原始分辨率, 数值越大分辨率越低)",
+            "label": "分辨率级别",
+        },
+        "number_views": {
+            "type": "int",
+            "min": 2,
+            "max": 12,
+            "default": 5,
+            "description": "每个点使用的视图数量",
+            "label": "视图数量",
+        },
+        "number_views_fuse": {
+            "type": "int",
+            "min": 2,
+            "max": 8,
+            "default": 3,
+            "description": "融合时最小视图数量",
+            "label": "融合视图数",
+        },
+    },
+    "mesh": {
+        "decimate": {
+            "type": "float",
+            "min": 0.1,
+            "max": 1.0,
+            "step": 0.1,
+            "default": 0.5,
+            "description": "网格简化比例 (1.0=不简化)",
+            "label": "简化比例",
+        },
+        "thickness_factor": {
+            "type": "float",
+            "min": 0.5,
+            "max": 3.0,
+            "step": 0.1,
+            "default": 1.5,
+            "description": "厚度因子，控制网格厚度",
+            "label": "厚度因子",
+        },
+        "quality_factor": {
+            "type": "float",
+            "min": 0.5,
+            "max": 2.0,
+            "step": 0.1,
+            "default": 1.0,
+            "description": "质量因子，控制网格质量",
+            "label": "质量因子",
+        },
+    },
+    "refine": {
+        "resolution_level": {
+            "type": "int",
+            "min": 0,
+            "max": 4,
+            "default": 1,
+            "description": "优化分辨率级别 (0=最高精度)",
+            "label": "分辨率级别",
+        },
+        "max_face_area": {
+            "type": "int",
+            "min": 16,
+            "max": 512,
+            "default": 128,
+            "description": "最大面片面积阈值",
+            "label": "最大面积",
+        },
+        "scales": {
+            "type": "int",
+            "min": 1,
+            "max": 4,
+            "default": 2,
+            "description": "多尺度优化级数",
+            "label": "尺度级数",
+        },
+    },
+    "texture": {
+        "resolution_level": {
+            "type": "int",
+            "min": 0,
+            "max": 3,
+            "default": 0,
+            "description": "纹理分辨率级别 (0=最高分辨率)",
+            "label": "分辨率级别",
+        },
+        "min_resolution": {
+            "type": "int",
+            "min": 256,
+            "max": 4096,
+            "default": 1024,
+            "description": "最小纹理分辨率",
+            "label": "最小分辨率",
+        },
+    },
+}
+
+# Stage display names (Chinese)
+STAGE_LABELS: Dict[str, str] = {
+    "densify": "稠密点云 (DensifyPointCloud)",
+    "mesh": "网格重建 (ReconstructMesh)",
+    "refine": "网格优化 (RefineMesh)",
+    "texture": "纹理贴图 (TextureMesh)",
 }
 
 
@@ -189,16 +368,60 @@ class OpenMVSRunner:
         
         return False
 
+    def _merge_params(
+        self,
+        preset: str,
+        custom_params: Optional[Dict[str, Dict[str, any]]] = None,
+    ) -> Dict[str, Dict[str, any]]:
+        """Merge custom parameters with preset defaults.
+        
+        Args:
+            preset: Quality preset name (fast, balanced, high)
+            custom_params: Optional custom parameters to override preset values
+            
+        Returns:
+            Merged parameters with custom values taking precedence
+        """
+        # Start with preset defaults
+        base_params = QUALITY_PRESETS.get(preset, QUALITY_PRESETS["balanced"])
+        
+        # Deep copy the preset params
+        merged = {}
+        for stage, stage_params in base_params.items():
+            merged[stage] = dict(stage_params)
+        
+        # Override with custom params if provided
+        if custom_params:
+            for stage, stage_params in custom_params.items():
+                if stage in merged and stage_params:
+                    for key, value in stage_params.items():
+                        if value is not None:
+                            merged[stage][key] = value
+        
+        return merged
+
     async def start_reconstruction(
         self,
         block: Block,
         gpu_index: int,
         db: AsyncSession,
         quality_preset: str,
+        custom_params: Optional[Dict[str, Dict[str, any]]] = None,
     ) -> None:
-        """Public entrypoint: start reconstruction in background."""
+        """Public entrypoint: start reconstruction in background.
+        
+        Args:
+            block: The Block to reconstruct
+            gpu_index: GPU device index
+            db: Database session
+            quality_preset: Quality preset name (fast, balanced, high)
+            custom_params: Optional custom parameters to override preset values
+        """
         if quality_preset not in QUALITY_PRESETS:
             quality_preset = "balanced"
+
+        # Merge custom params with preset defaults
+        merged_params = self._merge_params(quality_preset, custom_params)
 
         # Initialize reconstruction fields on the given block
         recon_dir = os.path.join(block.output_path or "", "recon")
@@ -222,7 +445,8 @@ class OpenMVSRunner:
             "total_time": 0.0,
             "params": {
                 "quality_preset": quality_preset,
-                "openmvs": QUALITY_PRESETS[quality_preset],
+                "custom_params": custom_params,
+                "merged_params": merged_params,
             },
         }
         await db.commit()
@@ -232,7 +456,7 @@ class OpenMVSRunner:
             self._run_pipeline(
                 block_id=block.id,
                 gpu_index=gpu_index,
-                quality_preset=quality_preset,
+                merged_params=merged_params,
                 recon_dir=recon_dir,
                 dense_dir=dense_dir,
                 mesh_dir=mesh_dir,
@@ -245,14 +469,25 @@ class OpenMVSRunner:
         self,
         block_id: str,
         gpu_index: int,
-        quality_preset: str,
+        merged_params: Dict[str, Dict[str, any]],
         recon_dir: str,
         dense_dir: str,
         mesh_dir: str,
         refine_dir: str,
         texture_dir: str,
     ) -> None:
-        """Internal: run reconstruction pipeline in its own DB session."""
+        """Internal: run reconstruction pipeline in its own DB session.
+        
+        Args:
+            block_id: Block ID
+            gpu_index: GPU device index
+            merged_params: Merged parameters (preset + custom overrides)
+            recon_dir: Root reconstruction directory
+            dense_dir: Dense point cloud output directory
+            mesh_dir: Mesh output directory
+            refine_dir: Refined mesh output directory
+            texture_dir: Textured mesh output directory
+        """
         stage_times: Dict[str, float] = {}
 
         try:
@@ -436,6 +671,7 @@ class OpenMVSRunner:
                         block_id=block_id,
                         dense_dir=dense_dir,
                         gpu_index=gpu_index,
+                        params=merged_params.get("densify", {}),
                         log_path=log_path,
                     )
                     if self._cancelled.get(block_id):
@@ -472,7 +708,7 @@ class OpenMVSRunner:
                         dense_dir=dense_dir,
                         mesh_dir=mesh_dir,
                         gpu_index=gpu_index,
-                        quality_preset=quality_preset,
+                        params=merged_params.get("mesh", {}),
                         log_path=log_path,
                     )
                     if self._cancelled.get(block_id):
@@ -515,7 +751,7 @@ class OpenMVSRunner:
                             dense_dir=dense_dir,
                             mesh_dir=mesh_dir,
                             refine_dir=refine_dir,
-                            quality_preset=quality_preset,
+                            params=merged_params.get("refine", {}),
                             log_path=log_path,
                         )
                         if self._cancelled.get(block_id):
@@ -590,6 +826,7 @@ class OpenMVSRunner:
                         refine_dir=refine_dir,
                         texture_dir=texture_dir,
                         gpu_index=gpu_index,
+                        params=merged_params.get("texture", {}),
                         log_path=log_path,
                         mesh_dir=mesh_dir,
                     )
@@ -879,12 +1116,28 @@ class OpenMVSRunner:
         block_id: str,
         dense_dir: str,
         gpu_index: int,
+        params: Dict[str, any],
         log_path: str,
     ) -> None:
+        """Run DensifyPointCloud stage.
+        
+        Args:
+            block_id: Block ID
+            dense_dir: Dense point cloud output directory
+            gpu_index: GPU device index
+            params: Stage parameters (resolution_level, number_views, number_views_fuse)
+            log_path: Path to log file
+        """
         # 在 dense 目录下运行 DensifyPointCloud，并显式设置 working-folder，
         # 保证 .mvs 中的相对路径 images/* 解析到 recon/dense/images，而不是后端工作目录。
         dense_dir_abs = str(Path(dense_dir).resolve())
         scene_path = os.path.join(dense_dir_abs, "scene.mvs")
+        
+        # Get parameters with defaults
+        resolution_level = params.get("resolution_level", 1)
+        number_views = params.get("number_views", 5)
+        number_views_fuse = params.get("number_views_fuse", 3)
+        
         cmd = [
             str(OPENMVS_DENSIFY),
             scene_path,
@@ -893,11 +1146,11 @@ class OpenMVSRunner:
             "--cuda-device",
             str(gpu_index),
             "--resolution-level",
-            "1",
+            str(resolution_level),
             "--number-views",
-            "5",
+            str(number_views),
             "--number-views-fuse",
-            "3",
+            str(number_views_fuse),
             "--estimate-colors",
             "1",
             "--estimate-normals",
@@ -1020,10 +1273,24 @@ class OpenMVSRunner:
         dense_dir: str,
         mesh_dir: str,
         gpu_index: int,
-        quality_preset: str,
+        params: Dict[str, any],
         log_path: str,
     ) -> None:
-        params = QUALITY_PRESETS.get(quality_preset, QUALITY_PRESETS["balanced"])
+        """Run ReconstructMesh stage.
+        
+        Args:
+            block_id: Block ID
+            dense_dir: Dense point cloud directory
+            mesh_dir: Mesh output directory
+            gpu_index: GPU device index
+            params: Stage parameters (decimate, thickness_factor, quality_factor)
+            log_path: Path to log file
+        """
+        # Get parameters with defaults
+        decimate = params.get("decimate", 0.5)
+        thickness_factor = params.get("thickness_factor", 1.5)
+        quality_factor = params.get("quality_factor", 1.0)
+        
         # 使用 dense 目录作为 OpenMVS 的 working-folder，以便 scene_dense.mvs
         # 中的相对图像路径仍然解析到 recon/dense/images 下。
         # 注意：由于设置了 --working-folder，输出文件会写到 dense_dir，需要在
@@ -1038,11 +1305,11 @@ class OpenMVSRunner:
             "--cuda-device",
             str(gpu_index),
             "--thickness-factor",
-            str(params["reconstruct_thickness"]),
+            str(thickness_factor),
             "--quality-factor",
-            "1.0",
+            str(quality_factor),
             "--decimate",
-            str(params["reconstruct_decimate"]),
+            str(decimate),
             "-v",
             "2",
         ]
@@ -1063,10 +1330,24 @@ class OpenMVSRunner:
         dense_dir: str,
         mesh_dir: str,
         refine_dir: str,
-        quality_preset: str,
+        params: Dict[str, any],
         log_path: str,
     ) -> None:
-        params = QUALITY_PRESETS.get(quality_preset, QUALITY_PRESETS["balanced"])
+        """Run RefineMesh stage.
+        
+        Args:
+            block_id: Block ID
+            dense_dir: Dense point cloud directory
+            mesh_dir: Mesh directory
+            refine_dir: Refined mesh output directory
+            params: Stage parameters (resolution_level, max_face_area, scales)
+            log_path: Path to log file
+        """
+        # Get parameters with defaults
+        resolution_level = params.get("resolution_level", 1)
+        max_face_area = params.get("max_face_area", 128)
+        scales = params.get("scales", 2)
+        
         # Refine 阶段仍然依赖 scene_dense.mvs 中的图像路径，因此 working-folder
         # 也需要指向 dense 目录；输出文件则位于 refine_dir。
         # scene_dense.mvs 在 dense_dir 下，mesh 输出可能在 mesh_dir 或 dense_dir。
@@ -1084,11 +1365,11 @@ class OpenMVSRunner:
             "--working-folder",
             dense_dir_abs,
             "--resolution-level",
-            str(params["refine_resolution_level"]),
+            str(resolution_level),
             "--max-face-area",
-            str(params["refine_max_face_area"]),
+            str(max_face_area),
             "--scales",
-            "2",
+            str(scales),
             "--reduce-memory",
             "1",
             "-v",
@@ -1112,9 +1393,26 @@ class OpenMVSRunner:
         refine_dir: str,
         texture_dir: str,
         gpu_index: int,
+        params: Dict[str, any],
         log_path: str,
         mesh_dir: Optional[str] = None,
     ) -> None:
+        """Run TextureMesh stage.
+        
+        Args:
+            block_id: Block ID
+            dense_dir: Dense point cloud directory
+            refine_dir: Refined mesh directory
+            texture_dir: Textured mesh output directory
+            gpu_index: GPU device index
+            params: Stage parameters (resolution_level, min_resolution)
+            log_path: Path to log file
+            mesh_dir: Optional mesh directory for fallback
+        """
+        # Get parameters with defaults
+        resolution_level = params.get("resolution_level", 0)
+        min_resolution = params.get("min_resolution", 1024)
+        
         # 纹理阶段同样需要访问原始图像，working-folder 仍然应为 dense 目录；
         # 输出 OBJ/MTL/纹理图写入 texture_dir。
         # scene_dense.mvs 在 dense_dir 下，refine 输出可能在 refine_dir 或 dense_dir。
@@ -1171,9 +1469,9 @@ class OpenMVSRunner:
             "--cuda-device",
             str(gpu_index),
             "--resolution-level",
-            "0",
+            str(resolution_level),
             "--min-resolution",
-            "1024",
+            str(min_resolution),
             "--export-type",
             "obj",
             "-v",

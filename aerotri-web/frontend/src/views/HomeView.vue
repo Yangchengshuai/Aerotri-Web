@@ -7,6 +7,14 @@
         <span class="subtitle">空中三角测量工具</span>
       </div>
       <div class="header-right">
+        <!-- 运行状态指示器 -->
+        <el-tag 
+          :type="queueStore.runningCount > 0 ? 'success' : 'info'" 
+          size="large"
+          class="running-indicator"
+        >
+          运行中 {{ queueStore.runningCount }}/{{ queueStore.maxConcurrent }}
+        </el-tag>
         <el-button type="primary" @click="showCreateDialog = true">
           <el-icon><Plus /></el-icon>
           新建 Block
@@ -16,6 +24,54 @@
 
     <!-- Main Content -->
     <el-main class="main-content">
+      <!-- Queue Section -->
+      <div v-if="queueStore.items.length > 0" class="queue-section">
+        <div class="section-header">
+          <h2>
+            <el-icon><Clock /></el-icon>
+            排队任务
+            <el-tag size="small" type="warning">{{ queueStore.items.length }}</el-tag>
+          </h2>
+          <el-button text size="small" @click="showConfigDialog = true">
+            <el-icon><Setting /></el-icon>
+            并发配置
+          </el-button>
+        </div>
+        <div class="queue-list">
+          <div 
+            v-for="item in queueStore.sortedItems" 
+            :key="item.id" 
+            class="queue-item"
+          >
+            <div class="queue-item__position">{{ item.queue_position }}</div>
+            <div class="queue-item__info">
+              <span class="queue-item__name">{{ item.name }}</span>
+              <div class="queue-item__meta">
+                <el-tag size="small" type="info">{{ item.algorithm }}</el-tag>
+                <span class="queue-item__time">{{ formatQueuedTime(item.queued_at) }}</span>
+              </div>
+            </div>
+            <div class="queue-item__actions">
+              <el-button 
+                v-if="item.queue_position > 1"
+                size="small" 
+                @click="handleMoveToTop(item.id)"
+              >
+                置顶
+              </el-button>
+              <el-button 
+                size="small" 
+                type="danger" 
+                plain
+                @click="handleDequeue(item.id)"
+              >
+                移除
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Block List -->
       <div class="block-list">
         <el-card v-if="blocksStore.loading" class="loading-card">
@@ -129,26 +185,55 @@
         </el-scrollbar>
       </div>
     </el-dialog>
+
+    <!-- Queue Config Dialog -->
+    <el-dialog
+      v-model="showConfigDialog"
+      title="队列配置"
+      width="400px"
+      destroy-on-close
+    >
+      <el-form label-width="120px">
+        <el-form-item label="最大并发数">
+          <el-input-number 
+            v-model="newMaxConcurrent" 
+            :min="1" 
+            :max="10"
+          />
+        </el-form-item>
+        <el-form-item>
+          <span class="config-hint">当前正在运行 {{ queueStore.runningCount }} 个任务</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showConfigDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleUpdateConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Plus, Folder } from '@element-plus/icons-vue'
+import { Plus, Folder, Clock, Setting } from '@element-plus/icons-vue'
 import { useBlocksStore } from '@/stores/blocks'
+import { useQueueStore } from '@/stores/queue'
 import type { Block, DirectoryEntry } from '@/types'
 import { filesystemApi } from '@/api'
 import BlockCard from '@/components/BlockCard.vue'
 
 const router = useRouter()
 const blocksStore = useBlocksStore()
+const queueStore = useQueueStore()
 
 const showCreateDialog = ref(false)
+const showConfigDialog = ref(false)
 const creating = ref(false)
 const formRef = ref<FormInstance>()
+const newMaxConcurrent = ref(2)
 
 const showDirectoryDialog = ref(false)
 const directoryLoading = ref(false)
@@ -173,8 +258,24 @@ const formRules: FormRules = {
   ],
 }
 
+let queuePollTimer: number | null = null
+
 onMounted(async () => {
-  await blocksStore.fetchBlocks()
+  await Promise.all([
+    blocksStore.fetchBlocks(),
+    queueStore.fetchQueue(),
+  ])
+  // Poll queue every 5 seconds
+  queuePollTimer = window.setInterval(() => {
+    queueStore.fetchQueue()
+  }, 5000)
+})
+
+onUnmounted(() => {
+  if (queuePollTimer) {
+    clearInterval(queuePollTimer)
+    queuePollTimer = null
+  }
 })
 
 function goToBlock(id: string) {
@@ -255,6 +356,50 @@ function goParent() {
 function selectDirectory(path: string) {
   formData.image_path = path
   showDirectoryDialog.value = false
+}
+
+// Queue operations
+async function handleMoveToTop(blockId: string) {
+  try {
+    await queueStore.moveToTop(blockId)
+    ElMessage.success('已置顶')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '置顶失败')
+  }
+}
+
+async function handleDequeue(blockId: string) {
+  try {
+    await ElMessageBox.confirm('确定要从队列中移除此任务吗？', '确认移除', { type: 'warning' })
+    await queueStore.dequeue(blockId)
+    ElMessage.success('已从队列移除')
+  } catch {
+    // User cancelled
+  }
+}
+
+async function handleUpdateConfig() {
+  try {
+    await queueStore.updateConfig(newMaxConcurrent.value)
+    showConfigDialog.value = false
+    ElMessage.success('配置已更新')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+  }
+}
+
+function openConfigDialog() {
+  newMaxConcurrent.value = queueStore.maxConcurrent
+  showConfigDialog.value = true
+}
+
+function formatQueuedTime(isoTime: string): string {
+  try {
+    const date = new Date(isoTime)
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return isoTime
+  }
 }
 </script>
 
@@ -369,5 +514,104 @@ function selectDirectory(path: string) {
 .dir-tags {
   display: flex;
   gap: 6px;
+}
+
+/* Queue Section Styles */
+.running-indicator {
+  margin-right: 12px;
+}
+
+.queue-section {
+  max-width: 1400px;
+  margin: 0 auto 24px;
+  background: linear-gradient(135deg, #fff7e6 0%, #fffbe6 100%);
+  border: 1px solid #ffd666;
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.section-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #d48806;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: white;
+  border-radius: 6px;
+  padding: 10px 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.queue-item__position {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fa8c16;
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.queue-item__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-item__name {
+  font-weight: 500;
+  color: #303133;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.queue-item__time {
+  color: #909399;
+}
+
+.queue-item__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.config-hint {
+  color: #909399;
+  font-size: 13px;
 }
 </style>

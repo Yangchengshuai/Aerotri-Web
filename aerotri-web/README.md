@@ -29,10 +29,13 @@
 - **相机重投影误差可视化**: 
   - 自动计算并显示每个相机的平均重投影误差
   - 支持文本格式（images.txt）和二进制格式（images.bin）的重投影误差计算
-  - 相机列表中显示误差值，问题相机（误差 > 1.0 px）用红色标识
+  - 相机列表中显示误差值，支持在前端调整“问题相机阈值”（默认 1.0 px）
   - 支持按误差排序和筛选问题相机
-  - 3D 视图中问题相机显示红色平面标识
+  - 3D 视图中相机颜色随阈值动态变化（正常=绿色、问题=蓝色、无误差数据=黄色），并支持“只显示问题相机”
   - 支持分区模式下的重投影误差计算
+- **任务队列（Queue）**:
+  - 支持将 Block 加入队列/取消排队/置顶
+  - 支持设置最大并发数（同时运行任务数上限），后端调度器会自动派发队列任务
 - **统计分析**: 
   - 处理结果统计
   - 各阶段耗时
@@ -171,10 +174,17 @@ npm run test
 | `/api/blocks/{id}/partitions/{index}/result/*` | GET | 分区结果 |
 | `/api/blocks/{id}/merge` | POST | 合并分区结果 |
 | `/api/blocks/{id}/reconstruct` | POST | OpenMVS 重建（开始） |
+| `/api/reconstruction/presets` | GET | OpenMVS 重建质量预设（fast/balanced/high）及其默认分阶段参数 |
+| `/api/reconstruction/params-schema` | GET | OpenMVS 重建参数 schema（类型/范围/说明，用于前端动态表单） |
 | `/api/blocks/{id}/reconstruction/status` | GET | OpenMVS 重建状态 |
 | `/api/blocks/{id}/reconstruction/files` | GET | OpenMVS 重建产物列表 |
 | `/api/blocks/{id}/reconstruction/download` | GET | OpenMVS 重建产物下载 |
 | `/api/blocks/{id}/reconstruction/log_tail` | GET | OpenMVS 重建日志 tail |
+| `/api/queue` | GET | 队列列表（含当前运行数与最大并发数） |
+| `/api/queue/config` | GET/PUT | 队列配置（最大并发数） |
+| `/api/queue/blocks/{id}/enqueue` | POST | 将 Block 加入队列 |
+| `/api/queue/blocks/{id}/dequeue` | POST | 将 Block 从队列移除 |
+| `/api/queue/blocks/{id}/queue/top` | POST | 将 Block 置顶（移动到队列首位） |
 | `/api/blocks/{id}/gs/train` | POST | 启动 3DGS 训练 |
 | `/api/blocks/{id}/gs/status` | GET | 3DGS 状态 |
 | `/api/blocks/{id}/gs/cancel` | POST | 取消 3DGS 训练 |
@@ -343,6 +353,25 @@ aerotri-web/
   - 默认最大特征数: `20000`（原为 `15000`），前端上限 `50000`
 - 匹配: method (sequential/exhaustive/vocab_tree), overlap
   - **空间匹配**: COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定 `spatial_is_gps` 参数
+
+### OpenMVG (全局式 SfM) 参数
+- `openmvg_params.camera_model`: 相机模型编号（1:Pinhole, 2:Pinhole radial 1, 3:Pinhole radial 3, 4:Pinhole brown 2）
+- `openmvg_params.focal_length`: 默认焦距（EXIF 不完整时使用）
+- `openmvg_params.feature_preset`: 特征密度（NORMAL/HIGH）
+- `openmvg_params.geometric_model`: 几何模型（e=Essential，f=Fundamental）
+- `openmvg_params.num_threads`: 线程数（可选；不填则后端自适应）
+- `openmvg_params.pair_mode`: 图像对生成模式（EXHAUSTIVE/CONTIGUOUS）
+- `openmvg_params.contiguous_count`: 连续模式窗口大小（pair_mode=CONTIGUOUS 时生效）
+- `openmvg_params.matching_method`: 匹配方法（AUTO/FASTCASCADEHASHINGL2/...，与 OpenMVG `openMVG_main_ComputeMatches` 参数一致）
+- `openmvg_params.ratio`: 距离比率阈值（默认 0.8，越小越严格）
+
+### OpenMVS 重建参数
+- `quality_preset`: fast/balanced/high
+- `custom_params`: 可选，自定义覆盖各阶段参数：
+  - `custom_params.densify`（稠密点云）
+  - `custom_params.mesh`（网格重建）
+  - `custom_params.refine`（网格优化）
+  - `custom_params.texture`（纹理贴图）
 
 ### 分区 SfM 参数
 - `partition_enabled`: 启用分区模式

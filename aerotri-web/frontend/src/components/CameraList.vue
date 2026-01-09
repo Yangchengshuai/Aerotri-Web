@@ -5,7 +5,7 @@
         <span>相机列表</span>
         <div style="display: flex; align-items: center; gap: 8px;">
           <el-text type="info" size="small">共 {{ cameras.length }} 个</el-text>
-          <el-tooltip content="重投影误差 > 1.0 px 视为问题相机（红色标识）" placement="top">
+          <el-tooltip :content="`重投影误差 > ${errorThreshold.toFixed(1)} px 视为问题相机（蓝色标识），≤ 阈值为正常相机（绿色标识）`" placement="top">
             <el-icon style="cursor: help;"><QuestionFilled /></el-icon>
           </el-tooltip>
         </div>
@@ -56,7 +56,8 @@
             class="camera-item"
             :class="{ 
               'is-selected': camera.image_id === selectedCameraId,
-              'is-problem': isProblemCamera(camera)
+              'is-problem': isProblemCamera(camera),
+              'is-good': isGoodCamera(camera)
             }"
             @click="handleSelectCamera(camera.image_id)"
           >
@@ -69,7 +70,7 @@
                 {{ camera.image_name }}
               </el-text>
               <div class="camera-item-error">
-                <el-text size="small" :type="isProblemCamera(camera) ? 'danger' : 'info'">
+                <el-text size="small" :type="isProblemCamera(camera) ? 'primary' : (isGoodCamera(camera) ? 'success' : 'info')">
                   误差: {{ camera.mean_reprojection_error != null ? camera.mean_reprojection_error.toFixed(3) : '-' }} px
                 </el-text>
               </div>
@@ -92,19 +93,24 @@ import { Search, QuestionFilled } from '@element-plus/icons-vue'
 import { useCameraSelectionStore } from '@/stores/cameraSelection'
 import type { CameraInfo } from '@/types'
 
-const ERROR_THRESHOLD = 1.0 // 问题相机阈值（像素）
-
 const cameraSelectionStore = useCameraSelectionStore()
 
 const cameras = computed(() => cameraSelectionStore.cameras)
 const selectedCameraId = computed(() => cameraSelectionStore.selectedCameraId)
+const errorThreshold = computed(() => cameraSelectionStore.errorThreshold)
 
 const searchText = ref('')
 const showOnlyProblemCamerasInList = ref(false)
 const sortOrder = ref<'id_asc' | 'error_desc' | 'error_asc'>('id_asc')
 
+// 问题相机：有误差数据且误差 > 阈值
 function isProblemCamera(camera: CameraInfo): boolean {
-  return camera.mean_reprojection_error != null && camera.mean_reprojection_error > ERROR_THRESHOLD
+  return camera.mean_reprojection_error != null && camera.mean_reprojection_error > errorThreshold.value
+}
+
+// 正常相机：有误差数据且误差 ≤ 阈值
+function isGoodCamera(camera: CameraInfo): boolean {
+  return camera.mean_reprojection_error != null && camera.mean_reprojection_error <= errorThreshold.value
 }
 
 const filteredCameras = computed(() => {
@@ -224,12 +230,21 @@ function handleSortChange() {
   box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
 }
 
+.camera-item.is-good {
+  border-left: 4px solid #22c55e; /* 绿色 - 正常相机 */
+}
+
+.camera-item.is-good.is-selected {
+  border-left: 4px solid #22c55e;
+  border-color: #409eff;
+}
+
 .camera-item.is-problem {
-  border-left: 4px solid #f56c6c;
+  border-left: 4px solid #3b82f6; /* 蓝色 - 问题相机 */
 }
 
 .camera-item.is-problem.is-selected {
-  border-left: 4px solid #f56c6c;
+  border-left: 4px solid #3b82f6;
   border-color: #409eff;
 }
 

@@ -11,6 +11,7 @@ from .gs_tiles import router as gs_tiles_router
 from .tiles import router as tiles_router
 from .results import router as results_router
 from .tasks import router as tasks_router
+from .queue import router as queue_router
 
 api_router = APIRouter()
 
@@ -25,3 +26,4 @@ api_router.include_router(reconstruction_router, tags=["reconstruction"])
 api_router.include_router(gs_router, tags=["gs"])
 api_router.include_router(gs_tiles_router, tags=["gs-tiles"])
 api_router.include_router(tiles_router, tags=["tiles"])
+api_router.include_router(queue_router, prefix="/queue", tags=["queue"])

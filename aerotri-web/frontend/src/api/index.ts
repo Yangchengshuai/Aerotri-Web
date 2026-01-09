@@ -11,6 +11,10 @@ import type {
   ReconFileInfo,
   GSFileInfo,
   TilesFileInfo,
+  ReconstructionParams,
+  ReconQualityPreset,
+  ReconPresetsResponse,
+  ReconParamsSchemaResponse,
 } from '@/types'
 
 const apiBase =
@@ -142,9 +146,23 @@ export const resultApi = {
 
 // Reconstruction API
 export const reconstructionApi = {
-  start: (blockId: string, qualityPreset: 'fast' | 'balanced' | 'high' = 'balanced') =>
+  // Get available quality presets with their parameters
+  getPresets: () =>
+    api.get<ReconPresetsResponse>('/reconstruction/presets'),
+
+  // Get parameter schema (ranges, descriptions)
+  getParamsSchema: () =>
+    api.get<ReconParamsSchemaResponse>('/reconstruction/params-schema'),
+
+  // Start reconstruction with optional custom parameters
+  start: (
+    blockId: string, 
+    qualityPreset: ReconQualityPreset = 'balanced',
+    customParams?: ReconstructionParams
+  ) =>
     api.post(`/blocks/${blockId}/reconstruct`, {
       quality_preset: qualityPreset,
+      custom_params: customParams,
     }),
 
   status: (blockId: string) =>
@@ -304,6 +322,57 @@ export const tilesApi = {
 
   tilesetUrl: (blockId: string) =>
     api.get<{ tileset_url: string }>(`/blocks/${blockId}/tiles/tileset_url`),
+}
+
+// Queue API
+export const queueApi = {
+  // Get queue list
+  list: () =>
+    api.get<{
+      items: Array<{
+        id: string
+        name: string
+        algorithm: string
+        matching_method: string
+        queue_position: number
+        queued_at: string
+        image_path: string
+      }>
+      total: number
+      running_count: number
+      max_concurrent: number
+    }>('/queue'),
+
+  // Get queue config
+  getConfig: () =>
+    api.get<{ max_concurrent: number }>('/queue/config'),
+
+  // Update queue config
+  updateConfig: (maxConcurrent: number) =>
+    api.put<{ max_concurrent: number }>('/queue/config', { max_concurrent: maxConcurrent }),
+
+  // Enqueue a block
+  enqueue: (blockId: string) =>
+    api.post<{
+      block_id: string
+      queue_position: number
+      queued_at: string
+    }>(`/queue/blocks/${blockId}/enqueue`),
+
+  // Dequeue a block
+  dequeue: (blockId: string) =>
+    api.post<{
+      block_id: string
+      status: string
+    }>(`/queue/blocks/${blockId}/dequeue`),
+
+  // Move block to top of queue
+  moveToTop: (blockId: string) =>
+    api.post<{
+      block_id: string
+      queue_position: number
+      queued_at: string
+    }>(`/queue/blocks/${blockId}/queue/top`),
 }
 
 // Partition API

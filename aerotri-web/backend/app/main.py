@@ -13,6 +13,7 @@ from .services.task_runner import task_runner
 from .services.openmvs_runner import openmvs_runner
 from .services.gs_runner import gs_runner
 from .services.tiles_runner import tiles_runner
+from .services.queue_scheduler import queue_scheduler
 
 
 @asynccontextmanager
@@ -34,10 +35,13 @@ async def lifespan(app: FastAPI):
     # Recover orphaned 3D Tiles conversion tasks
     await tiles_runner.recover_orphaned_tiles_tasks()
     
+    # Start queue scheduler for automatic task dispatching
+    await queue_scheduler.start()
+    
     yield
     
     # Shutdown
-    pass
+    await queue_scheduler.stop()
 
 
 app = FastAPI(

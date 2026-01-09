@@ -91,6 +91,9 @@ async def init_db():
                 ("glomap_params", "JSON"),
                 # openMVG-specific parameters snapshot
                 ("openmvg_params", "JSON"),
+                # Task Queue fields
+                ("queue_position", "INTEGER"),
+                ("queued_at", "DATETIME"),
             ]
 
             for col, col_type in migrations:

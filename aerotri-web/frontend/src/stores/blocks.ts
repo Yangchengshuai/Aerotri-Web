@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Block, ReconFileInfo, ReconstructionState } from '@/types'
+import type { Block, ReconFileInfo, ReconstructionState, ReconstructionParams, ReconQualityPreset } from '@/types'
 import { blockApi, reconstructionApi } from '@/api'
 
 export const useBlocksStore = defineStore('blocks', () => {
@@ -134,11 +134,15 @@ export const useBlocksStore = defineStore('blocks', () => {
     currentBlock.value = block
   }
 
-  async function startReconstruction(blockId: string, qualityPreset: 'fast' | 'balanced' | 'high' = 'balanced') {
+  async function startReconstruction(
+    blockId: string, 
+    qualityPreset: ReconQualityPreset = 'balanced',
+    customParams?: ReconstructionParams
+  ) {
     loading.value = true
     error.value = null
     try {
-      await reconstructionApi.start(blockId, qualityPreset)
+      await reconstructionApi.start(blockId, qualityPreset, customParams)
       // Initialize local state
       reconstruction.value[blockId] = {
         status: 'RUNNING',

@@ -3,7 +3,7 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -17,11 +17,42 @@ from ..schemas import (
     ReconstructionFileInfo,
     ReconstructionStatusResponse,
     ReconstructionLogResponse,
+    ReconstructionPresetsResponse,
+    ReconstructionParamsSchemaResponse,
 )
-from ..services.openmvs_runner import openmvs_runner
+from ..services.openmvs_runner import (
+    openmvs_runner,
+    QUALITY_PRESETS,
+    PARAMS_SCHEMA,
+    STAGE_LABELS,
+)
 
 
 router = APIRouter()
+
+
+@router.get(
+    "/reconstruction/presets",
+    response_model=ReconstructionPresetsResponse,
+)
+async def get_reconstruction_presets():
+    """Get all available reconstruction quality presets with their parameters."""
+    return ReconstructionPresetsResponse(
+        presets=QUALITY_PRESETS,
+        stage_labels=STAGE_LABELS,
+    )
+
+
+@router.get(
+    "/reconstruction/params-schema",
+    response_model=ReconstructionParamsSchemaResponse,
+)
+async def get_reconstruction_params_schema():
+    """Get parameter schema with metadata (type, range, description)."""
+    return ReconstructionParamsSchemaResponse(
+        schema=PARAMS_SCHEMA,
+        stage_labels=STAGE_LABELS,
+    )
 
 
 @router.post(
@@ -58,11 +89,25 @@ async def start_reconstruct(
     # Default to CUDA device 7 for OpenMVS reconstruction; can be extended to reuse SfM GPU config.
     gpu_index = 7
 
+    # Convert custom_params to dict if provided
+    custom_params_dict = None
+    if payload.custom_params:
+        custom_params_dict = {}
+        if payload.custom_params.densify:
+            custom_params_dict["densify"] = payload.custom_params.densify.model_dump(exclude_none=True)
+        if payload.custom_params.mesh:
+            custom_params_dict["mesh"] = payload.custom_params.mesh.model_dump(exclude_none=True)
+        if payload.custom_params.refine:
+            custom_params_dict["refine"] = payload.custom_params.refine.model_dump(exclude_none=True)
+        if payload.custom_params.texture:
+            custom_params_dict["texture"] = payload.custom_params.texture.model_dump(exclude_none=True)
+
     await openmvs_runner.start_reconstruction(
         block=block,
         gpu_index=gpu_index,
         db=db,
-        quality_preset=payload.quality_preset,
+        quality_preset=payload.quality_preset or "balanced",
+        custom_params=custom_params_dict,
     )
 
     return ReconstructionStatusResponse(

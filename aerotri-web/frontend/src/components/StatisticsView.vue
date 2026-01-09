@@ -150,22 +150,31 @@
       </template>
       <el-descriptions :column="3" border>
         <el-descriptions-item label="算法">
-          {{ block.algorithm === 'glomap' ? 'GLOMAP' : block.algorithm === 'instantsfm' ? 'InstantSfM' : 'COLMAP' }}
+          {{ algorithmLabel }}
         </el-descriptions-item>
         <el-descriptions-item label="匹配方法">
           {{ matchingMethodLabel }}
         </el-descriptions-item>
-        <el-descriptions-item label="GPU Index">
+        <el-descriptions-item label="GPU Index" v-if="block.algorithm !== 'openmvg_global'">
           {{ algorithmParams.gpu_index ?? 0 }}
         </el-descriptions-item>
-        <el-descriptions-item label="最大图像尺寸">
+        <el-descriptions-item label="特征密度" v-if="block.algorithm === 'openmvg_global'">
+          {{ block.openmvg_params?.feature_preset || 'NORMAL' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="最大图像尺寸" v-if="block.algorithm !== 'openmvg_global'">
           {{ block.feature_params?.max_image_size || 2640 }}
         </el-descriptions-item>
-        <el-descriptions-item label="最大特征数">
+        <el-descriptions-item label="几何模型" v-if="block.algorithm === 'openmvg_global'">
+          {{ block.openmvg_params?.geometric_model === 'e' ? 'Essential' : 'Fundamental' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="最大特征数" v-if="block.algorithm !== 'openmvg_global'">
           {{ block.feature_params?.max_num_features || 20000 }}
         </el-descriptions-item>
+        <el-descriptions-item label="距离比率" v-if="block.algorithm === 'openmvg_global'">
+          {{ block.openmvg_params?.ratio ?? 0.8 }}
+        </el-descriptions-item>
         <el-descriptions-item label="相机模型">
-          {{ block.feature_params?.camera_model || 'SIMPLE_RADIAL' }}
+          {{ block.algorithm === 'openmvg_global' ? openmvgCameraModelLabel : (block.feature_params?.camera_model || 'SIMPLE_RADIAL') }}
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -242,12 +251,45 @@ const registeredSumDisplay = computed(() => {
   return v === undefined ? '-' : v.toLocaleString()
 })
 
+const algorithmLabel = computed(() => {
+  switch (props.block.algorithm) {
+    case 'glomap': return 'GLOMAP'
+    case 'colmap': return 'COLMAP'
+    case 'instantsfm': return 'InstantSfM'
+    case 'openmvg_global': return 'OpenMVG'
+    default: return props.block.algorithm
+  }
+})
+
 const matchingMethodLabel = computed(() => {
+  // OpenMVG uses different matching method names
+  if (props.block.algorithm === 'openmvg_global') {
+    const pairMode = props.block.openmvg_params?.pair_mode || 'EXHAUSTIVE'
+    const matchingMethod = props.block.openmvg_params?.matching_method || 'AUTO'
+    if (pairMode === 'EXHAUSTIVE') {
+      return `穷举配对 + ${matchingMethod}`
+    } else {
+      return `连续配对 + ${matchingMethod}`
+    }
+  }
+  // COLMAP/GLOMAP/InstantSfM matching methods
   switch (props.block.matching_method) {
     case 'sequential': return '序列匹配'
     case 'exhaustive': return '穷举匹配'
     case 'vocab_tree': return '词汇树匹配'
+    case 'spatial': return '空间匹配'
     default: return props.block.matching_method
+  }
+})
+
+const openmvgCameraModelLabel = computed(() => {
+  const model = props.block.openmvg_params?.camera_model || 3
+  switch (model) {
+    case 1: return 'Pinhole'
+    case 2: return 'Pinhole radial 1'
+    case 3: return 'Pinhole radial 3'
+    case 4: return 'Pinhole brown 2'
+    default: return `Model ${model}`
   }
 })
 

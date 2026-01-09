@@ -29,10 +29,12 @@
           v-model="qualityPreset"
           size="small"
           style="width: 160px; margin-right: 12px"
+          @change="onPresetChange"
         >
           <el-option label="快速 (fast)" value="fast" />
           <el-option label="平衡 (balanced)" value="balanced" />
           <el-option label="高质量 (high)" value="high" />
+          <el-option v-if="isCustom" label="自定义 (custom)" value="custom" disabled />
         </el-select>
         <el-button
           v-if="isRunning"
@@ -53,6 +55,32 @@
         </el-button>
       </div>
     </div>
+
+    <!-- Advanced Parameters Section -->
+    <el-card class="params-section">
+      <template #header>
+        <div class="params-header">
+          <span>高级参数</span>
+          <el-button 
+            text 
+            size="small" 
+            @click="showParams = !showParams"
+          >
+            {{ showParams ? '收起' : '展开' }}
+          </el-button>
+        </div>
+      </template>
+      <el-collapse-transition>
+        <div v-show="showParams">
+          <ReconParamsConfig
+            ref="paramsConfigRef"
+            :preset="effectivePreset"
+            v-model="customParams"
+            @custom-changed="onCustomChanged"
+          />
+        </div>
+      </el-collapse-transition>
+    </el-card>
 
     <el-row :gutter="16" class="stage-row">
       <el-col :span="6" v-for="card in stageCards" :key="card.stage">
@@ -166,10 +194,18 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Block, ReconFileInfo, ReconstructionState, ProgressMessage } from '@/types'
+import type { 
+  Block, 
+  ReconFileInfo, 
+  ReconstructionState, 
+  ProgressMessage,
+  ReconQualityPreset,
+  ReconstructionParams,
+} from '@/types'
 import { useBlocksStore } from '@/stores/blocks'
 import { reconstructionApi } from '@/api'
 import ReconstructionViewer from './ReconstructionViewer.vue'
+import ReconParamsConfig from './ReconParamsConfig.vue'
 
 const props = defineProps<{
   block: Block
@@ -178,13 +214,40 @@ const props = defineProps<{
 
 const blocksStore = useBlocksStore()
 
-const qualityPreset = ref<'fast' | 'balanced' | 'high'>('balanced')
+const qualityPreset = ref<ReconQualityPreset | 'custom'>('balanced')
 const previewVisible = ref(false)
 const previewFile = ref<ReconFileInfo | null>(null)
 const loadingAction = ref(false)
 const logLines = ref<string[]>([])
 const showLog = ref(true)
+const showParams = ref(false)
+const customParams = ref<ReconstructionParams | null>(null)
+const isCustom = ref(false)
+const paramsConfigRef = ref<InstanceType<typeof ReconParamsConfig> | null>(null)
 let logTimer: number | null = null
+
+// Effective preset for the params config (never 'custom')
+const effectivePreset = computed<ReconQualityPreset>(() => {
+  if (qualityPreset.value === 'custom') {
+    return 'balanced'  // Default base for custom
+  }
+  return qualityPreset.value
+})
+
+// Handle preset selection change
+function onPresetChange(preset: ReconQualityPreset | 'custom') {
+  if (preset !== 'custom') {
+    isCustom.value = false
+    // Reset params to preset values
+    paramsConfigRef.value?.applyPreset(preset)
+  }
+}
+
+// Handle custom parameter change
+function onCustomChanged() {
+  isCustom.value = true
+  qualityPreset.value = 'custom'
+}
 
 const state = computed<ReconstructionState>(() =>
   blocksStore.getReconstructionState(props.block.id),
@@ -306,7 +369,10 @@ async function refresh() {
 async function onStart() {
   try {
     loadingAction.value = true
-    await blocksStore.startReconstruction(props.block.id, qualityPreset.value)
+    // Use effective preset (not 'custom') and pass custom params if modified
+    const preset = effectivePreset.value
+    const params = isCustom.value ? customParams.value : undefined
+    await blocksStore.startReconstruction(props.block.id, preset, params || undefined)
     ElMessage.success('重建任务已启动')
     await refresh()
   } catch (e: unknown) {
@@ -465,6 +531,16 @@ onUnmounted(() => {
 
 .actions {
   display: flex;
+  align-items: center;
+}
+
+.params-section {
+  margin-top: 12px;
+}
+
+.params-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
 }
 

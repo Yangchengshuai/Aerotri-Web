@@ -11,6 +11,7 @@ from .database import Base
 class BlockStatus(str, enum.Enum):
     """Block processing status."""
     CREATED = "created"
+    QUEUED = "queued"  # Waiting in queue for execution
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -234,6 +235,19 @@ class Block(Base):
         nullable=True,
     )
     
+    # ====== Task Queue fields ======
+    # Queue position (1-based, lower = higher priority; NULL if not queued)
+    queue_position: Mapped[Optional[int]] = mapped_column(
+        nullable=True,
+        default=None,
+    )
+    # Timestamp when block was added to queue
+    queued_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+        default=None,
+    )
+    
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -296,6 +310,8 @@ class Block(Base):
             "partition_params": self.partition_params,
             "sfm_pipeline_mode": self.sfm_pipeline_mode,
             "merge_strategy": self.merge_strategy,
+            "queue_position": self.queue_position,
+            "queued_at": self.queued_at.isoformat() if self.queued_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
