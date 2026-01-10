@@ -26,6 +26,7 @@
   - **分区模式支持**: 支持查看单个分区结果或合并后的结果
   - **版本切换**: 支持在 3D 视图中切换不同版本的结果（原始 + GLOMAP 优化版本）
   - **相机选择与交互**: 支持双击选择相机、查看相机详情、删除相机
+- **重建版本管理**: 当前 Block 支持创建多个 OpenMVS 重建版本（每个版本保留参数/预设、阶段进度、统计和输出），前端提供版本列表、日志查看、产物下载与取消/删除操作，并可在新建的“重建版本对比”页面使用 `SplitModelViewer` 并列对比两个 OBJ 的外观 + 参数差异
 - **相机重投影误差可视化**: 
   - 自动计算并显示每个相机的平均重投影误差
   - 支持文本格式（images.txt）和二进制格式（images.bin）的重投影误差计算
@@ -174,6 +175,14 @@ npm run test
 | `/api/blocks/{id}/partitions/{index}/result/*` | GET | 分区结果 |
 | `/api/blocks/{id}/merge` | POST | 合并分区结果 |
 | `/api/blocks/{id}/reconstruct` | POST | OpenMVS 重建（开始） |
+| `/api/blocks/{id}/recon-versions` | GET | 重建版本列表（包含每个版本的状态、参数、输出路径、进度） |
+| `/api/blocks/{id}/recon-versions` | POST | 创建并启动一个新的 OpenMVS 重建版本 |
+| `/api/blocks/{id}/recon-versions/{version_id}` | GET | 获取版本详情 |
+| `/api/blocks/{id}/recon-versions/{version_id}` | DELETE | 删除版本（非运行中，含产物清理） |
+| `/api/blocks/{id}/recon-versions/{version_id}/cancel` | POST | 取消运行中的版本 |
+| `/api/blocks/{id}/recon-versions/{version_id}/files` | GET | 列出版本产物（稠密/网格/纹理） |
+| `/api/blocks/{id}/recon-versions/{version_id}/download` | GET | 下载指定版本产物 |
+| `/api/blocks/{id}/recon-versions/{version_id}/log_tail` | GET | 获取版本日志 tail |
 | `/api/reconstruction/presets` | GET | OpenMVS 重建质量预设（fast/balanced/high）及其默认分阶段参数 |
 | `/api/reconstruction/params-schema` | GET | OpenMVS 重建参数 schema（类型/范围/说明，用于前端动态表单） |
 | `/api/blocks/{id}/reconstruction/status` | GET | OpenMVS 重建状态 |
@@ -252,7 +261,7 @@ aerotri-web/
    - 版本管理：可在版本选择器中切换不同版本的结果（原始 + GLOMAP 优化版本）
 8. **合并分区**（如使用分区模式）: 分区完成后可手动触发合并操作
 9. **GLOMAP 优化**（可选）: 对于已完成的 GLOMAP Block，可点击"使用 GLOMAP 继续优化"按钮，基于当前结果进行一轮 mapper_resume 全局优化
-10. **对比分析**: 创建多个 Block 使用不同算法，在对比页面分析结果
+10. **对比分析**: 创建多个 Block 使用不同算法，在对比页面分析结果；Block 详情页也可以进入「重建版本对比」，同步查看两个 OpenMVS 版本的模型、参数与统计差异
 
 ## 3D Tiles 转换
 

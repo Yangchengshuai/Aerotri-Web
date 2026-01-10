@@ -262,6 +262,46 @@ class ReconstructionParamsSchemaResponse(BaseModel):
     stage_labels: Dict[str, str]
 
 
+# ===== Reconstruction Version Schemas =====
+
+class ReconVersionCreate(BaseModel):
+    """Schema for creating a new reconstruction version."""
+    quality_preset: Optional[str] = "balanced"  # fast, balanced, high
+    custom_params: Optional[ReconstructionParams] = None
+    name: Optional[str] = None  # Auto-generated if not provided
+
+
+class ReconVersionResponse(BaseModel):
+    """Schema for reconstruction version response."""
+    id: str
+    block_id: str
+    version_index: int
+    name: str
+    quality_preset: str
+    custom_params: Optional[Dict[str, Any]] = None
+    merged_params: Optional[Dict[str, Any]] = None
+    status: str
+    progress: float
+    current_stage: Optional[str] = None
+    output_path: Optional[str] = None
+    error_message: Optional[str] = None
+    statistics: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class ReconVersionListResponse(BaseModel):
+    """Schema for reconstruction version list response."""
+    versions: List[ReconVersionResponse]
+    total: int
+
+
+class ReconVersionFilesResponse(BaseModel):
+    """Schema for reconstruction version files response."""
+    version_id: str
+    files: List[ReconstructionFileInfo]
+
+
 # ===== 3DGS Schemas =====
 
 class GSFileInfo(BaseModel):

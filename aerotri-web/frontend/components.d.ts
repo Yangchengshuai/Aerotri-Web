@@ -76,6 +76,7 @@ declare module 'vue' {
     ReconstructionViewer: typeof import('./src/components/ReconstructionViewer.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SplitModelViewer: typeof import('./src/components/SplitModelViewer.vue')['default']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']
     ThreeViewer: typeof import('./src/components/ThreeViewer.vue')['default']
     TilesConversionPanel: typeof import('./src/components/TilesConversionPanel.vue')['default']

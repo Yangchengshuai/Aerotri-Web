@@ -17,6 +17,11 @@ const routes: RouteRecordRaw[] = [
     name: 'Compare',
     component: () => import('./views/CompareView.vue'),
   },
+  {
+    path: '/compare/recon/:blockId',
+    name: 'ReconCompare',
+    component: () => import('./views/ReconCompareView.vue'),
+  },
 ]
 
 const router = createRouter({

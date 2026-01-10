@@ -1,6 +1,7 @@
 from .block import Block, BlockStatus, AlgorithmType, MatchingMethod, GlomapMode
 from .database import get_db, init_db, AsyncSessionLocal
 from .partition import BlockPartition
+from .recon_version import ReconVersion, ReconVersionStatus
 
 __all__ = [
     "Block",
@@ -12,4 +13,6 @@ __all__ = [
     "init_db",
     "AsyncSessionLocal",
     "BlockPartition",
+    "ReconVersion",
+    "ReconVersionStatus",
 ]

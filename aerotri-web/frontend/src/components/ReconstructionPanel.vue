@@ -37,10 +37,10 @@
           <el-option v-if="isCustom" label="自定义 (custom)" value="custom" disabled />
         </el-select>
         <el-button
-          v-if="isRunning"
+          v-if="hasRunningVersion"
           type="danger"
           :loading="loadingAction"
-          @click="onCancel"
+          @click="onCancelVersion"
         >
           中止重建
         </el-button>
@@ -49,12 +49,98 @@
           type="primary"
           :loading="loadingAction"
           :disabled="!canStart"
-          @click="onStart"
+          @click="onCreateVersion"
         >
-          开始重建
+          创建新版本
+        </el-button>
+        <el-button
+          v-if="versions.length >= 2"
+          type="info"
+          plain
+          @click="goToCompare"
+        >
+          对比版本
         </el-button>
       </div>
     </div>
+
+    <!-- Version List Section -->
+    <el-card class="version-section">
+      <template #header>
+        <div class="version-header">
+          <span>重建版本历史 ({{ versions.length }})</span>
+          <el-button text size="small" @click="refreshVersions" :loading="loadingVersions">
+            刷新
+          </el-button>
+        </div>
+      </template>
+      <div v-if="versions.length === 0" class="empty-versions">
+        <el-text type="info">暂无重建版本，点击"创建新版本"开始第一次重建</el-text>
+      </div>
+      <el-table v-else :data="versions" size="small" stripe>
+        <el-table-column prop="version_index" label="版本" width="70">
+          <template #default="{ row }">
+            <span class="version-badge">v{{ row.version_index }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="名称" min-width="140" />
+        <el-table-column prop="quality_preset" label="预设" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="presetTagType(row.quality_preset)">
+              {{ presetLabel(row.quality_preset) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="versionStatusTagType(row.status)">
+              {{ versionStatusText(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="progress" label="进度" width="80">
+          <template #default="{ row }">
+            {{ Math.round(row.progress) }}%
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="160">
+          <template #default="{ row }">
+            {{ formatTime(row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.status === 'COMPLETED'"
+              text
+              type="primary"
+              size="small"
+              @click="previewVersion(row)"
+            >
+              查看
+            </el-button>
+            <el-button
+              v-if="row.status !== 'RUNNING'"
+              text
+              type="danger"
+              size="small"
+              @click="deleteVersion(row)"
+            >
+              删除
+            </el-button>
+            <el-button
+              v-if="row.status === 'RUNNING'"
+              text
+              type="warning"
+              size="small"
+              @click="cancelVersion(row)"
+            >
+              取消
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <!-- Advanced Parameters Section -->
     <el-card class="params-section">
@@ -193,6 +279,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { 
   Block, 
@@ -201,9 +288,10 @@ import type {
   ProgressMessage,
   ReconQualityPreset,
   ReconstructionParams,
+  ReconVersion,
 } from '@/types'
 import { useBlocksStore } from '@/stores/blocks'
-import { reconstructionApi } from '@/api'
+import { reconstructionApi, reconVersionApi } from '@/api'
 import ReconstructionViewer from './ReconstructionViewer.vue'
 import ReconParamsConfig from './ReconParamsConfig.vue'
 
@@ -212,6 +300,7 @@ const props = defineProps<{
   websocketProgress?: ProgressMessage | null
 }>()
 
+const router = useRouter()
 const blocksStore = useBlocksStore()
 
 const qualityPreset = ref<ReconQualityPreset | 'custom'>('balanced')
@@ -225,6 +314,11 @@ const customParams = ref<ReconstructionParams | null>(null)
 const isCustom = ref(false)
 const paramsConfigRef = ref<InstanceType<typeof ReconParamsConfig> | null>(null)
 let logTimer: number | null = null
+
+// Version management state
+const versions = ref<ReconVersion[]>([])
+const loadingVersions = ref(false)
+let versionPollTimer: number | null = null
 
 // Effective preset for the params config (never 'custom')
 const effectivePreset = computed<ReconQualityPreset>(() => {
@@ -255,10 +349,19 @@ const state = computed<ReconstructionState>(() =>
 
 const isRunning = computed(() => state.value.status === 'RUNNING')
 
+// Check if any version is currently running
+const hasRunningVersion = computed(() => {
+  return versions.value.some(v => v.status === 'RUNNING')
+})
+
+// Get the currently running version
+const runningVersion = computed(() => {
+  return versions.value.find(v => v.status === 'RUNNING')
+})
+
 const canStart = computed(() => {
-  return ['NOT_STARTED', 'FAILED', 'CANCELLED', 'COMPLETED'].includes(
-    state.value.status,
-  )
+  // Can start new version if SfM is completed and no version is running
+  return props.block.status === 'completed' && !hasRunningVersion.value
 })
 
 const currentStageLabel = computed(() => {
@@ -366,36 +469,162 @@ async function refresh() {
   await blocksStore.fetchReconstructionFiles(props.block.id)
 }
 
-async function onStart() {
+// Version management functions
+async function refreshVersions() {
+  try {
+    loadingVersions.value = true
+    const res = await reconVersionApi.list(props.block.id)
+    versions.value = res.data.versions
+  } catch (e) {
+    console.error('Failed to fetch versions:', e)
+  } finally {
+    loadingVersions.value = false
+  }
+}
+
+async function onCreateVersion() {
   try {
     loadingAction.value = true
-    // Use effective preset (not 'custom') and pass custom params if modified
     const preset = effectivePreset.value
     const params = isCustom.value ? customParams.value : undefined
-    await blocksStore.startReconstruction(props.block.id, preset, params || undefined)
-    ElMessage.success('重建任务已启动')
-    await refresh()
+    
+    await reconVersionApi.create(props.block.id, {
+      quality_preset: preset,
+      custom_params: params || undefined,
+    })
+    
+    ElMessage.success('新版本已创建，重建任务已启动')
+    await refreshVersions()
+    setupVersionPolling()
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '重建启动失败')
+    ElMessage.error(e instanceof Error ? e.message : '创建版本失败')
   } finally {
     loadingAction.value = false
   }
 }
 
-async function onCancel() {
+async function onCancelVersion() {
+  const running = runningVersion.value
+  if (!running) return
+  
   try {
     await ElMessageBox.confirm('确定要中止当前重建吗？', '确认中止', {
       type: 'warning',
     })
     loadingAction.value = true
-    await blocksStore.cancelReconstruction(props.block.id)
+    await reconVersionApi.cancel(props.block.id, running.id)
     ElMessage.success('重建已请求中止')
-    await refresh()
+    await refreshVersions()
   } catch {
-    // 用户取消
+    // User cancelled
   } finally {
     loadingAction.value = false
   }
+}
+
+async function cancelVersion(version: ReconVersion) {
+  try {
+    await ElMessageBox.confirm(`确定要中止版本 v${version.version_index} 的重建吗？`, '确认中止', {
+      type: 'warning',
+    })
+    await reconVersionApi.cancel(props.block.id, version.id)
+    ElMessage.success('重建已请求中止')
+    await refreshVersions()
+  } catch {
+    // User cancelled
+  }
+}
+
+async function deleteVersion(version: ReconVersion) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除版本 v${version.version_index} (${version.name}) 吗？此操作不可恢复。`,
+      '确认删除',
+      { type: 'warning' }
+    )
+    await reconVersionApi.delete(props.block.id, version.id)
+    ElMessage.success('版本已删除')
+    await refreshVersions()
+  } catch {
+    // User cancelled
+  }
+}
+
+function previewVersion(version: ReconVersion) {
+  // TODO: Open version preview dialog or navigate to compare view with single version
+  ElMessage.info(`查看版本 v${version.version_index} 的功能正在开发中`)
+}
+
+function goToCompare() {
+  router.push({
+    name: 'ReconCompare',
+    params: { blockId: props.block.id }
+  })
+}
+
+// Version status helpers
+function versionStatusTagType(status: string): '' | 'success' | 'warning' | 'info' | 'danger' {
+  switch (status) {
+    case 'COMPLETED': return 'success'
+    case 'RUNNING': return ''
+    case 'FAILED': return 'danger'
+    case 'CANCELLED': return 'warning'
+    case 'PENDING': return 'info'
+    default: return 'info'
+  }
+}
+
+function versionStatusText(status: string): string {
+  switch (status) {
+    case 'COMPLETED': return '已完成'
+    case 'RUNNING': return '运行中'
+    case 'FAILED': return '失败'
+    case 'CANCELLED': return '已取消'
+    case 'PENDING': return '等待中'
+    default: return status
+  }
+}
+
+function presetTagType(preset: string): '' | 'success' | 'warning' | 'info' {
+  switch (preset) {
+    case 'fast': return 'warning'
+    case 'balanced': return ''
+    case 'high': return 'success'
+    default: return 'info'
+  }
+}
+
+function presetLabel(preset: string): string {
+  switch (preset) {
+    case 'fast': return '快速'
+    case 'balanced': return '平衡'
+    case 'high': return '高质量'
+    default: return preset
+  }
+}
+
+// Version polling for running versions
+function setupVersionPolling() {
+  disposeVersionPolling()
+  if (hasRunningVersion.value) {
+    versionPollTimer = window.setInterval(refreshVersions, 3000)
+  }
+}
+
+function disposeVersionPolling() {
+  if (versionPollTimer) {
+    clearInterval(versionPollTimer)
+    versionPollTimer = null
+  }
+}
+
+// Legacy reconstruction handlers (for backward compatibility)
+async function onStart() {
+  await onCreateVersion()
+}
+
+async function onCancel() {
+  await onCancelVersion()
 }
 
 function openPreview(file: ReconFileInfo) {
@@ -464,16 +693,20 @@ async function refreshLog() {
 
 onMounted(async () => {
   await refresh()
+  await refreshVersions()
   await fetchLog()
   setupLogPolling()
+  setupVersionPolling()
 })
 
 watch(
   () => props.block.id,
   async () => {
     await refresh()
+    await refreshVersions()
     await fetchLog()
     setupLogPolling()
+    setupVersionPolling()
   },
 )
 
@@ -484,8 +717,16 @@ watch(
   },
 )
 
+watch(
+  () => hasRunningVersion.value,
+  () => {
+    setupVersionPolling()
+  },
+)
+
 onUnmounted(() => {
   disposeLogPolling()
+  disposeVersionPolling()
 })
 </script>
 
@@ -637,6 +878,31 @@ onUnmounted(() => {
 
 .debug-section code {
   font-family: Menlo, Monaco, Consolas, 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.version-section {
+  margin-top: 12px;
+}
+
+.version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.empty-versions {
+  text-align: center;
+  padding: 24px;
+}
+
+.version-badge {
+  display: inline-block;
+  background: #ecf5ff;
+  color: #409eff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
   font-size: 12px;
 }
 </style>

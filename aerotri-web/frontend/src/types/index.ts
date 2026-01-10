@@ -284,6 +284,55 @@ export interface ReconParamsSchemaResponse {
   stage_labels: Record<string, string>
 }
 
+// Reconstruction Version types
+export type ReconVersionStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+export interface ReconVersion {
+  id: string
+  block_id: string
+  version_index: number
+  name: string
+  quality_preset: ReconQualityPreset
+  custom_params: ReconstructionParams | null
+  merged_params: ReconstructionParams | null
+  status: ReconVersionStatus
+  progress: number
+  current_stage: string | null
+  output_path: string | null
+  error_message: string | null
+  statistics: {
+    stage_times?: Record<string, number>
+    total_time?: number
+    params?: {
+      quality_preset: string
+      custom_params: ReconstructionParams | null
+      merged_params: ReconstructionParams | null
+    }
+  } | null
+  created_at: string | null
+  completed_at: string | null
+}
+
+export interface ReconVersionListResponse {
+  versions: ReconVersion[]
+  total: number
+}
+
+export interface ReconVersionFilesResponse {
+  version_id: string
+  files: ReconFileInfo[]
+}
+
+export interface ReconFileInfo {
+  stage: string
+  type: 'point_cloud' | 'mesh' | 'texture'
+  name: string
+  size_bytes: number
+  mtime: string
+  preview_supported: boolean
+  download_url: string
+}
+
 // 3DGS types
 export interface GSFileInfo {
   stage: string

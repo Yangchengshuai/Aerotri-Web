@@ -191,6 +191,57 @@ export const reconstructionApi = {
     ),
 }
 
+// Reconstruction Version API (for comparing different reconstruction parameters)
+import type { 
+  ReconVersion, 
+  ReconVersionListResponse, 
+  ReconVersionFilesResponse,
+} from '@/types'
+
+export const reconVersionApi = {
+  // List all reconstruction versions for a block
+  list: (blockId: string) =>
+    api.get<ReconVersionListResponse>(`/blocks/${blockId}/recon-versions`),
+
+  // Get a specific version
+  get: (blockId: string, versionId: string) =>
+    api.get<ReconVersion>(`/blocks/${blockId}/recon-versions/${versionId}`),
+
+  // Create a new reconstruction version
+  create: (
+    blockId: string,
+    payload: {
+      quality_preset?: ReconQualityPreset
+      custom_params?: ReconstructionParams
+      name?: string
+    }
+  ) =>
+    api.post<ReconVersion>(`/blocks/${blockId}/recon-versions`, payload),
+
+  // Delete a version
+  delete: (blockId: string, versionId: string) =>
+    api.delete(`/blocks/${blockId}/recon-versions/${versionId}`),
+
+  // Cancel a running version
+  cancel: (blockId: string, versionId: string) =>
+    api.post<ReconVersion>(`/blocks/${blockId}/recon-versions/${versionId}/cancel`),
+
+  // List files for a version
+  files: (blockId: string, versionId: string) =>
+    api.get<ReconVersionFilesResponse>(`/blocks/${blockId}/recon-versions/${versionId}/files`),
+
+  // Get log tail for a version
+  logTail: (blockId: string, versionId: string, lines = 200) =>
+    api.get<{ version_id: string; lines: string[] }>(
+      `/blocks/${blockId}/recon-versions/${versionId}/log_tail`,
+      { params: { lines } }
+    ),
+
+  // Get download URL for a version file
+  getDownloadUrl: (blockId: string, versionId: string, filePath: string) =>
+    `${apiBase}/blocks/${blockId}/recon-versions/${versionId}/download?file=${encodeURIComponent(filePath)}`,
+}
+
 // 3DGS API
 export const gsApi = {
   train: (

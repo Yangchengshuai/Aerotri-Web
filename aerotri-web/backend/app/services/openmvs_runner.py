@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.block import Block
+from ..models.recon_version import ReconVersion, ReconVersionStatus
 from ..models.database import AsyncSessionLocal
 from ..settings import (
     OPENMVS_INTERFACE_COLMAP,
@@ -259,6 +260,13 @@ class OpenMVSRunner:
         # Simple cancelled flags per block
         self._cancelled: Dict[str, bool] = {}
         self._recovery_done = False
+        
+        # Version-specific log buffers (keyed by version_id)
+        self._version_log_buffers: Dict[str, Deque[str]] = {}
+        # Version-specific process tracking
+        self._version_processes: Dict[str, asyncio.subprocess.Process] = {}
+        # Version-specific cancelled flags
+        self._version_cancelled: Dict[str, bool] = {}
 
     def _check_stage_completed(
         self,
@@ -1794,6 +1802,708 @@ class OpenMVSRunner:
             return None
 
         return list(dq)
+
+    # ==================== Version-based Reconstruction Methods ====================
+
+    async def start_reconstruction_version(
+        self,
+        block: Block,
+        version: ReconVersion,
+        gpu_index: int,
+        db: AsyncSession,
+    ) -> None:
+        """Start reconstruction for a specific version.
+        
+        Args:
+            block: The Block to reconstruct
+            version: The ReconVersion record
+            gpu_index: GPU device index
+            db: Database session
+        """
+        quality_preset = version.quality_preset
+        if quality_preset not in QUALITY_PRESETS:
+            quality_preset = "balanced"
+
+        # Merge custom params with preset defaults
+        merged_params = self._merge_params(quality_preset, version.custom_params)
+
+        # Create version-specific output directory
+        version_dir = os.path.join(block.output_path or "", "recon", f"v{version.version_index}")
+        dense_dir = os.path.join(version_dir, "dense")
+        mesh_dir = os.path.join(version_dir, "mesh")
+        refine_dir = os.path.join(version_dir, "refine")
+        texture_dir = os.path.join(version_dir, "texture")
+
+        os.makedirs(dense_dir, exist_ok=True)
+        os.makedirs(mesh_dir, exist_ok=True)
+        os.makedirs(refine_dir, exist_ok=True)
+        os.makedirs(texture_dir, exist_ok=True)
+
+        # Update version record
+        version.status = ReconVersionStatus.RUNNING.value
+        version.current_stage = "initializing"
+        version.progress = 0.0
+        version.output_path = version_dir
+        version.error_message = None
+        version.merged_params = merged_params
+        version.statistics = {
+            "stage_times": {},
+            "total_time": 0.0,
+            "params": {
+                "quality_preset": quality_preset,
+                "custom_params": version.custom_params,
+                "merged_params": merged_params,
+            },
+        }
+        await db.commit()
+
+        # Determine image path (prefer working_image_path if available)
+        image_path = block.working_image_path or block.image_path
+
+        # Run the actual pipeline in a detached task with its own DB session
+        asyncio.create_task(
+            self._run_version_pipeline(
+                block_id=block.id,
+                version_id=version.id,
+                gpu_index=gpu_index,
+                merged_params=merged_params,
+                version_dir=version_dir,
+                dense_dir=dense_dir,
+                mesh_dir=mesh_dir,
+                refine_dir=refine_dir,
+                texture_dir=texture_dir,
+                image_path=image_path,
+            )
+        )
+
+    async def _run_version_pipeline(
+        self,
+        block_id: str,
+        version_id: str,
+        gpu_index: int,
+        merged_params: Dict[str, Dict[str, any]],
+        version_dir: str,
+        dense_dir: str,
+        mesh_dir: str,
+        refine_dir: str,
+        texture_dir: str,
+        image_path: str,
+    ) -> None:
+        """Internal: run reconstruction pipeline for a version in its own DB session."""
+        stage_times: Dict[str, float] = {}
+
+        try:
+            async with AsyncSessionLocal() as db:
+                # Get block
+                result = await db.execute(select(Block).where(Block.id == block_id))
+                block = result.scalar_one_or_none()
+                if not block:
+                    return
+
+                # Get version
+                result = await db.execute(select(ReconVersion).where(ReconVersion.id == version_id))
+                version = result.scalar_one_or_none()
+                if not version:
+                    return
+
+                # Basic sanity checks: require existing sparse output
+                sparse_dir = None
+                checked_paths = []
+                
+                if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
+                    if (os.path.exists(os.path.join(block.output_colmap_path, "images.bin"))
+                        or os.path.exists(os.path.join(block.output_colmap_path, "images.txt"))):
+                        sparse_dir = block.output_colmap_path
+                    checked_paths.append(block.output_colmap_path)
+                
+                if not sparse_dir:
+                    merged_sparse = os.path.join(block.output_path or "", "merged", "sparse", "0")
+                    if os.path.isdir(merged_sparse) and (
+                        os.path.exists(os.path.join(merged_sparse, "images.bin"))
+                        or os.path.exists(os.path.join(merged_sparse, "images.txt"))
+                    ):
+                        sparse_dir = merged_sparse
+                    checked_paths.append(merged_sparse)
+                
+                if not sparse_dir:
+                    regular_sparse = os.path.join(block.output_path or "", "sparse", "0")
+                    if os.path.isdir(regular_sparse) and (
+                        os.path.exists(os.path.join(regular_sparse, "images.bin"))
+                        or os.path.exists(os.path.join(regular_sparse, "images.txt"))
+                    ):
+                        sparse_dir = regular_sparse
+                    checked_paths.append(regular_sparse)
+                
+                if not sparse_dir:
+                    openmvg_sparse = os.path.join(block.output_path or "", "openmvg_global", "sparse", "0")
+                    if os.path.isdir(openmvg_sparse) and (
+                        os.path.exists(os.path.join(openmvg_sparse, "images.bin"))
+                        or os.path.exists(os.path.join(openmvg_sparse, "images.txt"))
+                    ):
+                        sparse_dir = openmvg_sparse
+                    checked_paths.append(openmvg_sparse)
+                
+                if not sparse_dir:
+                    version.status = ReconVersionStatus.FAILED.value
+                    version.error_message = f"Sparse model not found. Checked paths: {checked_paths}"
+                    await db.commit()
+                    return
+
+                log_path = os.path.join(version_dir, "run_recon.log")
+
+                # Helper function for logging skipped stages
+                def log_skip(stage: str) -> None:
+                    with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+                        log_fp.write(f"[INFO] Stage '{stage}' already completed, skipping.\n")
+
+                # Helper for updating version state
+                async def update_version_stage(stage: str, progress: float):
+                    version.current_stage = stage
+                    version.progress = progress
+                    await db.commit()
+
+                # Stage 1: Image undistort
+                if self._check_stage_completed("undistort", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
+                    log_skip("undistort")
+                    await update_version_stage("undistort", 5.0)
+                    stage_times["undistort"] = 0.0
+                else:
+                    stage_start = datetime.now()
+                    await update_version_stage("undistort", 5.0)
+                    await self._run_undistort_for_version(
+                        version_id=version_id,
+                        sparse_dir=sparse_dir,
+                        dense_dir=dense_dir,
+                        image_path=image_path,
+                        log_path=log_path,
+                    )
+                    if self._version_cancelled.get(version_id):
+                        version.status = ReconVersionStatus.CANCELLED.value
+                        version.current_stage = "cancelled"
+                        await db.commit()
+                        return
+                    stage_times["undistort"] = (datetime.now() - stage_start).total_seconds()
+
+                # Stage 2: InterfaceCOLMAP -> scene.mvs
+                if self._check_stage_completed("convert", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
+                    log_skip("convert")
+                    await update_version_stage("convert", 15.0)
+                    stage_times["convert"] = 0.0
+                else:
+                    stage_start = datetime.now()
+                    await update_version_stage("convert", 15.0)
+                    await self._run_interface_colmap_for_version(
+                        version_id=version_id,
+                        dense_dir=dense_dir,
+                        log_path=log_path,
+                    )
+                    if self._version_cancelled.get(version_id):
+                        version.status = ReconVersionStatus.CANCELLED.value
+                        version.current_stage = "cancelled"
+                        await db.commit()
+                        return
+                    stage_times["convert"] = (datetime.now() - stage_start).total_seconds()
+
+                # Stage 3: DensifyPointCloud
+                if self._check_stage_completed("densify", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
+                    log_skip("densify")
+                    await update_version_stage("densify", 35.0)
+                    stage_times["densify"] = 0.0
+                else:
+                    stage_start = datetime.now()
+                    await update_version_stage("densify", 35.0)
+                    await self._run_densify_for_version(
+                        version_id=version_id,
+                        dense_dir=dense_dir,
+                        gpu_index=gpu_index,
+                        params=merged_params.get("densify", {}),
+                        log_path=log_path,
+                    )
+                    if self._version_cancelled.get(version_id):
+                        version.status = ReconVersionStatus.CANCELLED.value
+                        version.current_stage = "cancelled"
+                        await db.commit()
+                        return
+                    stage_times["densify"] = (datetime.now() - stage_start).total_seconds()
+
+                # Stage 4: ReconstructMesh
+                if self._check_stage_completed("mesh", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
+                    log_skip("mesh")
+                    await update_version_stage("mesh", 55.0)
+                    stage_times["mesh"] = 0.0
+                    self._move_mesh_outputs(dense_dir, mesh_dir)
+                else:
+                    stage_start = datetime.now()
+                    await update_version_stage("mesh", 55.0)
+                    await self._run_mesh_for_version(
+                        version_id=version_id,
+                        dense_dir=dense_dir,
+                        mesh_dir=mesh_dir,
+                        gpu_index=gpu_index,
+                        params=merged_params.get("mesh", {}),
+                        log_path=log_path,
+                    )
+                    if self._version_cancelled.get(version_id):
+                        version.status = ReconVersionStatus.CANCELLED.value
+                        version.current_stage = "cancelled"
+                        await db.commit()
+                        return
+                    self._move_mesh_outputs(dense_dir, mesh_dir)
+                    stage_times["mesh"] = (datetime.now() - stage_start).total_seconds()
+
+                # Stage 5: RefineMesh
+                refine_success = False
+                if self._check_stage_completed("refine", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
+                    log_skip("refine")
+                    await update_version_stage("refine", 75.0)
+                    stage_times["refine"] = 0.0
+                    self._move_refine_outputs(dense_dir, refine_dir)
+                    refine_success = True
+                else:
+                    stage_start = datetime.now()
+                    await update_version_stage("refine", 75.0)
+                    try:
+                        await self._run_refine_for_version(
+                            version_id=version_id,
+                            dense_dir=dense_dir,
+                            mesh_dir=mesh_dir,
+                            refine_dir=refine_dir,
+                            params=merged_params.get("refine", {}),
+                            log_path=log_path,
+                        )
+                        if self._version_cancelled.get(version_id):
+                            version.status = ReconVersionStatus.CANCELLED.value
+                            version.current_stage = "cancelled"
+                            await db.commit()
+                            return
+                        self._move_refine_outputs(dense_dir, refine_dir)
+                        refine_success = True
+                        stage_times["refine"] = (datetime.now() - stage_start).total_seconds()
+                    except OpenMVSProcessError as refine_exc:
+                        self._move_refine_outputs(dense_dir, refine_dir)
+                        refine_output_found = False
+                        for name in ["scene_dense_refine.ply", "scene_dense_mesh_refine.ply"]:
+                            if os.path.exists(os.path.join(refine_dir, name)) or os.path.exists(os.path.join(dense_dir, name)):
+                                refine_output_found = True
+                                break
+                        if refine_output_found:
+                            refine_success = True
+                            stage_times["refine"] = (datetime.now() - stage_start).total_seconds()
+                        else:
+                            refine_success = False
+                            with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+                                log_fp.write(f"[WARNING] Refine stage failed ({refine_exc}). Will use mesh output for texture stage.\n")
+
+                # Stage 6: TextureMesh
+                if self._check_stage_completed("texture", dense_dir, mesh_dir, refine_dir, texture_dir, log_path):
+                    log_skip("texture")
+                    await update_version_stage("texture", 90.0)
+                    stage_times["texture"] = 0.0
+                    self._move_texture_outputs(dense_dir, texture_dir)
+                else:
+                    stage_start = datetime.now()
+                    await update_version_stage("texture", 90.0)
+                    await self._run_texture_for_version(
+                        version_id=version_id,
+                        dense_dir=dense_dir,
+                        refine_dir=refine_dir,
+                        texture_dir=texture_dir,
+                        gpu_index=gpu_index,
+                        params=merged_params.get("texture", {}),
+                        log_path=log_path,
+                        mesh_dir=mesh_dir,
+                    )
+                    if self._version_cancelled.get(version_id):
+                        version.status = ReconVersionStatus.CANCELLED.value
+                        version.current_stage = "cancelled"
+                        await db.commit()
+                        return
+                    self._move_texture_outputs(dense_dir, texture_dir)
+                    stage_times["texture"] = (datetime.now() - stage_start).total_seconds()
+
+                # Mark as completed
+                version.status = ReconVersionStatus.COMPLETED.value
+                version.current_stage = "completed"
+                version.progress = 100.0
+                version.completed_at = datetime.utcnow()
+                stats = version.statistics or {}
+                stats_stage_times = stats.get("stage_times", {})
+                stats_stage_times.update(stage_times)
+                stats["stage_times"] = stats_stage_times
+                stats["total_time"] = sum(stats_stage_times.values())
+                version.statistics = stats
+                await db.commit()
+
+        except Exception as exc:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(ReconVersion).where(ReconVersion.id == version_id))
+                version = result.scalar_one_or_none()
+                if not version:
+                    return
+                version.status = ReconVersionStatus.FAILED.value
+                version.error_message = str(exc)
+                await db.commit()
+        finally:
+            # Cleanup
+            self._version_log_buffers.pop(version_id, None)
+            self._version_processes.pop(version_id, None)
+            self._version_cancelled.pop(version_id, None)
+
+    async def _run_version_process(
+        self,
+        version_id: str,
+        stage: str,
+        cmd: List[str],
+        log_path: str,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Run a subprocess for version-based reconstruction."""
+        pretty_cmd = " ".join(shlex.quote(str(x)) for x in cmd)
+        buffer = self._version_log_buffers.setdefault(version_id, deque(maxlen=1000))
+
+        process_env = os.environ.copy()
+        if env is not None:
+            process_env.update(env)
+        if CERES_LIB_PATH:
+            process_env["LD_LIBRARY_PATH"] = (
+                CERES_LIB_PATH + ":" + process_env.get("LD_LIBRARY_PATH", "")
+            )
+
+        with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
+            log_fp.write(f"\n\n====== [{stage}] Start ======\n")
+            log_fp.write(f"$ {pretty_cmd}\n")
+            buffer.append(f"====== [{stage}] Start ======")
+            buffer.append(f"$ {pretty_cmd}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=cwd,
+                env=process_env,
+            )
+            self._version_processes[version_id] = process
+
+            async def stream_output():
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="replace").rstrip("\n")
+                    buffer.append(decoded)
+                    log_fp.write(decoded + "\n")
+
+            await stream_output()
+            await process.wait()
+            self._version_processes.pop(version_id, None)
+
+            log_fp.write(f"====== [{stage}] Exit code: {process.returncode} ======\n")
+            buffer.append(f"====== [{stage}] Exit code: {process.returncode} ======")
+
+            if process.returncode != 0:
+                raise OpenMVSProcessError(
+                    stage=stage,
+                    return_code=process.returncode,
+                    logs=list(buffer)[-20:],
+                )
+
+    async def _run_undistort_for_version(
+        self,
+        version_id: str,
+        sparse_dir: str,
+        dense_dir: str,
+        image_path: str,
+        log_path: str,
+    ) -> None:
+        """Run COLMAP image_undistorter for version."""
+        from .task_runner import COLMAP_PATH  # Local import to avoid cycles
+        cmd = [
+            str(COLMAP_PATH),
+            "image_undistorter",
+            "--image_path",
+            image_path,
+            "--input_path",
+            sparse_dir,
+            "--output_path",
+            dense_dir,
+            "--output_type",
+            "COLMAP",
+        ]
+        await self._run_version_process(
+            version_id=version_id,
+            stage="undistort",
+            cmd=cmd,
+            log_path=log_path,
+        )
+
+    async def _run_interface_colmap_for_version(
+        self,
+        version_id: str,
+        dense_dir: str,
+        log_path: str,
+    ) -> None:
+        """Run InterfaceCOLMAP for version."""
+        dense_dir_abs = str(Path(dense_dir).resolve())
+        cmd = [
+            str(OPENMVS_INTERFACE_COLMAP),
+            "--input-file",
+            dense_dir_abs,
+            "--output-file",
+            os.path.join(dense_dir_abs, "scene.mvs"),
+            "--working-folder",
+            dense_dir_abs,
+            "-v",
+            "2",
+        ]
+        env = os.environ.copy()
+        env["PWD"] = dense_dir_abs
+        await self._run_version_process(
+            version_id=version_id,
+            stage="convert",
+            cmd=cmd,
+            log_path=log_path,
+            cwd=dense_dir_abs,
+            env=env,
+        )
+
+    async def _run_densify_for_version(
+        self,
+        version_id: str,
+        dense_dir: str,
+        gpu_index: int,
+        params: Dict[str, any],
+        log_path: str,
+    ) -> None:
+        """Run DensifyPointCloud for version."""
+        dense_dir_abs = str(Path(dense_dir).resolve())
+        scene_path = os.path.join(dense_dir_abs, "scene.mvs")
+        resolution_level = params.get("resolution_level", 1)
+        number_views = params.get("number_views", 5)
+        number_views_fuse = params.get("number_views_fuse", 3)
+        cmd = [
+            str(OPENMVS_DENSIFY),
+            scene_path,
+            "--working-folder",
+            dense_dir_abs,
+            "--cuda-device",
+            str(gpu_index),
+            "--resolution-level",
+            str(resolution_level),
+            "--number-views",
+            str(number_views),
+            "--number-views-fuse",
+            str(number_views_fuse),
+            "--estimate-colors",
+            "1",
+            "--estimate-normals",
+            "1",
+            "-v",
+            "2",
+        ]
+        env = os.environ.copy()
+        env["PWD"] = dense_dir_abs
+        await self._run_version_process(
+            version_id=version_id,
+            stage="densify",
+            cmd=cmd,
+            log_path=log_path,
+            cwd=dense_dir_abs,
+            env=env,
+        )
+
+    async def _run_mesh_for_version(
+        self,
+        version_id: str,
+        dense_dir: str,
+        mesh_dir: str,
+        gpu_index: int,
+        params: Dict[str, any],
+        log_path: str,
+    ) -> None:
+        """Run ReconstructMesh for version."""
+        decimate = params.get("decimate", 0.5)
+        thickness_factor = params.get("thickness_factor", 1.5)
+        quality_factor = params.get("quality_factor", 1.0)
+        dense_dir_abs = str(Path(dense_dir).resolve())
+        dense_mvs = os.path.join(dense_dir_abs, "scene_dense.mvs")
+        cmd = [
+            str(OPENMVS_RECONSTRUCT),
+            dense_mvs,
+            "--working-folder",
+            dense_dir_abs,
+            "--cuda-device",
+            str(gpu_index),
+            "--thickness-factor",
+            str(thickness_factor),
+            "--quality-factor",
+            str(quality_factor),
+            "--decimate",
+            str(decimate),
+            "-v",
+            "2",
+        ]
+        env = os.environ.copy()
+        env["PWD"] = mesh_dir
+        await self._run_version_process(
+            version_id=version_id,
+            stage="mesh",
+            cmd=cmd,
+            log_path=log_path,
+            cwd=mesh_dir,
+            env=env,
+        )
+
+    async def _run_refine_for_version(
+        self,
+        version_id: str,
+        dense_dir: str,
+        mesh_dir: str,
+        refine_dir: str,
+        params: Dict[str, any],
+        log_path: str,
+    ) -> None:
+        """Run RefineMesh for version."""
+        resolution_level = params.get("resolution_level", 1)
+        max_face_area = params.get("max_face_area", 128)
+        scales = params.get("scales", 2)
+        dense_dir_abs = str(Path(dense_dir).resolve())
+        dense_mvs = os.path.join(dense_dir_abs, "scene_dense.mvs")
+        mesh_ply = os.path.join(mesh_dir, "scene_dense_mesh.ply")
+        if not os.path.exists(mesh_ply):
+            mesh_ply = os.path.join(dense_dir_abs, "scene_dense_mesh.ply")
+        cmd = [
+            str(OPENMVS_REFINE),
+            dense_mvs,
+            "-m",
+            mesh_ply,
+            "--working-folder",
+            dense_dir_abs,
+            "--resolution-level",
+            str(resolution_level),
+            "--max-face-area",
+            str(max_face_area),
+            "--scales",
+            str(scales),
+            "--reduce-memory",
+            "1",
+            "-v",
+            "2",
+        ]
+        env = os.environ.copy()
+        env["PWD"] = refine_dir
+        await self._run_version_process(
+            version_id=version_id,
+            stage="refine",
+            cmd=cmd,
+            log_path=log_path,
+            cwd=refine_dir,
+            env=env,
+        )
+
+    async def _run_texture_for_version(
+        self,
+        version_id: str,
+        dense_dir: str,
+        refine_dir: str,
+        texture_dir: str,
+        gpu_index: int,
+        params: Dict[str, any],
+        log_path: str,
+        mesh_dir: Optional[str] = None,
+    ) -> None:
+        """Run TextureMesh for version."""
+        resolution_level = params.get("resolution_level", 0)
+        min_resolution = params.get("min_resolution", 1024)
+        dense_dir_abs = str(Path(dense_dir).resolve())
+        dense_mvs = os.path.join(dense_dir_abs, "scene_dense.mvs")
+        
+        # Find refine output
+        refine_ply = None
+        possible_names = ["scene_dense_refine.ply", "scene_dense_mesh_refine.ply"]
+        for name in possible_names:
+            candidate = os.path.join(refine_dir, name)
+            if os.path.exists(candidate):
+                refine_ply = candidate
+                break
+        if not refine_ply:
+            for name in possible_names:
+                candidate = os.path.join(dense_dir_abs, name)
+                if os.path.exists(candidate):
+                    refine_ply = candidate
+                    break
+        if not refine_ply and mesh_dir:
+            mesh_ply = os.path.join(mesh_dir, "scene_dense_mesh.ply")
+            if os.path.exists(mesh_ply):
+                refine_ply = mesh_ply
+            else:
+                mesh_ply = os.path.join(dense_dir_abs, "scene_dense_mesh.ply")
+                if os.path.exists(mesh_ply):
+                    refine_ply = mesh_ply
+        if not refine_ply:
+            refine_ply = os.path.join(refine_dir, "scene_dense_refine.ply")
+        
+        cmd = [
+            str(OPENMVS_TEXTURE),
+            dense_mvs,
+            "-m",
+            refine_ply,
+            "--working-folder",
+            dense_dir_abs,
+            "--cuda-device",
+            str(gpu_index),
+            "--resolution-level",
+            str(resolution_level),
+            "--min-resolution",
+            str(min_resolution),
+            "--export-type",
+            "obj",
+            "-v",
+            "2",
+        ]
+        env = os.environ.copy()
+        env["PWD"] = texture_dir
+        await self._run_version_process(
+            version_id=version_id,
+            stage="texture",
+            cmd=cmd,
+            log_path=log_path,
+            cwd=texture_dir,
+            env=env,
+        )
+
+    async def cancel_reconstruction_version(self, version_id: str) -> None:
+        """Cancel a running reconstruction version."""
+        self._version_cancelled[version_id] = True
+        process = self._version_processes.get(version_id)
+        if process and process.returncode is None:
+            try:
+                process.terminate()
+                await asyncio.sleep(0.5)
+                if process.returncode is None:
+                    process.kill()
+            except Exception:
+                pass
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(ReconVersion).where(ReconVersion.id == version_id))
+            version = result.scalar_one_or_none()
+            if version and version.status == ReconVersionStatus.RUNNING.value:
+                version.status = ReconVersionStatus.CANCELLED.value
+                version.current_stage = "cancelled"
+                await db.commit()
+
+    def get_version_log_tail(self, version_id: str, lines: int = 200) -> Optional[List[str]]:
+        """Get the last N lines of reconstruction log for a version."""
+        # Prefer in-memory buffer when running
+        if version_id in self._version_log_buffers:
+            buf = self._version_log_buffers[version_id]
+            return list(buf)[-lines:]
+
+        # Fallback: try to find version's log file
+        # We need to query the version to get its output_path
+        # For simplicity, return None if not in memory
+        return None
 
 
 # Singleton runner
