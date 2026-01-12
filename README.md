@@ -74,6 +74,7 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 前端在「重建」页签中展示进度、阶段与输出文件列表，支持下载重建产物
   - **重建参数预设 + 自定义参数**: 支持 fast/balanced/high 质量预设，并允许对稠密/网格/优化/纹理各阶段参数进行覆盖（前端“高级参数”面板）
   - **重建版本管理与对比**: 支持创建/取消/删除多个版本；提供 `/blocks/{id}/recon-versions` 系列 API（列表/创建/获取/取消/删除/文件/下载/日志 tail）；新增版本列表卡片与"重建版本对比"页面，配合 `BrushCompareViewer`（基于 CesiumJS）同步展示两个版本的 3D Tiles 并并列展示参数与统计差异
+    - `BrushCompareViewer` 使用单 Cesium viewer + splitDirection 实现真正的分屏效果，性能更优，支持拖拽分割线调整视图比例
   - **版本级 3D Tiles 转换**: 每个重建版本支持独立的 3D Tiles 转换，版本列表显示 tiles 状态
   - 改进：修复去畸变阶段的异常退出处理，即使程序异常退出但输出文件已生成也视为成功
   - 改进：自动配置 Ceres 库路径到 LD_LIBRARY_PATH，解决运行时库依赖问题

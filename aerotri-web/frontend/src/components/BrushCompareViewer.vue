@@ -1,38 +1,26 @@
 <template>
   <div class="brush-compare-viewer" ref="containerRef">
-    <!-- Left panel -->
-    <div
-      class="viewer-panel left-panel"
-      :style="{ width: `${dividerPosition}%` }"
-    >
-      <div class="panel-header left-header">
-        <span class="label-badge">{{ leftLabel }}</span>
-      </div>
-      <div ref="leftCesiumContainer" class="cesium-container"></div>
-    </div>
+    <!-- Single Cesium container -->
+    <div ref="cesiumContainer" class="cesium-container"></div>
 
-    <!-- Draggable divider -->
+    <!-- Draggable divider line (visual only) -->
     <div
-      class="divider"
+      class="divider-line"
+      :style="{ left: `${dividerPosition}%` }"
       @mousedown="startDrag"
       @touchstart.prevent="startDrag"
     >
-      <div class="divider-handle">
-        <div class="divider-line"></div>
-        <div class="divider-grip">⋮⋮</div>
-        <div class="divider-line"></div>
-      </div>
+      <div class="divider-handle">⋮⋮</div>
     </div>
 
-    <!-- Right panel -->
-    <div
-      class="viewer-panel right-panel"
-      :style="{ width: `${100 - dividerPosition}%` }"
-    >
-      <div class="panel-header right-header">
+    <!-- Version labels -->
+    <div class="version-labels">
+      <div class="label left-label">
+        <span class="label-badge">{{ leftLabel }}</span>
+      </div>
+      <div class="label right-label">
         <span class="label-badge">{{ rightLabel }}</span>
       </div>
-      <div ref="rightCesiumContainer" class="cesium-container"></div>
     </div>
 
     <!-- Instructions -->
@@ -55,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { InfoFilled, Loading } from '@element-plus/icons-vue'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
@@ -75,8 +63,7 @@ const emit = defineEmits<{
 
 // DOM refs
 const containerRef = ref<HTMLElement | null>(null)
-const leftCesiumContainer = ref<HTMLDivElement | null>(null)
-const rightCesiumContainer = ref<HTMLDivElement | null>(null)
+const cesiumContainer = ref<HTMLDivElement | null>(null)
 
 // State
 const dividerPosition = ref(50) // 0-100 percentage
@@ -84,18 +71,11 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const isDragging = ref(false)
 
-// Cesium viewers and tilesets
-let leftViewer: Cesium.Viewer | null = null
-let rightViewer: Cesium.Viewer | null = null
+// Cesium viewer and tilesets (SINGLE viewer for true split-screen)
+let viewer: Cesium.Viewer | null = null
 let leftTileset: Cesium.Cesium3DTileset | null = null
 let rightTileset: Cesium.Cesium3DTileset | null = null
 let isInitializing = false
-
-// Camera sync state
-let isSyncing = false
-let leftCameraChangeListener: (() => void) | null = null
-let rightCameraChangeListener: (() => void) | null = null
-let syncAnimationFrame: number | null = null
 
 // Set Cesium base URL
 ;(window as any).CESIUM_BASE_URL = '/cesium/'
@@ -103,12 +83,13 @@ let syncAnimationFrame: number | null = null
 // ==================== Initialization ====================
 
 async function initViewer() {
-  if (!leftCesiumContainer.value || !rightCesiumContainer.value || isInitializing) return
+  if (!cesiumContainer.value || isInitializing) return
   isInitializing = true
 
   try {
-    // Configure common viewer options
-    const viewerOptions = {
+    // Create SINGLE viewer
+    console.log('[BrushCompareViewer] Creating viewer...')
+    viewer = new Cesium.Viewer(cesiumContainer.value, {
       baseLayerPicker: false,
       vrButton: false,
       geocoder: false,
@@ -120,48 +101,25 @@ async function initViewer() {
       navigationHelpButton: false,
       animation: false,
       fullscreenButton: false,
-    }
-
-    // Create left viewer
-    console.log('[BrushCompareViewer] Creating left viewer...')
-    leftViewer = new Cesium.Viewer(leftCesiumContainer.value, viewerOptions)
+    })
 
     // Hide default credit
-    const leftCreditContainer = leftViewer.cesiumWidget.creditContainer as HTMLElement
-    if (leftCreditContainer) {
-      leftCreditContainer.style.display = 'none'
+    const creditContainer = viewer.cesiumWidget.creditContainer as HTMLElement
+    if (creditContainer) {
+      creditContainer.style.display = 'none'
     }
 
-    // Configure left viewer for model-only viewing
-    leftViewer.scene.globe.show = false
-    leftViewer.imageryLayers.removeAll()
-    leftViewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
+    // Configure for model-only viewing
+    viewer.scene.globe.show = false
+    viewer.imageryLayers.removeAll()
+    viewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
 
     // Enable free camera rotation
-    leftViewer.camera.constrainedAxis = undefined
-    leftViewer.camera.enableCollisionDetection = false
+    viewer.camera.constrainedAxis = undefined
+    viewer.camera.enableCollisionDetection = false
 
-    // Create right viewer
-    console.log('[BrushCompareViewer] Creating right viewer...')
-    rightViewer = new Cesium.Viewer(rightCesiumContainer.value, viewerOptions)
-
-    // Hide default credit
-    const rightCreditContainer = rightViewer.cesiumWidget.creditContainer as HTMLElement
-    if (rightCreditContainer) {
-      rightCreditContainer.style.display = 'none'
-    }
-
-    // Configure right viewer for model-only viewing
-    rightViewer.scene.globe.show = false
-    rightViewer.imageryLayers.removeAll()
-    rightViewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
-
-    // Enable free camera rotation
-    rightViewer.camera.constrainedAxis = undefined
-    rightViewer.camera.enableCollisionDetection = false
-
-    // Setup camera sync
-    setupCameraSync()
+    // Set initial split position
+    viewer.scene.splitPosition = dividerPosition.value / 100
 
     // Load tilesets
     await loadTilesets()
@@ -179,19 +137,27 @@ async function initViewer() {
 // ==================== Tileset Loading ====================
 
 async function loadTilesets() {
-  if (!leftViewer || !rightViewer) return
+  if (!viewer) return
 
   try {
-    // Load left tileset
+    // Load left tileset with LEFT split direction
     console.log('[BrushCompareViewer] Loading left tileset:', props.leftTilesetUrl)
     leftTileset = await Cesium.Cesium3DTileset.fromUrl(props.leftTilesetUrl)
-    leftViewer.scene.primitives.add(leftTileset)
+
+    // CRITICAL: Set splitDirection to LEFT - this tileset only renders on the left side
+    leftTileset.splitDirection = Cesium.SplitDirection.LEFT
+
+    viewer.scene.primitives.add(leftTileset)
     emit('left-loaded')
 
-    // Load right tileset
+    // Load right tileset with RIGHT split direction
     console.log('[BrushCompareViewer] Loading right tileset:', props.rightTilesetUrl)
     rightTileset = await Cesium.Cesium3DTileset.fromUrl(props.rightTilesetUrl)
-    rightViewer.scene.primitives.add(rightTileset)
+
+    // CRITICAL: Set splitDirection to RIGHT - this tileset only renders on the right side
+    rightTileset.splitDirection = Cesium.SplitDirection.RIGHT
+
+    viewer.scene.primitives.add(rightTileset)
     emit('right-loaded')
 
     // Wait for both tilesets to be ready
@@ -200,9 +166,9 @@ async function loadTilesets() {
       rightTileset.readyPromise,
     ])
 
-    console.log('[BrushCompareViewer] Both tilesets loaded')
+    console.log('[BrushCompareViewer] Both tilesets loaded with splitDirection')
 
-    // Zoom to model (use left viewer as reference)
+    // Zoom to fit both models
     zoomToModel()
   } catch (err: any) {
     console.error('[BrushCompareViewer] Tileset load error:', err)
@@ -212,7 +178,7 @@ async function loadTilesets() {
 }
 
 function zoomToModel() {
-  if (!leftViewer || !leftTileset) return
+  if (!viewer || !leftTileset) return
 
   // Use left tileset as reference
   const boundingSphere = leftTileset.boundingSphere
@@ -228,131 +194,32 @@ function zoomToModel() {
   if (isLocalCoordinates) {
     // Local coordinates - use lookAt
     const viewRange = radius * 2.5
-    leftViewer.camera.lookAt(
+    viewer.camera.lookAt(
       center,
       new Cesium.HeadingPitchRange(0, -0.5, viewRange)
     )
-
-    // Sync right viewer to same position
-    if (rightViewer) {
-      rightViewer.camera.lookAt(
-        center,
-        new Cesium.HeadingPitchRange(0, -0.5, viewRange)
-      )
-    }
   } else {
     // Geographic coordinates - use viewBoundingSphere
-    leftViewer.camera.viewBoundingSphere(
+    viewer.camera.viewBoundingSphere(
       boundingSphere,
       new Cesium.HeadingPitchRange(0, -0.5, radius * 2.5)
     )
-
-    // Sync right viewer to same position
-    if (rightViewer) {
-      rightViewer.camera.viewBoundingSphere(
-        boundingSphere,
-        new Cesium.HeadingPitchRange(0, -0.5, radius * 2.5)
-      )
-    }
   }
 }
 
-// ==================== Viewport Management ====================
+// ==================== Split Position Management ====================
 
-function updateViewports() {
-  // Viewports are controlled by CSS width
-  // Just trigger re-render if needed
-  if (leftViewer) {
-    leftViewer.scene.requestRender()
-  }
-  if (rightViewer) {
-    rightViewer.scene.requestRender()
-  }
-}
+function updateSplitPosition() {
+  if (!viewer) return
 
-// ==================== Camera Synchronization ====================
+  // Convert percentage (0-100) to normalized value (0.0-1.0)
+  const normalizedPosition = dividerPosition.value / 100
 
-function setupCameraSync() {
-  // Clean up existing listeners
-  cleanupCameraSync()
+  // Update Cesium's built-in split position
+  viewer.scene.splitPosition = normalizedPosition
 
-  if (!leftViewer || !rightViewer) {
-    return
-  }
-
-  console.log('[BrushCompareViewer] Setting up camera sync')
-
-  // Use requestAnimationFrame for smooth sync
-  leftCameraChangeListener = () => {
-    if (!isSyncing) {
-      scheduleSync('left')
-    }
-  }
-
-  rightCameraChangeListener = () => {
-    if (!isSyncing) {
-      scheduleSync('right')
-    }
-  }
-
-  // Listen to camera changed event for real-time sync
-  leftViewer.camera.changed.addEventListener(leftCameraChangeListener)
-  rightViewer.camera.changed.addEventListener(rightCameraChangeListener)
-}
-
-function cleanupCameraSync() {
-  // Cancel any pending sync
-  if (syncAnimationFrame !== null) {
-    cancelAnimationFrame(syncAnimationFrame)
-    syncAnimationFrame = null
-  }
-
-  if (leftViewer && leftCameraChangeListener) {
-    leftViewer.camera.changed.removeEventListener(leftCameraChangeListener)
-    leftCameraChangeListener = null
-  }
-
-  if (rightViewer && rightCameraChangeListener) {
-    rightViewer.camera.changed.removeEventListener(rightCameraChangeListener)
-    rightCameraChangeListener = null
-  }
-}
-
-function scheduleSync(source: 'left' | 'right') {
-  // Cancel any pending sync frame to avoid stacking
-  if (syncAnimationFrame !== null) {
-    cancelAnimationFrame(syncAnimationFrame)
-  }
-
-  // Schedule sync on next animation frame
-  syncAnimationFrame = requestAnimationFrame(() => {
-    syncCameraTo(source === 'left' ? 'right' : 'left')
-    syncAnimationFrame = null
-  })
-}
-
-function syncCameraTo(target: 'left' | 'right') {
-  const sourceViewer = target === 'left' ? rightViewer : leftViewer
-  const targetViewer = target === 'left' ? leftViewer : rightViewer
-
-  if (!sourceViewer || !targetViewer) return
-
-  isSyncing = true
-
-  // Sync camera properties directly
-  const camera = targetViewer.camera
-  const sourceCamera = sourceViewer.camera
-
-  // Clone properties and assign back
-  camera.position = Cesium.Cartesian3.clone(sourceCamera.position)
-  camera.direction = Cesium.Cartesian3.clone(sourceCamera.direction)
-  camera.up = Cesium.Cartesian3.clone(sourceCamera.up)
-  camera.right = Cesium.Cartesian3.clone(sourceCamera.right)
-
-  // Sync frustum for consistent zoom
-  camera.frustum = sourceCamera.frustum.clone()
-
-  isSyncing = false
+  // Request render to update the scene
+  viewer.scene.requestRender()
 }
 
 // ==================== Divider Drag ====================
@@ -377,8 +244,8 @@ function onDrag(e: MouseEvent | TouchEvent) {
   // Clamp between 5% and 95%
   dividerPosition.value = Math.max(5, Math.min(95, percentage))
 
-  // Update shader uniforms for real-time feedback
-  updateViewports()
+  // Update Cesium split position in real-time
+  updateSplitPosition()
 }
 
 function stopDrag() {
@@ -398,101 +265,81 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  cleanupCameraSync()
-  if (leftViewer) {
-    leftViewer.destroy()
-    leftViewer = null
-  }
-  if (rightViewer) {
-    rightViewer.destroy()
-    rightViewer = null
+  if (viewer) {
+    viewer.destroy()
+    viewer = null
   }
 })
 </script>
 
 <style scoped>
 .brush-compare-viewer {
-  display: flex;
+  position: relative;
   width: 100%;
   height: 600px;
   min-height: 500px;
-  position: relative;
   background: #000;
   border-radius: 8px;
   overflow: hidden;
 }
 
-.viewer-panel {
-  position: relative;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.panel-header {
-  position: absolute;
-  top: 12px;
-  z-index: 10;
-  background: rgba(0, 0, 0, 0.7);
-  color: white;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
-  pointer-events: none;
-}
-
-.left-header {
-  left: 12px;
-}
-
-.right-header {
-  right: 12px;
-}
-
 .cesium-container {
-  flex: 1;
   width: 100%;
   height: 100%;
   position: relative;
 }
 
-.divider {
-  width: 12px;
-  height: 100%;
-  background: #1a1a2e;
+/* Divider line - visual indicator only */
+.divider-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.5);
   cursor: col-resize;
+  z-index: 30;
+  transition: background 0.2s;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  user-select: none;
-  z-index: 30;
-  transition: background 0.2s;
-  flex-shrink: 0;
 }
 
-.divider:hover {
-  background: #2a2a3e;
+.divider-line:hover {
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .divider-handle {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.divider-line {
-  width: 2px;
-  height: 30px;
-  background: #404040;
-  border-radius: 1px;
-}
-
-.divider-grip {
-  color: #606060;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+  padding: 8px 6px;
+  border-radius: 4px;
   font-size: 10px;
   letter-spacing: 2px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+/* Version labels */
+.version-labels {
+  position: absolute;
+  top: 12px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 16px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.label {
+  pointer-events: none;
 }
 
 .label-badge {

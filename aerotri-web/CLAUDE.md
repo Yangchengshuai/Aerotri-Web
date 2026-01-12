@@ -113,6 +113,9 @@ The system provides a unified interface for multiple SfM algorithms:
 - **Version-level 3D Tiles**: Each reconstruction version can have its own 3D Tiles conversion with independent status/progress
 - Both types support parameter comparison and result analysis
 - Frontend uses `BrushCompareViewer` (CesiumJS-based) for side-by-side version comparison
+  - Uses single Cesium viewer with `splitDirection` for true split-screen rendering (LEFT/RIGHT)
+  - More performant than dual-viewer approach, shared camera for synchronized viewing
+  - Supports draggable divider to adjust viewport split ratio
 
 ### Service Orchestration
 Services are singletons managed at module level:
