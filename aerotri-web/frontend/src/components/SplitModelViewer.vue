@@ -90,6 +90,10 @@ const leftLoading = ref(false)
 const rightLoading = ref(false)
 const isDragging = ref(false)
 
+// Pending URLs for when scene is not yet initialized
+let pendingLeftUrl: string | null = null
+let pendingRightUrl: string | null = null
+
 // Three.js instances
 let leftRenderer: THREE.WebGLRenderer | null = null
 let leftScene: THREE.Scene | null = null
@@ -203,6 +207,7 @@ async function loadModel(
   setLoading: (v: boolean) => void
 ): Promise<THREE.Object3D> {
   setLoading(true)
+  console.log('[SplitModelViewer] Loading model:', url)
 
   // Remove existing meshes
   const toRemove = scene.children.filter(c => !(c instanceof THREE.Light))
@@ -241,40 +246,79 @@ async function loadModel(
       const mtlUrl = url.replace(/\.obj$/i, '.mtl')
       const baseUrl = url.substring(0, url.lastIndexOf('/') + 1)
 
+      console.log('[SplitModelViewer] Loading OBJ:', url)
+      console.log('[SplitModelViewer] MTL URL:', mtlUrl)
+      console.log('[SplitModelViewer] Base URL for materials:', baseUrl)
+
       const mtlLoader = new MTLLoader()
       mtlLoader.setPath(baseUrl)
-      
+
       // Try to load MTL first
       const mtlFileName = mtlUrl.substring(mtlUrl.lastIndexOf('/') + 1)
-      
+      console.log('[SplitModelViewer] MTL filename:', mtlFileName)
+
       mtlLoader.load(
         mtlFileName,
         (materials) => {
+          console.log('[SplitModelViewer] MTL loaded successfully, materials:', materials)
           materials.preload()
           const objLoader = new OBJLoader()
           objLoader.setMaterials(materials)
           objLoader.load(
             url,
             (object) => {
+              console.log('[SplitModelViewer] OBJ loaded successfully, object:', object)
+              console.log('[SplitModelViewer] Object children count:', object.children.length)
+
+              // Log details about each child
+              object.traverse((child) => {
+                if (child instanceof THREE.Mesh) {
+                  console.log('[SplitModelViewer] Mesh found:', {
+                    name: child.name,
+                    geometry: child.geometry.type,
+                    vertices: child.geometry.attributes.position?.count,
+                    material: child.material?.type,
+                  })
+                }
+              })
+
               scene.add(object)
+              console.log('[SplitModelViewer] Object added to scene, scene children:', scene.children.length)
+
               fitCameraToObject(object, camera, controls)
+              console.log('[SplitModelViewer] Camera fitted to object')
+
               setLoading(false)
               resolve(object)
             },
-            undefined,
+            (xhr) => {
+              if (xhr.lengthComputable) {
+                const percentComplete = (xhr.loaded / xhr.total) * 100
+                console.log('[SplitModelViewer] OBJ load progress:', percentComplete.toFixed(2) + '%')
+              }
+            },
             (error) => {
+              console.error('[SplitModelViewer] OBJ load error:', error)
               setLoading(false)
               reject(error)
             }
           )
         },
-        undefined,
-        () => {
+        (xhr) => {
+          if (xhr.lengthComputable) {
+            const percentComplete = (xhr.loaded / xhr.total) * 100
+            console.log('[SplitModelViewer] MTL load progress:', percentComplete.toFixed(2) + '%')
+          }
+        },
+        (error) => {
+          console.warn('[SplitModelViewer] MTL not found or failed to load, loading OBJ without materials')
+          console.log('[SplitModelViewer] MTL error:', error)
           // MTL not found, load OBJ without materials
           const objLoader = new OBJLoader()
           objLoader.load(
             url,
             (object) => {
+              console.log('[SplitModelViewer] OBJ loaded (without MTL), object:', object)
               // Apply default material
               object.traverse((child) => {
                 if (child instanceof THREE.Mesh) {
@@ -283,15 +327,23 @@ async function loadModel(
                     metalness: 0.1,
                     roughness: 0.8,
                   })
+                  console.log('[SplitModelViewer] Applied default material to mesh')
                 }
               })
               scene.add(object)
+              console.log('[SplitModelViewer] Object added to scene')
               fitCameraToObject(object, camera, controls)
               setLoading(false)
               resolve(object)
             },
-            undefined,
+            (xhr) => {
+              if (xhr.lengthComputable) {
+                const percentComplete = (xhr.loaded / xhr.total) * 100
+                console.log('[SplitModelViewer] OBJ load progress (no MTL):', percentComplete.toFixed(2) + '%')
+              }
+            },
             (error) => {
+              console.error('[SplitModelViewer] OBJ load error (no MTL):', error)
               setLoading(false)
               reject(error)
             }
@@ -405,7 +457,12 @@ function handleResize() {
 // ==================== Lifecycle ====================
 
 onMounted(async () => {
+  console.log('[SplitModelViewer] onMounted called')
+  console.log('[SplitModelViewer] leftUrl:', props.leftUrl, 'rightUrl:', props.rightUrl)
+  console.log('[SplitModelViewer] leftCanvasRef:', leftCanvasRef.value, 'rightCanvasRef:', rightCanvasRef.value)
+
   if (leftCanvasRef.value) {
+    console.log('[SplitModelViewer] Initializing left scene')
     const left = initScene(leftCanvasRef.value, 'left')
     leftRenderer = left.renderer
     leftScene = left.scene
@@ -414,6 +471,7 @@ onMounted(async () => {
     startLeftAnimation()
 
     if (props.leftUrl) {
+      console.log('[SplitModelViewer] Loading left model in onMounted:', props.leftUrl)
       try {
         await loadModel(
           props.leftUrl,
@@ -426,6 +484,28 @@ onMounted(async () => {
       } catch (error) {
         emit('left-error', error as Error)
       }
+    } else {
+      console.warn('[SplitModelViewer] leftUrl is empty in onMounted')
+    }
+  } else {
+    console.error('[SplitModelViewer] leftCanvasRef.value is null in onMounted!')
+  }
+
+  // Check and load pending left URL after scene init
+  if (pendingLeftUrl && leftScene && leftCamera && leftControls) {
+    console.log('[SplitModelViewer] Loading pending left URL:', pendingLeftUrl)
+    try {
+      await loadModel(
+        pendingLeftUrl,
+        leftScene,
+        leftCamera,
+        leftControls,
+        (v) => { leftLoading.value = v }
+      )
+      emit('left-loaded')
+      pendingLeftUrl = null
+    } catch (error) {
+      emit('left-error', error as Error)
     }
   }
 
@@ -450,6 +530,24 @@ onMounted(async () => {
       } catch (error) {
         emit('right-error', error as Error)
       }
+    }
+  }
+
+  // Check and load pending right URL after scene init
+  if (pendingRightUrl && rightScene && rightCamera && rightControls) {
+    console.log('[SplitModelViewer] Loading pending right URL:', pendingRightUrl)
+    try {
+      await loadModel(
+        pendingRightUrl,
+        rightScene,
+        rightCamera,
+        rightControls,
+        (v) => { rightLoading.value = v }
+      )
+      emit('right-loaded')
+      pendingRightUrl = null
+    } catch (error) {
+      emit('right-error', error as Error)
     }
   }
 
@@ -479,21 +577,31 @@ onUnmounted(() => {
 watch(
   () => props.leftUrl,
   async (newUrl) => {
-    if (newUrl && leftScene && leftCamera && leftControls) {
-      try {
-        await loadModel(
-          newUrl,
-          leftScene,
-          leftCamera,
-          leftControls,
-          (v) => { leftLoading.value = v }
-        )
-        emit('left-loaded')
-        if (props.syncCamera) {
-          syncCameraToOther('left')
+    console.log('[SplitModelViewer] leftUrl changed to:', newUrl)
+    console.log('[SplitModelViewer] leftScene:', !!leftScene, 'leftCamera:', !!leftCamera, 'leftControls:', !!leftControls)
+
+    if (newUrl) {
+      if (leftScene && leftCamera && leftControls) {
+        // Scene is ready, load immediately
+        try {
+          await loadModel(
+            newUrl,
+            leftScene,
+            leftCamera,
+            leftControls,
+            (v) => { leftLoading.value = v }
+          )
+          emit('left-loaded')
+          if (props.syncCamera) {
+            syncCameraToOther('left')
+          }
+        } catch (error) {
+          emit('left-error', error as Error)
         }
-      } catch (error) {
-        emit('left-error', error as Error)
+      } else {
+        // Scene not ready yet, store as pending
+        console.log('[SplitModelViewer] Scene not ready, storing left URL as pending:', newUrl)
+        pendingLeftUrl = newUrl
       }
     }
   }
@@ -502,21 +610,30 @@ watch(
 watch(
   () => props.rightUrl,
   async (newUrl) => {
-    if (newUrl && rightScene && rightCamera && rightControls) {
-      try {
-        await loadModel(
-          newUrl,
-          rightScene,
-          rightCamera,
-          rightControls,
-          (v) => { rightLoading.value = v }
-        )
-        emit('right-loaded')
-        if (props.syncCamera) {
-          syncCameraToOther('right')
+    console.log('[SplitModelViewer] rightUrl changed to:', newUrl)
+
+    if (newUrl) {
+      if (rightScene && rightCamera && rightControls) {
+        // Scene is ready, load immediately
+        try {
+          await loadModel(
+            newUrl,
+            rightScene,
+            rightCamera,
+            rightControls,
+            (v) => { rightLoading.value = v }
+          )
+          emit('right-loaded')
+          if (props.syncCamera) {
+            syncCameraToOther('right')
+          }
+        } catch (error) {
+          emit('right-error', error as Error)
         }
-      } catch (error) {
-        emit('right-error', error as Error)
+      } else {
+        // Scene not ready yet, store as pending
+        console.log('[SplitModelViewer] Scene not ready, storing right URL as pending:', newUrl)
+        pendingRightUrl = newUrl
       }
     }
   }

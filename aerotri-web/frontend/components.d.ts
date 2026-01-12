@@ -9,6 +9,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     BlockCard: typeof import('./src/components/BlockCard.vue')['default']
     BlockStats: typeof import('./src/components/BlockStats.vue')['default']
+    BrushCompareViewer: typeof import('./src/components/BrushCompareViewer.vue')['default']
     CameraDetailPanel: typeof import('./src/components/CameraDetailPanel.vue')['default']
     CameraList: typeof import('./src/components/CameraList.vue')['default']
     CesiumViewer: typeof import('./src/components/CesiumViewer.vue')['default']
@@ -38,6 +39,7 @@ declare module 'vue' {
     ElImage: typeof import('element-plus/es')['ElImage']
     ElInput: typeof import('element-plus/es')['ElInput']
     ElInputNumber: typeof import('element-plus/es')['ElInputNumber']
+    ElLink: typeof import('element-plus/es')['ElLink']
     ElMain: typeof import('element-plus/es')['ElMain']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElPagination: typeof import('element-plus/es')['ElPagination']
@@ -76,6 +78,7 @@ declare module 'vue' {
     ReconstructionViewer: typeof import('./src/components/ReconstructionViewer.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    SplitCesiumViewer: typeof import('./src/components/SplitCesiumViewer.vue')['default']
     SplitModelViewer: typeof import('./src/components/SplitModelViewer.vue')['default']
     StatisticsView: typeof import('./src/components/StatisticsView.vue')['default']
     ThreeViewer: typeof import('./src/components/ThreeViewer.vue')['default']

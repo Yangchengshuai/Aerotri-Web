@@ -5,12 +5,17 @@
 ## 功能特性
 
 - **Block 管理**: 创建、编辑、删除测量项目
+  - **图像数量统计**: 创建 Block 时自动统计图像数量，前端显示图像数量标签
 - **图像预览**: 支持缩略图浏览、分页加载、删除图像
  - **算法配置**: 
   - 支持 COLMAP (增量式)、GLOMAP (全局式)、InstantSfM (快速全局式) 和 OpenMVG (CPU 友好全局式) 算法
   - 可配置特征提取、匹配、Mapper 参数
   - GPU 加速支持
   - **Pose Prior 支持**: 使用 EXIF GPS 位置先验加速重建（COLMAP/GLOMAP）
+  - **地理定位（Georeferencing）**: 支持使用 EXIF GPS 数据将模型对齐到 UTM 坐标系，并生成局部 ENU 偏移模型；3D Tiles 转换时会自动注入 transform 以在 Cesium 中真实定位
+    - 可配置对齐最大误差（默认 20 米）和最小公共影像数（默认 3）
+    - 支持外部参考影像文件（`georef_ref_images_path`）和自定义 UTM EPSG（`georef_epsg_utm`）
+    - 输出 `geo_ref.json` 文件，包含 UTM EPSG、原点坐标和 ENU→ECEF 变换矩阵
   - **GLOMAP mapper_resume**: 支持基于已有 COLMAP 结果进行 GLOMAP 全局优化
   - **OpenMVG Global SfM**: 前端提供 OpenMVG 参数面板，可设置相机模型/默认焦距/特征预设/几何解算方式，后端将自动运行 ImageListing→ComputeFeatures→ComputeMatches→GlobalSfM 并导出 COLMAP 格式结果；默认线程数会根据系统内存与图像数量自动调整，亦可强制指定 `openmvg_params.num_threads`
   - **版本管理**: 支持查看和管理同一 Block 的不同版本（原始结果 + 优化版本）
@@ -26,7 +31,10 @@
   - **分区模式支持**: 支持查看单个分区结果或合并后的结果
   - **版本切换**: 支持在 3D 视图中切换不同版本的结果（原始 + GLOMAP 优化版本）
   - **相机选择与交互**: 支持双击选择相机、查看相机详情、删除相机
-- **重建版本管理**: 当前 Block 支持创建多个 OpenMVS 重建版本（每个版本保留参数/预设、阶段进度、统计和输出），前端提供版本列表、日志查看、产物下载与取消/删除操作，并可在新建的“重建版本对比”页面使用 `SplitModelViewer` 并列对比两个 OBJ 的外观 + 参数差异
+- **重建版本管理**: 当前 Block 支持创建多个 OpenMVS 重建版本（每个版本保留参数/预设、阶段进度、统计和输出），前端提供版本列表、日志查看、产物下载与取消/删除操作
+  - **版本级 3D Tiles 转换**: 每个重建版本支持独立的 3D Tiles 转换，版本列表显示 tiles 状态
+  - **版本对比**: 在"重建版本对比"页面使用 `BrushCompareViewer`（基于 CesiumJS）并列对比两个版本的 3D Tiles，支持同步视角
+  - **纹理文件服务**: 支持直接访问纹理文件（OBJ/MTL/纹理图片），Three.js 可正确解析相对路径
 - **相机重投影误差可视化**: 
   - 自动计算并显示每个相机的平均重投影误差
   - 支持文本格式（images.txt）和二进制格式（images.bin）的重投影误差计算
@@ -37,6 +45,7 @@
 - **任务队列（Queue）**:
   - 支持将 Block 加入队列/取消排队/置顶
   - 支持设置最大并发数（同时运行任务数上限），后端调度器会自动派发队列任务
+  - 支持通过环境变量 `QUEUE_MAX_CONCURRENT` 配置最大并发数（默认 1，范围 1-10）
 - **统计分析**: 
   - 处理结果统计
   - 各阶段耗时
@@ -53,6 +62,8 @@
   - 转换流程：OBJ → GLB → 3D Tiles
   - 支持查看转换进度、日志和产物列表
   - 支持获取 tileset.json URL 用于 Cesium 等查看器
+  - **版本级转换**: 支持为每个重建版本独立转换 3D Tiles，前端提供版本选择器
+  - **地理定位支持**: 如果启用了地理定位，转换时会自动在 tileset.json 中注入 root.transform（ENU→ECEF 变换矩阵），使模型在 Cesium 中显示在真实地理位置
 - **3D GS Tiles 转换**: 
   - 支持将 3DGS 训练产物（PLY 格式）转换为 3D Tiles 格式
   - 转换流程：PLY → [SPZ 压缩] → GLTF → 3D Tiles
@@ -151,6 +162,8 @@ npm run test
 | `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 gaussian-splatting 依赖与 CUDA 扩展） | `/root/work/gs_workspace/gs_env/bin/python`（默认值，可通过环境变量覆盖） |
 | `OPENMVG_BIN_DIR` | OpenMVG 可执行文件目录 | `/root/work/openMVG/openMVG_Build/Linux-x86_64-Release` |
 | `OPENMVG_SENSOR_DB` | OpenMVG 相机传感器数据库 | `/root/work/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt` |
+| `QUEUE_MAX_CONCURRENT` | 队列最大并发数 | `1`（范围 1-10） |
+| `SPZ_PYTHON` | SPZ Python 环境路径 | `/root/miniconda3/envs/spz-env/bin/python` |
 
 ## API 文档
 
@@ -183,6 +196,13 @@ npm run test
 | `/api/blocks/{id}/recon-versions/{version_id}/files` | GET | 列出版本产物（稠密/网格/纹理） |
 | `/api/blocks/{id}/recon-versions/{version_id}/download` | GET | 下载指定版本产物 |
 | `/api/blocks/{id}/recon-versions/{version_id}/log_tail` | GET | 获取版本日志 tail |
+| `/api/blocks/{id}/recon-versions/{version_id}/texture/{filename:path}` | GET | 服务纹理文件（OBJ/MTL/纹理图片） |
+| `/api/blocks/{id}/recon-versions/{version_id}/tiles/convert` | POST | 启动版本级 3D Tiles 转换 |
+| `/api/blocks/{id}/recon-versions/{version_id}/tiles/status` | GET | 获取版本 3D Tiles 转换状态 |
+| `/api/blocks/{id}/recon-versions/{version_id}/tiles/files` | GET | 列出版本 3D Tiles 产物 |
+| `/api/blocks/{id}/recon-versions/{version_id}/tiles/download` | GET | 下载版本 3D Tiles 文件 |
+| `/api/blocks/{id}/recon-versions/{version_id}/tiles/tileset_url` | GET | 获取版本 tileset.json URL |
+| `/api/blocks/{id}/georef/download` | GET | 下载 geo_ref.json 文件 |
 | `/api/reconstruction/presets` | GET | OpenMVS 重建质量预设（fast/balanced/high）及其默认分阶段参数 |
 | `/api/reconstruction/params-schema` | GET | OpenMVS 重建参数 schema（类型/范围/说明，用于前端动态表单） |
 | `/api/blocks/{id}/reconstruction/status` | GET | OpenMVS 重建状态 |
@@ -362,6 +382,12 @@ aerotri-web/
   - 默认最大特征数: `20000`（原为 `15000`），前端上限 `50000`
 - 匹配: method (sequential/exhaustive/vocab_tree), overlap
   - **空间匹配**: COLMAP 会自动从数据库检测坐标类型（GPS 或笛卡尔坐标），无需手动指定 `spatial_is_gps` 参数
+- **地理定位参数**（适用于 COLMAP/GLOMAP/InstantSfM/OpenMVG）:
+  - `georef_enabled`: 启用地理定位（默认 false）
+  - `georef_alignment_max_error`: 对齐最大误差（米，默认 20，范围 1-200）
+  - `georef_min_common_images`: 最小公共影像数（默认 3，范围 3-50）
+  - `georef_ref_images_path`: 外部参考影像文件路径（可选，格式：`IMAGE_NAME X Y Z`，通常为 UTM 米）
+  - `georef_epsg_utm`: UTM EPSG 代码（使用外部参考影像时必需，例如 32633 表示 UTM Zone 33N）
 
 ### OpenMVG (全局式 SfM) 参数
 - `openmvg_params.camera_model`: 相机模型编号（1:Pinhole, 2:Pinhole radial 1, 3:Pinhole radial 3, 4:Pinhole brown 2）

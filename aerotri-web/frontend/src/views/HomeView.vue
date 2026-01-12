@@ -32,7 +32,7 @@
             排队任务
             <el-tag size="small" type="warning">{{ queueStore.items.length }}</el-tag>
           </h2>
-          <el-button text size="small" @click="showConfigDialog = true">
+          <el-button text size="small" @click="openConfigDialog">
             <el-icon><Setting /></el-icon>
             并发配置
           </el-button>
@@ -133,15 +133,8 @@
             <el-radio value="glomap">GLOMAP (全局式)</el-radio>
             <el-radio value="colmap">COLMAP (增量式)</el-radio>
             <el-radio value="instantsfm">InstantSfM (快速全局式)</el-radio>
+            <el-radio value="openmvg_global">openMVG (全局式)</el-radio>
           </el-radio-group>
-        </el-form-item>
-        
-        <el-form-item label="匹配方法" prop="matching_method">
-          <el-select v-model="formData.matching_method" style="width: 100%">
-            <el-option label="序列匹配 (Sequential)" value="sequential" />
-            <el-option label="穷举匹配 (Exhaustive)" value="exhaustive" />
-            <el-option label="词汇树匹配 (Vocab Tree)" value="vocab_tree" />
-          </el-select>
         </el-form-item>
       </el-form>
       
@@ -245,7 +238,6 @@ const formData = reactive({
   name: '',
   image_path: '',
   algorithm: 'glomap',
-  matching_method: 'sequential',
 })
 
 const formRules: FormRules = {
@@ -298,7 +290,6 @@ async function handleCreate() {
     formData.name = ''
     formData.image_path = ''
     formData.algorithm = 'glomap'
-    formData.matching_method = 'sequential'
     
     // Navigate to new block
     goToBlock(block.id)

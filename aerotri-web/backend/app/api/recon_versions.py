@@ -42,6 +42,13 @@ def _version_to_response(version: ReconVersion) -> ReconVersionResponse:
         statistics=version.statistics,
         created_at=version.created_at.isoformat() if version.created_at else None,
         completed_at=version.completed_at.isoformat() if version.completed_at else None,
+        # 3D Tiles fields
+        tiles_status=version.tiles_status,
+        tiles_progress=version.tiles_progress,
+        tiles_current_stage=version.tiles_current_stage,
+        tiles_output_path=version.tiles_output_path,
+        tiles_error_message=version.tiles_error_message,
+        tiles_statistics=version.tiles_statistics,
     )
 
 
@@ -432,3 +439,82 @@ async def get_recon_version_log_tail(
     
     log_lines = openmvs_runner.get_version_log_tail(version_id, lines) or []
     return {"version_id": version_id, "lines": log_lines}
+
+
+# ==================== Texture File Static Serving ====================
+# These endpoints serve texture files directly with path-based URLs,
+# enabling Three.js to correctly resolve relative paths for MTL and texture images.
+
+
+@router.get("/blocks/{block_id}/recon-versions/{version_id}/texture/{filename:path}")
+async def serve_texture_file(
+    block_id: str,
+    version_id: str,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve texture files directly with path-based URL.
+    
+    This endpoint allows Three.js OBJLoader/MTLLoader to correctly resolve
+    relative paths for textures. For example:
+    - OBJ file: /api/blocks/{id}/recon-versions/{vid}/texture/scene_dense_texture.obj
+    - MTL file: /api/blocks/{id}/recon-versions/{vid}/texture/scene_dense_texture.mtl
+    - Texture:  /api/blocks/{id}/recon-versions/{vid}/texture/scene_dense_texture_material_00_map_Kd.jpg
+    
+    MTL files reference textures with relative paths like "scene_dense_texture_material_00_map_Kd.jpg",
+    and Three.js will resolve them relative to the MTL file's URL base path.
+    """
+    result = await db.execute(
+        select(ReconVersion)
+        .where(ReconVersion.id == version_id)
+        .where(ReconVersion.block_id == block_id)
+    )
+    version = result.scalar_one_or_none()
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version not found: {version_id}",
+        )
+    
+    if not version.output_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Version has no output path.",
+        )
+    
+    # Build the full path to the texture file
+    root = Path(version.output_path).resolve()
+    texture_dir = root / "texture"
+    requested = (texture_dir / filename).resolve()
+    
+    # Security: prevent directory traversal
+    if not str(requested).startswith(str(texture_dir)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file path.",
+        )
+    
+    if not requested.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Texture file not found: {filename}",
+        )
+    
+    # Determine content type based on file extension
+    suffix = requested.suffix.lower()
+    content_type_map = {
+        ".obj": "text/plain",
+        ".mtl": "text/plain",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+    }
+    content_type = content_type_map.get(suffix, "application/octet-stream")
+    
+    return FileResponse(
+        path=str(requested),
+        filename=requested.name,
+        media_type=content_type,
+    )

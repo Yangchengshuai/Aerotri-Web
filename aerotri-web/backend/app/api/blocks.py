@@ -1,6 +1,7 @@
 """Block management API endpoints."""
 import os
 import uuid
+from pathlib import Path
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,6 +12,30 @@ from ..schemas import BlockCreate, BlockUpdate, BlockResponse, BlockListResponse
 from ..services.workspace_service import WorkspaceService
 
 router = APIRouter()
+
+# Keep consistent with app/api/images.py
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
+
+
+def _count_images_in_dir(directory: str) -> int:
+    """Count images in a directory (non-recursive)."""
+    try:
+        p = Path(directory)
+        if not p.exists() or not p.is_dir():
+            return 0
+        return sum(
+            1
+            for f in p.iterdir()
+            if f.is_file() and f.suffix.lower() in _IMAGE_EXTENSIONS
+        )
+    except Exception:
+        return 0
+
+
+def _ensure_num_images(block: Block) -> int:
+    """Best-effort compute image count for a block."""
+    image_dir = block.working_image_path or block.image_path
+    return _count_images_in_dir(image_dir)
 
 
 @router.post("", response_model=BlockResponse, status_code=status.HTTP_201_CREATED)
@@ -29,6 +54,7 @@ async def create_block(
     block_id = str(uuid.uuid4())
     # Create per-block working dir (safe to delete inside)
     working_dir = WorkspaceService.populate_working_dir(block_id, block_data.image_path)
+    num_images = _count_images_in_dir(working_dir)
 
     # Create block (store original path as source, use working_dir for processing & preview)
     block = Block(
@@ -43,6 +69,7 @@ async def create_block(
         matching_params=block_data.matching_params.model_dump() if block_data.matching_params else None,
         mapper_params=block_data.mapper_params,
         openmvg_params=block_data.openmvg_params,
+        statistics={"num_images": num_images},
     )
     
     db.add(block)
@@ -59,10 +86,20 @@ async def list_blocks(
     """List all blocks."""
     result = await db.execute(select(Block).order_by(Block.created_at.desc()))
     blocks = result.scalars().all()
-    
+
+    responses: List[BlockResponse] = []
+    for b in blocks:
+        resp = BlockResponse.model_validate(b)
+        # Backfill num_images for older blocks that don't have it in statistics yet
+        stats = dict(resp.statistics or {})
+        if "num_images" not in stats:
+            stats["num_images"] = _ensure_num_images(b)
+            resp.statistics = stats
+        responses.append(resp)
+
     return BlockListResponse(
-        blocks=[BlockResponse.model_validate(b) for b in blocks],
-        total=len(blocks)
+        blocks=responses,
+        total=len(responses)
     )
 
 
@@ -81,7 +118,12 @@ async def get_block(
             detail=f"Block not found: {block_id}"
         )
     
-    return block
+    resp = BlockResponse.model_validate(block)
+    stats = dict(resp.statistics or {})
+    if "num_images" not in stats:
+        stats["num_images"] = _ensure_num_images(block)
+        resp.statistics = stats
+    return resp
 
 
 @router.patch("/{block_id}", response_model=BlockResponse)

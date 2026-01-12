@@ -1,12 +1,30 @@
 """GPU monitoring service."""
 from typing import List, Optional
-from ..schemas import GPUInfo
 
-try:
-    import pynvml
-    PYNVML_AVAILABLE = True
-except ImportError:
-    PYNVML_AVAILABLE = False
+# Lazy import to avoid crashes on systems without proper GPU drivers
+PYNVML_AVAILABLE = None  # None = not checked yet, True/False = checked
+_pynvml = None
+
+
+def _ensure_pynvml():
+    """Lazily import and check pynvml availability."""
+    global PYNVML_AVAILABLE, _pynvml
+    if PYNVML_AVAILABLE is None:
+        try:
+            import pynvml
+            _pynvml = pynvml
+            PYNVML_AVAILABLE = True
+        except ImportError:
+            PYNVML_AVAILABLE = False
+        except Exception:
+            PYNVML_AVAILABLE = False
+    return PYNVML_AVAILABLE, _pynvml
+
+
+def _get_gpu_info_schema():
+    """Lazily import GPUInfo schema."""
+    from ..schemas import GPUInfo
+    return GPUInfo
 
 
 class GPUService:
@@ -17,7 +35,8 @@ class GPUService:
     @classmethod
     def _ensure_initialized(cls):
         """Ensure pynvml is initialized."""
-        if not PYNVML_AVAILABLE:
+        available, pynvml = _ensure_pynvml()
+        if not available or pynvml is None:
             return False
         
         if not cls._initialized:
@@ -35,12 +54,13 @@ class GPUService:
             return 0
         
         try:
+            _, pynvml = _ensure_pynvml()
             return pynvml.nvmlDeviceGetCount()
         except Exception:
             return 0
     
     @classmethod
-    def get_gpu(cls, index: int) -> Optional[GPUInfo]:
+    def get_gpu(cls, index: int) -> Optional["GPUInfo"]:
         """Get information about a specific GPU.
         
         Args:
@@ -53,6 +73,9 @@ class GPUService:
             return None
         
         try:
+            _, pynvml = _ensure_pynvml()
+            GPUInfo = _get_gpu_info_schema()
+            
             handle = pynvml.nvmlDeviceGetHandleByIndex(index)
             
             # Get name
@@ -89,7 +112,7 @@ class GPUService:
             return None
     
     @classmethod
-    def get_all_gpus(cls) -> List[GPUInfo]:
+    def get_all_gpus(cls) -> List:
         """Get information about all GPUs.
         
         Returns:

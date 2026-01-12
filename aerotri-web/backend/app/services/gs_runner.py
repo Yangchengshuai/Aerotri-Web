@@ -32,6 +32,7 @@ from ..settings import (
 )
 
 from .gs_tiles_runner import gs_tiles_runner  # 用于复用 PLY → SPZ 转换逻辑
+from .task_notifier import task_notifier
 
 # Import COLMAP_PATH from task_runner
 try:
@@ -371,6 +372,13 @@ class GSRunner:
             db_block.gs_error_message = block.gs_error_message
             db_block.gs_statistics = block.gs_statistics
             await db.commit()
+        
+        # Send task started notification
+        asyncio.create_task(task_notifier.on_task_started(
+            block_id=block.id,
+            block_name=block.name,
+            task_type="gs",
+        ))
 
         asyncio.create_task(
             self._run_training(
@@ -864,9 +872,18 @@ class GSRunner:
                 # update statistics
                 stats = block.gs_statistics or {}
                 stats["stage_times"] = stage_times
-                stats["total_time"] = time.time() - start_ts
+                total_time = time.time() - start_ts
+                stats["total_time"] = total_time
                 block.gs_statistics = stats
                 await db.commit()
+                
+                # Send task completed notification
+                await task_notifier.on_task_completed(
+                    block_id=block.id,
+                    block_name=block.name,
+                    task_type="gs",
+                    duration=total_time,
+                )
 
                 # Optional: export SPZ after training completes
                 try:
@@ -935,9 +952,22 @@ class GSRunner:
                     block.gs_error_message = str(e)
                     stats = block.gs_statistics or {}
                     stats["stage_times"] = stage_times
-                    stats["total_time"] = time.time() - start_ts
+                    total_time = time.time() - start_ts
+                    stats["total_time"] = total_time
                     block.gs_statistics = stats
                     await db.commit()
+                    
+                    # Send task failed notification
+                    log_tail = list(buf)[-10:] if buf else None
+                    await task_notifier.on_task_failed(
+                        block_id=block.id,
+                        block_name=block.name,
+                        task_type="gs",
+                        error=str(e),
+                        stage=block.gs_current_stage,
+                        duration=total_time,
+                        log_tail=log_tail,
+                    )
         finally:
             self._processes.pop(block_id, None)
             self._network_gui_ports.pop(block_id, None)

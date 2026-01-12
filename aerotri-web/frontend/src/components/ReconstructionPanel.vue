@@ -181,11 +181,30 @@
           </template>
           <div class="card-body">
             <div v-if="card.file">
-              <div class="file-name">{{ card.file.name }}</div>
+              <div class="file-name">
+                {{ card.file.name }}
+                <el-tag v-if="card.file.version_index" type="info" size="small" class="version-tag">
+                  v{{ card.file.version_index }}
+                </el-tag>
+              </div>
               <div class="file-meta">
                 <span>{{ formatSize(card.file.size_bytes) }}</span>
                 <span>·</span>
                 <span>{{ formatTime(card.file.mtime) }}</span>
+              </div>
+              <!-- Show other versions if available -->
+              <div v-if="card.files && card.files.length > 1" class="other-versions">
+                <span class="other-versions-label">其他版本:</span>
+                <el-tag
+                  v-for="f in card.files.slice(1)"
+                  :key="f.download_url"
+                  type="info"
+                  size="small"
+                  class="version-link"
+                  @click="downloadFile(f)"
+                >
+                  v{{ f.version_index || '?' }}
+                </el-tag>
               </div>
               <div class="card-actions">
                 <el-button
@@ -256,7 +275,12 @@
           <code>{{ block.output_path || '暂无（尚未运行空三）' }}</code>
         </el-descriptions-item>
         <el-descriptions-item label="重建输出目录">
-          <code>{{ block.recon_output_path || '暂无（尚未重建）' }}</code>
+          <code v-if="activeVersion">{{ activeVersion.output_path }} (v{{ activeVersion.version_index }})</code>
+          <code v-else-if="block.recon_output_path">{{ block.recon_output_path }} (legacy)</code>
+          <code v-else>暂无（尚未重建）</code>
+        </el-descriptions-item>
+        <el-descriptions-item v-if="versions.length > 0" label="版本数量">
+          <code>{{ versions.length }} 个版本</code>
         </el-descriptions-item>
       </el-descriptions>
     </div>
@@ -343,11 +367,10 @@ function onCustomChanged() {
   qualityPreset.value = 'custom'
 }
 
-const state = computed<ReconstructionState>(() =>
+// Store-based state (fallback)
+const storeState = computed<ReconstructionState>(() =>
   blocksStore.getReconstructionState(props.block.id),
 )
-
-const isRunning = computed(() => state.value.status === 'RUNNING')
 
 // Check if any version is currently running
 const hasRunningVersion = computed(() => {
@@ -358,6 +381,36 @@ const hasRunningVersion = computed(() => {
 const runningVersion = computed(() => {
   return versions.value.find(v => v.status === 'RUNNING')
 })
+
+// Get the latest version (highest version_index)
+const latestVersion = computed(() => {
+  if (versions.value.length === 0) return null
+  return versions.value.reduce((latest, v) => 
+    v.version_index > latest.version_index ? v : latest
+  )
+})
+
+// Active version for status display: running version > latest version
+const activeVersion = computed(() => {
+  return runningVersion.value || latestVersion.value
+})
+
+// Computed state based on version list (preferred) or store (fallback)
+const state = computed<ReconstructionState>(() => {
+  // If we have an active version, derive state from it
+  if (activeVersion.value) {
+    return {
+      status: activeVersion.value.status,
+      progress: activeVersion.value.progress,
+      currentStage: activeVersion.value.current_stage,
+      files: storeState.value.files, // Files still come from store
+    }
+  }
+  // Fallback to store state
+  return storeState.value
+})
+
+const isRunning = computed(() => state.value.status === 'RUNNING')
 
 const canStart = computed(() => {
   // Can start new version if SfM is completed and no version is running
@@ -427,11 +480,13 @@ const statusText = computed(() => {
 })
 
 const stageCards = computed(() => {
-  const filesByStage: Record<string, ReconFileInfo | undefined> = {}
-  for (const f of state.value.files) {
+  // Group files by stage, collecting all versions
+  const filesByStage: Record<string, ReconFileInfo[]> = {}
+  for (const f of storeState.value.files) {
     if (!filesByStage[f.stage]) {
-      filesByStage[f.stage] = f
+      filesByStage[f.stage] = []
     }
+    filesByStage[f.stage].push(f)
   }
 
   const stages: { stage: ReconFileInfo['stage']; title: string }[] = [
@@ -442,12 +497,24 @@ const stageCards = computed(() => {
   ]
 
   return stages.map((s) => {
-    const file = filesByStage[s.stage]
+    const files = filesByStage[s.stage] || []
+    // Sort by version_index descending (latest first)
+    files.sort((a, b) => (b.version_index ?? 0) - (a.version_index ?? 0))
+    
+    // Use the first (latest) file for display
+    const file = files[0] || null
     let statusText = '未生成'
     let tagType: 'info' | 'primary' | 'success' = 'info'
 
     if (file) {
-      statusText = '已生成'
+      // Show version count if multiple versions exist
+      if (files.length > 1) {
+        statusText = `已生成 (${files.length}个版本)`
+      } else if (file.version_index) {
+        statusText = `已生成 (v${file.version_index})`
+      } else {
+        statusText = '已生成'
+      }
       tagType = 'success'
     } else if (state.value.status === 'RUNNING') {
       statusText = '处理中'
@@ -458,6 +525,7 @@ const stageCards = computed(() => {
       stage: s.stage,
       title: s.title,
       file,
+      files, // All versions of this stage's files
       statusText,
       tagType,
     }
@@ -630,6 +698,11 @@ async function onCancel() {
 function openPreview(file: ReconFileInfo) {
   previewFile.value = file
   previewVisible.value = true
+}
+
+function downloadFile(file: ReconFileInfo) {
+  // Open download URL in new tab
+  window.open(file.download_url, '_blank')
 }
 
 function formatSize(size: number) {
@@ -815,6 +888,30 @@ onUnmounted(() => {
   display: flex;
   gap: 4px;
   margin-bottom: 8px;
+}
+
+.version-tag {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.other-versions {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.other-versions-label {
+  color: #909399;
+  margin-right: 4px;
+}
+
+.version-link {
+  cursor: pointer;
+  margin-right: 4px;
+}
+
+.version-link:hover {
+  opacity: 0.8;
 }
 
 .card-actions {

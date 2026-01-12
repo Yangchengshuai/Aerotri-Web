@@ -129,6 +129,50 @@
       <!-- Mapper Parameters -->
       <el-divider content-position="left">Mapper 参数</el-divider>
 
+      <!-- Geo-referencing (Cesium real-world placement) -->
+      <el-divider content-position="left">地理定位（Cesium 真实位置）</el-divider>
+      <el-form-item label="启用地理定位">
+        <el-switch v-model="(formData.mapper_params as any).georef_enabled" />
+        <el-text type="info" size="small" style="margin-left: 8px">
+          使用图片 EXIF GPS 对齐到 UTM，并生成局部 ENU 偏移模型；Tileset 将写入 transform 以在 Cesium 中真实定位
+        </el-text>
+      </el-form-item>
+
+      <el-form-item label="对齐最大误差 (米)">
+        <el-input-number
+          v-model="(formData.mapper_params as any).georef_alignment_max_error"
+          :min="1"
+          :max="200"
+          :step="1"
+          :disabled="!(formData.mapper_params as any).georef_enabled"
+        />
+        <el-text type="info" size="small" style="margin-left: 8px">
+          越大越容易成功但可能引入离群点；建议 10~50
+        </el-text>
+      </el-form-item>
+
+      <el-form-item label="最小公共影像数">
+        <el-input-number
+          v-model="(formData.mapper_params as any).georef_min_common_images"
+          :min="3"
+          :max="50"
+          :step="1"
+          :disabled="!(formData.mapper_params as any).georef_enabled"
+        />
+        <el-text type="info" size="small" style="margin-left: 8px">
+          至少 3 张；建议保持默认
+        </el-text>
+      </el-form-item>
+
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      >
+        注意：该功能依赖 EXIF GPS（经纬高）。如果数据缺失/无效，任务会失败并提示原因。
+      </el-alert>
+
       <template v-if="formData.algorithm === 'colmap'">
         <el-form-item label="使用 Pose Prior">
           <el-switch v-model="(formData.mapper_params as any).use_pose_prior" />
@@ -1184,12 +1228,18 @@ const defaultGlomapParams: GlomapMapperParams = {
   thresholds_min_inlier_num: undefined, // 30
   thresholds_min_inlier_ratio: undefined, // 0.25
   thresholds_max_rotation_error: undefined, // 10.0
+  georef_enabled: false,
+  georef_alignment_max_error: 20,
+  georef_min_common_images: 3,
 }
 
 const defaultColmapParams: ColmapMapperParams = {
   use_pose_prior: false,
   ba_use_gpu: true,
   ba_gpu_index: 0,
+  georef_enabled: false,
+  georef_alignment_max_error: 20,
+  georef_min_common_images: 3,
 }
 
 const defaultInstantsfmParams: InstantsfmMapperParams = {
@@ -1206,6 +1256,9 @@ const defaultInstantsfmParams: InstantsfmMapperParams = {
   min_triangulation_angle: 1.5,
   enable_visualization: false,
   visualization_port: null,
+  georef_enabled: false,
+  georef_alignment_max_error: 20,
+  georef_min_common_images: 3,
 }
 
 // Default openMVG parameters (match OpenMVG's built-in defaults)

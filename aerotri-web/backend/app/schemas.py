@@ -227,6 +227,8 @@ class ReconstructionFileInfo(BaseModel):
     mtime: datetime
     preview_supported: bool
     download_url: str
+    version_index: Optional[int] = None  # Version index for multi-version support
+    version_id: Optional[str] = None  # Version ID for multi-version support
 
 
 class ReconstructionFilesResponse(BaseModel):
@@ -288,6 +290,13 @@ class ReconVersionResponse(BaseModel):
     statistics: Optional[Dict[str, Any]] = None
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
+    # 3D Tiles fields
+    tiles_status: Optional[str] = None
+    tiles_progress: float = 0.0
+    tiles_current_stage: Optional[str] = None
+    tiles_output_path: Optional[str] = None
+    tiles_error_message: Optional[str] = None
+    tiles_statistics: Optional[Dict[str, Any]] = None
 
 
 class ReconVersionListResponse(BaseModel):

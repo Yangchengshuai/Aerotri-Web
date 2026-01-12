@@ -373,6 +373,33 @@ export const tilesApi = {
 
   tilesetUrl: (blockId: string) =>
     api.get<{ tileset_url: string }>(`/blocks/${blockId}/tiles/tileset_url`),
+
+  // === Version-based 3D Tiles API ===
+  versionConvert: (
+    blockId: string,
+    versionId: string,
+    payload: {
+      keep_glb?: boolean
+      optimize?: boolean
+    } = {},
+  ) => api.post(`/blocks/${blockId}/recon-versions/${versionId}/tiles/convert`, payload),
+
+  versionStatus: (blockId: string, versionId: string) =>
+    api.get<{
+      block_id: string
+      tiles_status: string | null
+      tiles_progress: number | null
+      tiles_current_stage: string | null
+      tiles_output_path: string | null
+      tiles_error_message: string | null
+      tiles_statistics: Record<string, unknown> | null
+    }>(`/blocks/${blockId}/recon-versions/${versionId}/tiles/status`),
+
+  versionFiles: (blockId: string, versionId: string) =>
+    api.get<{ files: TilesFileInfo[] }>(`/blocks/${blockId}/recon-versions/${versionId}/tiles/files`),
+
+  versionTilesetUrl: (blockId: string, versionId: string) =>
+    api.get<{ tileset_url: string }>(`/blocks/${blockId}/recon-versions/${versionId}/tiles/tileset_url`),
 }
 
 // Queue API

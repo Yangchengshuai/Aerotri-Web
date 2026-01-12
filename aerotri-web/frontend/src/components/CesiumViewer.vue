@@ -68,6 +68,10 @@ const props = defineProps<{
   tilesetUrl: string
 }>()
 
+const emit = defineEmits<{
+  (e: 'viewer-ready', viewer: Cesium.Viewer): void
+}>()
+
 const container = ref<HTMLDivElement | null>(null)
 const loading = ref(true)
 const loadingTileset = ref(false)
@@ -173,6 +177,9 @@ async function initViewer() {
     }
     
     console.log('✓ Camera rotation constraints removed for free rotation')
+
+    // Emit viewer-ready event for split-screen sync
+    emit('viewer-ready', viewer)
 
     // Load tileset
     loadTileset()

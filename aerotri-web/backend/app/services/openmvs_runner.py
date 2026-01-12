@@ -28,6 +28,7 @@ from ..settings import (
     OPENMVS_REFINE,
     OPENMVS_TEXTURE,
 )
+from .task_notifier import task_notifier
 from .task_runner import task_runner, CERES_LIB_PATH
 
 
@@ -268,6 +269,41 @@ class OpenMVSRunner:
         # Version-specific cancelled flags
         self._version_cancelled: Dict[str, bool] = {}
 
+    async def _sync_block_recon_status(
+        self,
+        block_id: str,
+        version: ReconVersion,
+        db: AsyncSession,
+    ) -> None:
+        """Sync active version's status to Block's recon_* fields.
+        
+        This keeps the Block's reconstruction status in sync with the
+        currently running or latest completed version, for backward
+        compatibility with components that read Block.recon_* fields.
+        
+        Args:
+            block_id: The Block ID
+            version: The active ReconVersion whose status to sync
+            db: Database session
+        """
+        result = await db.execute(select(Block).where(Block.id == block_id))
+        block = result.scalar_one_or_none()
+        if not block:
+            return
+        
+        # Sync status fields from version to block
+        block.recon_status = version.status
+        block.recon_progress = version.progress
+        block.recon_current_stage = version.current_stage
+        block.recon_output_path = version.output_path
+        block.recon_error_message = version.error_message
+        
+        # Don't overwrite existing statistics if version has none
+        if version.statistics:
+            block.recon_statistics = version.statistics
+        
+        # Note: we don't commit here - let the caller manage the transaction
+
     def _check_stage_completed(
         self,
         stage: str,
@@ -458,6 +494,13 @@ class OpenMVSRunner:
             },
         }
         await db.commit()
+        
+        # Send task started notification
+        asyncio.create_task(task_notifier.on_task_started(
+            block_id=block.id,
+            block_name=block.name,
+            task_type="recon",
+        ))
 
         # Run the actual pipeline in a detached task with its own DB session
         asyncio.create_task(
@@ -507,6 +550,8 @@ class OpenMVSRunner:
 
                 # Basic sanity checks: require existing sparse output
                 # Priority order:
+                # 0. output_path/sparse_enu_local/0 (geo-referenced local frame, preferred)
+                # 0.1 output_path/sparse_utm/0 (geo-referenced UTM frame, fallback)
                 # 1. block.output_colmap_path (set by openMVG, GLOMAP, etc.)
                 # 2. merged/sparse/0 (partitioned SfM)
                 # 3. sparse/0 (regular COLMAP)
@@ -514,6 +559,26 @@ class OpenMVSRunner:
                 sparse_dir = None
                 checked_paths = []
                 
+                # Prefer geo-referenced local model if present (small coordinates, better numerical stability)
+                if not sparse_dir:
+                    georef_local = os.path.join(block.output_path or "", "sparse_enu_local", "0")
+                    if os.path.isdir(georef_local) and (
+                        os.path.exists(os.path.join(georef_local, "images.bin"))
+                        or os.path.exists(os.path.join(georef_local, "images.txt"))
+                    ):
+                        sparse_dir = georef_local
+                    checked_paths.append(georef_local)
+
+                # Fallback: geo-referenced UTM model (large coordinates)
+                if not sparse_dir:
+                    georef_utm = os.path.join(block.output_path or "", "sparse_utm", "0")
+                    if os.path.isdir(georef_utm) and (
+                        os.path.exists(os.path.join(georef_utm, "images.bin"))
+                        or os.path.exists(os.path.join(georef_utm, "images.txt"))
+                    ):
+                        sparse_dir = georef_utm
+                    checked_paths.append(georef_utm)
+
                 # Check block.output_colmap_path first (e.g. openMVG sets this)
                 if block.output_colmap_path and os.path.isdir(block.output_colmap_path):
                     if (os.path.exists(os.path.join(block.output_colmap_path, "images.bin"))
@@ -857,9 +922,18 @@ class OpenMVSRunner:
                 stats_stage_times = stats.get("stage_times", {})
                 stats_stage_times.update(stage_times)
                 stats["stage_times"] = stats_stage_times
-                stats["total_time"] = sum(stats_stage_times.values())
+                total_time = sum(stats_stage_times.values())
+                stats["total_time"] = total_time
                 block.recon_statistics = stats
                 await db.commit()
+                
+                # Send task completed notification
+                await task_notifier.on_task_completed(
+                    block_id=block.id,
+                    block_name=block.name,
+                    task_type="recon",
+                    duration=total_time,
+                )
 
         except Exception as exc:
             async with AsyncSessionLocal() as db:
@@ -876,6 +950,17 @@ class OpenMVSRunner:
                     block.recon_status = "FAILED"
                     # Prefer detailed message from OpenMVSProcessError
                     block.recon_error_message = str(exc)
+                    
+                    # Send task failed notification
+                    log_tail = list(self._log_buffers.get(block_id, []))[-10:]
+                    await task_notifier.on_task_failed(
+                        block_id=block.id,
+                        block_name=block.name,
+                        task_type="recon",
+                        error=str(exc),
+                        stage=block.recon_current_stage,
+                        log_tail=log_tail if log_tail else None,
+                    )
                 await db.commit()
         finally:
             self._log_buffers.pop(block_id, None)
@@ -1855,6 +1940,9 @@ class OpenMVSRunner:
                 "merged_params": merged_params,
             },
         }
+        
+        # Sync version status to Block
+        await self._sync_block_recon_status(block.id, version, db)
         await db.commit()
 
         # Determine image path (prefer working_image_path if available)
@@ -1946,6 +2034,7 @@ class OpenMVSRunner:
                 if not sparse_dir:
                     version.status = ReconVersionStatus.FAILED.value
                     version.error_message = f"Sparse model not found. Checked paths: {checked_paths}"
+                    await self._sync_block_recon_status(block_id, version, db)
                     await db.commit()
                     return
 
@@ -1956,10 +2045,12 @@ class OpenMVSRunner:
                     with open(log_path, "a", encoding="utf-8", buffering=1) as log_fp:
                         log_fp.write(f"[INFO] Stage '{stage}' already completed, skipping.\n")
 
-                # Helper for updating version state
+                # Helper for updating version state and syncing to Block
                 async def update_version_stage(stage: str, progress: float):
                     version.current_stage = stage
                     version.progress = progress
+                    # Sync to Block for backward compatibility
+                    await self._sync_block_recon_status(block_id, version, db)
                     await db.commit()
 
                 # Stage 1: Image undistort
@@ -1980,6 +2071,7 @@ class OpenMVSRunner:
                     if self._version_cancelled.get(version_id):
                         version.status = ReconVersionStatus.CANCELLED.value
                         version.current_stage = "cancelled"
+                        await self._sync_block_recon_status(block_id, version, db)
                         await db.commit()
                         return
                     stage_times["undistort"] = (datetime.now() - stage_start).total_seconds()
@@ -2000,6 +2092,7 @@ class OpenMVSRunner:
                     if self._version_cancelled.get(version_id):
                         version.status = ReconVersionStatus.CANCELLED.value
                         version.current_stage = "cancelled"
+                        await self._sync_block_recon_status(block_id, version, db)
                         await db.commit()
                         return
                     stage_times["convert"] = (datetime.now() - stage_start).total_seconds()
@@ -2022,6 +2115,7 @@ class OpenMVSRunner:
                     if self._version_cancelled.get(version_id):
                         version.status = ReconVersionStatus.CANCELLED.value
                         version.current_stage = "cancelled"
+                        await self._sync_block_recon_status(block_id, version, db)
                         await db.commit()
                         return
                     stage_times["densify"] = (datetime.now() - stage_start).total_seconds()
@@ -2046,6 +2140,7 @@ class OpenMVSRunner:
                     if self._version_cancelled.get(version_id):
                         version.status = ReconVersionStatus.CANCELLED.value
                         version.current_stage = "cancelled"
+                        await self._sync_block_recon_status(block_id, version, db)
                         await db.commit()
                         return
                     self._move_mesh_outputs(dense_dir, mesh_dir)
@@ -2074,6 +2169,7 @@ class OpenMVSRunner:
                         if self._version_cancelled.get(version_id):
                             version.status = ReconVersionStatus.CANCELLED.value
                             version.current_stage = "cancelled"
+                            await self._sync_block_recon_status(block_id, version, db)
                             await db.commit()
                             return
                         self._move_refine_outputs(dense_dir, refine_dir)
@@ -2116,6 +2212,7 @@ class OpenMVSRunner:
                     if self._version_cancelled.get(version_id):
                         version.status = ReconVersionStatus.CANCELLED.value
                         version.current_stage = "cancelled"
+                        await self._sync_block_recon_status(block_id, version, db)
                         await db.commit()
                         return
                     self._move_texture_outputs(dense_dir, texture_dir)
@@ -2132,6 +2229,8 @@ class OpenMVSRunner:
                 stats["stage_times"] = stats_stage_times
                 stats["total_time"] = sum(stats_stage_times.values())
                 version.statistics = stats
+                # Sync to Block for backward compatibility
+                await self._sync_block_recon_status(block_id, version, db)
                 await db.commit()
 
         except Exception as exc:
@@ -2142,6 +2241,7 @@ class OpenMVSRunner:
                     return
                 version.status = ReconVersionStatus.FAILED.value
                 version.error_message = str(exc)
+                await self._sync_block_recon_status(block_id, version, db)
                 await db.commit()
         finally:
             # Cleanup
@@ -2491,6 +2591,8 @@ class OpenMVSRunner:
             if version and version.status == ReconVersionStatus.RUNNING.value:
                 version.status = ReconVersionStatus.CANCELLED.value
                 version.current_stage = "cancelled"
+                # Sync to Block for backward compatibility
+                await self._sync_block_recon_status(version.block_id, version, db)
                 await db.commit()
 
     def get_version_log_tail(self, version_id: str, lines: int = 200) -> Optional[List[str]]:

@@ -1,0 +1,71 @@
+# AeroTri Web 通知服务配置
+# 
+# 使用方法：
+# 1. 复制此文件为 notification.yaml
+# 2. 修改 enabled: true 启用通知服务
+# 3. 配置钉钉 webhook_url 和 secret
+#
+# 详细文档：docs/NOTIFICATION_SETUP.md
+#
+# 注意：
+# - enabled: false 时整个通知服务不启动，不影响现有功能
+# - 每个通道可单独启用/禁用
+# - webhook_url 和 secret 从钉钉机器人管理页面获取
+
+notification:
+  # 全局开关（关闭后整个通知服务不启动）
+  enabled: false
+  
+  # 钉钉多通道配置
+  dingtalk:
+    channels:
+      # 通道1: Block 运行通知（任务开始/完成/失败）
+      # 建议用于：任务执行相关的实时通知
+      block_events:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_HERE"
+        secret: "YOUR_SECRET_HERE"
+        events:
+          - task_started      # 任务开始执行
+          - task_completed    # 任务成功完成
+          - task_failed       # 任务执行失败（含错误信息和最后日志）
+          
+      # 通道2: 后端状态（系统状态汇总 + 后端健康）
+      # 建议用于：运维监控群
+      backend_status:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_HERE"
+        secret: "YOUR_SECRET_HERE"
+        events:
+          - system_status     # 周期性系统状态（CPU/内存/磁盘/GPU）
+          - backend_startup   # 后端服务启动
+          - backend_shutdown  # 后端服务关闭
+          - backend_error     # 后端严重错误
+          
+      # 通道3: 任务监控（周期性任务汇总）
+      # 建议用于：日常任务统计报告
+      task_monitor:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN_HERE"
+        secret: "YOUR_SECRET_HERE"
+        events:
+          - periodic_task_summary  # 周期性任务汇总报告
+    
+  # 飞书配置（后续迭代支持）
+  feishu:
+    enabled: false
+    channels: {}
+    
+  # 周期性汇总配置
+  periodic:
+    # 任务汇总报告
+    # 发送到订阅了 periodic_task_summary 事件的通道
+    task_summary:
+      enabled: true
+      cron: "0 21 * * *"  # 每天21:00 (简化格式: 分钟 小时 * * *)
+      
+    # 系统状态汇总
+    # 发送到订阅了 system_status 事件的通道
+    system_status:
+      enabled: true
+      interval: 14400  # 每4小时（单位：秒）

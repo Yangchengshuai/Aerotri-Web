@@ -121,6 +121,34 @@ class ReconVersion(Base):
         nullable=True,
     )
     
+    # === 3D Tiles conversion fields ===
+    tiles_status: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        default=None,
+    )
+    tiles_progress: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+    )
+    tiles_current_stage: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    tiles_output_path: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    tiles_error_message: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    tiles_statistics: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    
     def to_dict(self) -> dict:
         """Convert to dictionary for API response."""
         return {
@@ -139,4 +167,11 @@ class ReconVersion(Base):
             "statistics": self.statistics,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            # 3D Tiles fields
+            "tiles_status": self.tiles_status,
+            "tiles_progress": self.tiles_progress,
+            "tiles_current_stage": self.tiles_current_stage,
+            "tiles_output_path": self.tiles_output_path,
+            "tiles_error_message": self.tiles_error_message,
+            "tiles_statistics": self.tiles_statistics,
         }

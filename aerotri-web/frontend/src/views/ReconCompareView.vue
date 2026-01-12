@@ -68,24 +68,25 @@
 
     <!-- Comparison Content -->
     <div class="comparison-content" v-if="leftVersion && rightVersion">
-      <!-- Split Model Viewer -->
+      <!-- Brush Compare Viewer (CesiumJS 3D Tiles) -->
       <div class="model-viewer-section">
-        <SplitModelViewer
-          :left-url="leftModelUrl"
-          :right-url="rightModelUrl"
+        <BrushCompareViewer
+          v-if="leftTilesetUrl && rightTilesetUrl"
+          :left-tileset-url="leftTilesetUrl"
+          :right-tileset-url="rightTilesetUrl"
           :left-label="`v${leftVersion.version_index} - ${presetLabel(leftVersion.quality_preset)}`"
           :right-label="`v${rightVersion.version_index} - ${presetLabel(rightVersion.quality_preset)}`"
-          :sync-camera="syncCamera"
           @left-loaded="onLeftLoaded"
           @right-loaded="onRightLoaded"
-          @left-error="onLeftError"
-          @right-error="onRightError"
+          @error="onViewerError"
         />
-        <div class="viewer-controls">
-          <el-checkbox v-model="syncCamera">
-            <el-icon><Link /></el-icon>
-            同步视角
-          </el-checkbox>
+        <div v-else class="loading-tiles">
+          <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+          <p>正在加载 3D Tiles...</p>
+          <p v-if="loadingTiles.left || loadingTiles.right" class="loading-status">
+            <span v-if="loadingTiles.left">左侧加载中...</span>
+            <span v-if="loadingTiles.right">右侧加载中...</span>
+          </p>
         </div>
       </div>
 
@@ -176,8 +177,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Loading, Link, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { ReconVersion, ReconstructionParams, ReconFileInfo } from '@/types'
-import { reconVersionApi, blockApi } from '@/api'
-import SplitModelViewer from '@/components/SplitModelViewer.vue'
+import { reconVersionApi, blockApi, tilesApi } from '@/api'
+import BrushCompareViewer from '@/components/BrushCompareViewer.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -188,35 +189,40 @@ const versions = ref<ReconVersion[]>([])
 const loading = ref(true)
 const leftVersionId = ref<string | null>(null)
 const rightVersionId = ref<string | null>(null)
-const syncCamera = ref(true)
 
 // Files for each version
 const leftVersionFiles = ref<ReconFileInfo[]>([])
 const rightVersionFiles = ref<ReconFileInfo[]>([])
 
-// Get texture model URL (OBJ file) - use the download_url from the API
-const leftModelUrl = computed(() => {
-  if (!leftVersionId.value) return ''
-  const textureFile = leftVersionFiles.value.find(
-    f => f.stage === 'texture' && f.name.endsWith('.obj')
-  )
-  if (textureFile) {
-    // The download_url is already a full path like /api/blocks/.../download?file=...
-    return textureFile.download_url
-  }
-  return ''
-})
+// 3D Tiles URLs for BrushCompareViewer
+const leftTilesetUrl = ref<string | null>(null)
+const rightTilesetUrl = ref<string | null>(null)
+const loadingTiles = ref({ left: false, right: false })
 
-const rightModelUrl = computed(() => {
-  if (!rightVersionId.value) return ''
-  const textureFile = rightVersionFiles.value.find(
-    f => f.stage === 'texture' && f.name.endsWith('.obj')
-  )
-  if (textureFile) {
-    return textureFile.download_url
+// Load tileset URL for a version
+async function loadTilesetUrl(versionId: string, side: 'left' | 'right') {
+  if (!versionId) {
+    if (side === 'left') leftTilesetUrl.value = null
+    else rightTilesetUrl.value = null
+    return
   }
-  return ''
-})
+
+  loadingTiles.value[side] = true
+  try {
+    const { data } = await tilesApi.versionTilesetUrl(blockId.value, versionId)
+    const url = data.tileset_url
+    console.log(`[ReconCompareView] ${side} tileset URL:`, url)
+    if (side === 'left') leftTilesetUrl.value = url
+    else rightTilesetUrl.value = url
+  } catch (e) {
+    console.error(`[ReconCompareView] Failed to load ${side} tileset URL:`, e)
+    ElMessage.error(`无法加载 ${side === 'left' ? '左侧' : '右侧'} 版本的 3D Tiles`)
+    if (side === 'left') leftTilesetUrl.value = null
+    else rightTilesetUrl.value = null
+  } finally {
+    loadingTiles.value[side] = false
+  }
+}
 
 const completedVersions = computed(() => {
   return versions.value.filter(v => v.status === 'COMPLETED')
@@ -284,15 +290,22 @@ async function fetchData() {
     // Fetch block info
     const blockRes = await blockApi.get(blockId.value)
     blockName.value = blockRes.data.name
-    
+
     // Fetch versions
     const versionsRes = await reconVersionApi.list(blockId.value)
     versions.value = versionsRes.data.versions
-    
+
     // Auto-select first two completed versions
     if (completedVersions.value.length >= 2) {
       leftVersionId.value = completedVersions.value[0].id
       rightVersionId.value = completedVersions.value[1].id
+
+      // Immediately fetch files for both selected versions
+      // This ensures the model URLs are populated right away
+      await Promise.all([
+        fetchVersionFiles(leftVersionId.value, 'left'),
+        fetchVersionFiles(rightVersionId.value, 'right'),
+      ])
     }
   } catch (e) {
     console.error('Failed to fetch data:', e)
@@ -303,7 +316,9 @@ async function fetchData() {
 
 async function fetchVersionFiles(versionId: string, side: 'left' | 'right') {
   try {
+    console.log(`[ReconCompareView] Fetching ${side} version files for version:`, versionId)
     const res = await reconVersionApi.files(blockId.value, versionId)
+    console.log(`[ReconCompareView] Fetched ${side} version files:`, res.data.files.length, 'files')
     if (side === 'left') {
       leftVersionFiles.value = res.data.files
     } else {
@@ -315,21 +330,18 @@ async function fetchVersionFiles(versionId: string, side: 'left' | 'right') {
 }
 
 function onLeftLoaded() {
+  console.log('[ReconCompareView] Left tileset loaded')
   ElMessage.success('左侧模型加载完成')
 }
 
 function onRightLoaded() {
+  console.log('[ReconCompareView] Right tileset loaded')
   ElMessage.success('右侧模型加载完成')
 }
 
-function onLeftError(error: Error) {
-  console.error('Left model load error:', error)
-  ElMessage.error(`左侧模型加载失败: ${error.message}`)
-}
-
-function onRightError(error: Error) {
-  console.error('Right model load error:', error)
-  ElMessage.error(`右侧模型加载失败: ${error.message}`)
+function onViewerError(error: string) {
+  console.error('[ReconCompareView] Viewer error:', error)
+  ElMessage.error(`模型加载失败: ${error}`)
 }
 
 function goBack() {
@@ -363,36 +375,26 @@ onMounted(fetchData)
 
 watch(blockId, fetchData)
 
-// Watch for version selection changes to fetch files
+// Watch for version selection changes to fetch files and load tilesets
 watch(leftVersionId, async (newId) => {
   if (newId) {
     await fetchVersionFiles(newId, 'left')
+    await loadTilesetUrl(newId, 'left')
   } else {
     leftVersionFiles.value = []
+    leftTilesetUrl.value = null
   }
 })
 
 watch(rightVersionId, async (newId) => {
   if (newId) {
     await fetchVersionFiles(newId, 'right')
+    await loadTilesetUrl(newId, 'right')
   } else {
     rightVersionFiles.value = []
+    rightTilesetUrl.value = null
   }
 })
-
-// Fetch files when versions are initially selected
-watch(
-  () => completedVersions.value,
-  async () => {
-    if (leftVersionId.value) {
-      await fetchVersionFiles(leftVersionId.value, 'left')
-    }
-    if (rightVersionId.value) {
-      await fetchVersionFiles(rightVersionId.value, 'right')
-    }
-  },
-  { immediate: true }
-)
 </script>
 
 <style scoped>
@@ -497,11 +499,22 @@ watch(
   margin-bottom: 20px;
 }
 
-.viewer-controls {
+.loading-tiles {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  padding: 12px;
+  gap: 12px;
+  padding: 60px 20px;
   background: #f5f7fa;
-  border-radius: 0 0 8px 8px;
+  border-radius: 8px;
+  color: #606266;
+}
+
+.loading-status {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+  color: #909399;
 }
 </style>

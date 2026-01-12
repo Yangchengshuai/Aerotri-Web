@@ -39,6 +39,7 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
 - SfM 空三重建
   - 支持 COLMAP（增量式）、GLOMAP（全局式）与 InstantSfM（快速全局式）管线
   - **Pose Prior 支持**: COLMAP/GLOMAP 支持使用 EXIF GPS 位置先验加速重建
+  - **地理定位（Georeferencing）**: 支持使用 EXIF GPS 数据将模型对齐到 UTM 坐标系，并生成局部 ENU 偏移模型；3D Tiles 转换时会自动注入 transform 以在 Cesium 中真实定位
   - **GLOMAP mapper_resume**: 支持基于已有 COLMAP 结果进行 GLOMAP 全局优化，创建优化版本
   - **OpenMVG Global SfM（CPU 友好全局式）**: 支持 OpenMVG 全局 SfM 流水线，自动执行 ImageListing/ComputeFeatures/ComputeMatches/GeometricFilter/GlobalSfM，并导出 COLMAP 格式结果供前端可视化和后续处理；可在前端设置相机模型、默认焦距、几何模型与线程数
   - **版本管理**: 支持查看和管理同一 Block 的不同版本（原始结果 + GLOMAP 优化版本）
@@ -72,12 +73,14 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 后端在 Block 上维护独立的重建状态字段（`recon_status`、`recon_progress`、`recon_current_stage` 等）
   - 前端在「重建」页签中展示进度、阶段与输出文件列表，支持下载重建产物
   - **重建参数预设 + 自定义参数**: 支持 fast/balanced/high 质量预设，并允许对稠密/网格/优化/纹理各阶段参数进行覆盖（前端“高级参数”面板）
-  - **重建版本管理与对比**: 支持创建/取消/删除多个版本；提供 `/blocks/{id}/recon-versions` 系列 API（列表/创建/获取/取消/删除/文件/下载/日志 tail）；新增版本列表卡片与“重建版本对比”页面，配合 `SplitModelViewer` 同步展示两个 OBJ 并并列展示参数与统计差异
+  - **重建版本管理与对比**: 支持创建/取消/删除多个版本；提供 `/blocks/{id}/recon-versions` 系列 API（列表/创建/获取/取消/删除/文件/下载/日志 tail）；新增版本列表卡片与"重建版本对比"页面，配合 `BrushCompareViewer`（基于 CesiumJS）同步展示两个版本的 3D Tiles 并并列展示参数与统计差异
+  - **版本级 3D Tiles 转换**: 每个重建版本支持独立的 3D Tiles 转换，版本列表显示 tiles 状态
   - 改进：修复去畸变阶段的异常退出处理，即使程序异常退出但输出文件已生成也视为成功
   - 改进：自动配置 Ceres 库路径到 LD_LIBRARY_PATH，解决运行时库依赖问题
 - 任务队列与并发控制
   - 支持将 Block 加入队列、取消排队、置顶
   - 支持设置最大并发数（同时运行任务数量上限），后端调度器会自动从队列派发任务
+  - 支持通过环境变量 `QUEUE_MAX_CONCURRENT` 配置最大并发数（默认 1，范围 1-10）
 - 3DGS（3D Gaussian Splatting）训练与预览
   - 后端封装 3DGS 训练任务（通过 `GS_REPO_PATH` / `GS_PYTHON` 调用外部仓库）
   - Block 维度维护独立的 3DGS 状态字段（`gs_status`、`gs_progress`、`gs_current_stage` 等），支持任务恢复
@@ -97,6 +100,8 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - Block 维度维护独立的 3D Tiles 状态字段（`tiles_status`、`tiles_progress`、`tiles_current_stage` 等），支持任务恢复
   - 前端在「3D Tiles」页签中启动转换任务、查看进度、日志与产物列表
   - 支持获取 tileset.json URL，可在 Cesium 等 3D Tiles 查看器中加载
+  - **版本级转换**: 支持为每个重建版本独立转换 3D Tiles，前端提供版本选择器
+  - **地理定位支持**: 如果启用了地理定位，转换时会自动在 tileset.json 中注入 root.transform（ENU→ECEF 变换矩阵），使模型在 Cesium 中显示在真实地理位置
 - InstantSfM 实时可视化
   - 支持启用实时可视化功能，通过 WebSocket 实时显示优化过程、相机位姿和点云
   - 前端提供实时可视化查看器，可在任务运行期间查看优化进度

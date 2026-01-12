@@ -304,7 +304,11 @@ async def list_reconstruction_files(
     block_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """List reconstruction output files for a block."""
+    """List reconstruction output files for a block.
+    
+    This aggregates files from all versions (if any) and legacy paths.
+    Files include version_index and version_id for multi-version support.
+    """
     result = await db.execute(select(Block).where(Block.id == block_id))
     block = result.scalar_one_or_none()
     if not block:
@@ -313,15 +317,39 @@ async def list_reconstruction_files(
             detail=f"Block not found: {block_id}",
         )
 
-    if not block.recon_output_path:
-        return ReconstructionFilesResponse(files=[])
-
-    root = Path(block.recon_output_path)
-    files = _collect_recon_files(root)
-    # Fix download_url now that we know the concrete block_id
-    for f in files:
-        f.download_url = f"/api/blocks/{block_id}/reconstruction/download?file={f.stage}/{f.name}"
-    return ReconstructionFilesResponse(files=files)
+    all_files: List[ReconstructionFileInfo] = []
+    
+    # 1. Collect files from all versions
+    from ..models.recon_version import ReconVersion
+    result = await db.execute(
+        select(ReconVersion)
+        .where(ReconVersion.block_id == block_id)
+        .order_by(ReconVersion.version_index.desc())
+    )
+    versions = result.scalars().all()
+    
+    for version in versions:
+        if version.output_path and os.path.isdir(version.output_path):
+            root = Path(version.output_path)
+            files = _collect_recon_files(root)
+            for f in files:
+                # Use version-specific download URL
+                f.download_url = f"/api/blocks/{block_id}/recon-versions/{version.id}/download?file={f.stage}/{f.name}"
+                f.version_index = version.version_index
+                f.version_id = version.id
+            all_files.extend(files)
+    
+    # 2. If no version files found, try legacy path
+    if not all_files and block.recon_output_path:
+        root = Path(block.recon_output_path)
+        if root.is_dir():
+            files = _collect_recon_files(root)
+            for f in files:
+                f.download_url = f"/api/blocks/{block_id}/reconstruction/download?file={f.stage}/{f.name}"
+                # version_index and version_id remain None for legacy files
+            all_files.extend(files)
+    
+    return ReconstructionFilesResponse(files=all_files)
 
 
 @router.get("/blocks/{block_id}/reconstruction/download")
@@ -373,7 +401,13 @@ async def get_reconstruction_log_tail(
     lines: int = Query(200, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the last N lines of reconstruction logs for a block."""
+    """Get the last N lines of reconstruction logs for a block.
+    
+    Smart log selection:
+    1. If a version is running, get logs from that version's buffer
+    2. If no running version, get logs from the latest version's log file
+    3. Fallback to legacy log path (<output>/recon/run_recon.log)
+    """
     result = await db.execute(select(Block).where(Block.id == block_id))
     block = result.scalar_one_or_none()
     if not block:
@@ -382,7 +416,55 @@ async def get_reconstruction_log_tail(
             detail=f"Block not found: {block_id}",
         )
 
+    # Try to get logs from versions
+    from ..models.recon_version import ReconVersion, ReconVersionStatus
+    from sqlalchemy import func
+    
+    # 1. Check for running version
+    result = await db.execute(
+        select(ReconVersion)
+        .where(ReconVersion.block_id == block_id)
+        .where(ReconVersion.status == ReconVersionStatus.RUNNING.value)
+    )
+    running_version = result.scalar_one_or_none()
+    
+    if running_version:
+        # Get logs from running version's in-memory buffer
+        log_lines = openmvs_runner.get_version_log_tail(running_version.id, lines)
+        if log_lines:
+            return ReconstructionLogResponse(block_id=block_id, lines=log_lines)
+    
+    # 2. No running version - get latest version's log from disk
+    result = await db.execute(
+        select(ReconVersion)
+        .where(ReconVersion.block_id == block_id)
+        .order_by(ReconVersion.version_index.desc())
+        .limit(1)
+    )
+    latest_version = result.scalar_one_or_none()
+    
+    if latest_version and latest_version.output_path:
+        version_log_path = Path(latest_version.output_path) / "run_recon.log"
+        if version_log_path.is_file():
+            log_lines = _read_log_tail(str(version_log_path), lines)
+            if log_lines:
+                return ReconstructionLogResponse(block_id=block_id, lines=log_lines)
+    
+    # 3. Fallback to legacy log path
     log_lines = openmvs_runner.get_log_tail(block_id, lines) or []
     return ReconstructionLogResponse(block_id=block_id, lines=log_lines)
+
+
+def _read_log_tail(log_path: str, lines: int) -> List[str]:
+    """Read the last N lines from a log file."""
+    from collections import deque
+    dq: deque[str] = deque(maxlen=lines)
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as fp:
+            for line in fp:
+                dq.append(line.rstrip("\n"))
+    except Exception:
+        return []
+    return list(dq)
 
 

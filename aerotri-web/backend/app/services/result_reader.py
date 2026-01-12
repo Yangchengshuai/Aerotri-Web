@@ -270,6 +270,9 @@ class ResultReader:
         """
         # Check common locations (prioritize merged results for partitioned SfM)
         candidates = [
+            # Geo-referenced / origin-shifted outputs (if enabled)
+            os.path.join(output_path, "sparse_enu_local", "0"),
+            os.path.join(output_path, "sparse_utm", "0"),
             os.path.join(output_path, "merged", "sparse", "0"),  # Partitioned merge result
             os.path.join(output_path, "sparse", "0"),  # Regular or symlinked result
             os.path.join(output_path, "openmvg_global", "sparse", "0"),  # openMVG export

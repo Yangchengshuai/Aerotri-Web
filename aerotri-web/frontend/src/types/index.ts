@@ -32,6 +32,10 @@ export interface ColmapMapperParams {
   use_pose_prior?: boolean
   ba_use_gpu: boolean
   ba_gpu_index: number
+  // Geo-referencing (EXIF GPS -> UTM -> local ENU + Cesium tileset transform)
+  georef_enabled?: boolean
+  georef_alignment_max_error?: number
+  georef_min_common_images?: number
 }
 
 export interface GlomapMapperParams {
@@ -88,6 +92,11 @@ export interface GlomapMapperParams {
   thresholds_min_inlier_num?: number
   thresholds_min_inlier_ratio?: number
   thresholds_max_rotation_error?: number
+
+  // Geo-referencing (EXIF GPS -> UTM -> local ENU + Cesium tileset transform)
+  georef_enabled?: boolean
+  georef_alignment_max_error?: number
+  georef_min_common_images?: number
 }
 
 export interface InstantsfmMapperParams {
@@ -104,6 +113,11 @@ export interface InstantsfmMapperParams {
   global_positioning_function_tolerance: number
   min_num_matches: number
   min_triangulation_angle: number
+
+  // Geo-referencing (EXIF GPS -> UTM -> local ENU + Cesium tileset transform)
+  georef_enabled?: boolean
+  georef_alignment_max_error?: number
+  georef_min_common_images?: number
 }
 
 // OpenMVG matching method types (from main_ComputeMatches.cpp)
@@ -311,6 +325,13 @@ export interface ReconVersion {
   } | null
   created_at: string | null
   completed_at: string | null
+  // 3D Tiles fields
+  tiles_status: string | null
+  tiles_progress: number
+  tiles_current_stage: string | null
+  tiles_output_path: string | null
+  tiles_error_message: string | null
+  tiles_statistics: Record<string, unknown> | null
 }
 
 export interface ReconVersionListResponse {

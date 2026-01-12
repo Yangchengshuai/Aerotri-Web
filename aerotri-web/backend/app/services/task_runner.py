@@ -4,6 +4,9 @@ import asyncio
 import time
 import shutil
 import multiprocessing
+import csv
+import json
+import math
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from collections import deque
@@ -21,6 +24,7 @@ from .instantsfm_visualizer_proxy import (
     unregister_visualizer_proxy,
     get_visualizer_proxy,
 )
+from .task_notifier import task_notifier
 
 
 # COLMAP/GLOMAP executable paths
@@ -245,6 +249,13 @@ class TaskRunner:
         ctx.open_log_file(output_path)
         self.running_tasks[block.id] = ctx
         
+        # Send task started notification
+        asyncio.create_task(task_notifier.on_task_started(
+            block_id=block.id,
+            block_name=block.name,
+            task_type="sfm",
+        ))
+        
         # Check if partitioned SfM mode
         if block.partition_enabled and block.sfm_pipeline_mode == "global_feat_match":
             # Start partitioned SfM task
@@ -430,15 +441,47 @@ class TaskRunner:
                         return
                     stage_times["mapping"] = (datetime.now() - stage_start).total_seconds()
 
+                    # Optional: geo-referencing and origin shift
+                    # Enable by setting mapper_params.georef_enabled = true
+                    try:
+                        georef_enabled = False
+                        if isinstance(mapper_params, dict):
+                            v = mapper_params.get("georef_enabled")
+                            if isinstance(v, bool):
+                                georef_enabled = v
+                            elif v is not None:
+                                georef_enabled = int(v) != 0
+                        if georef_enabled and block.output_path:
+                            ctx.write_log_line("[GEOREF] Georeferencing enabled - starting model_aligner + origin shift ...")
+                            block.current_stage = "georef"
+                            block.current_detail = "model_aligner"
+                            # Keep overall progress near completion; do not regress
+                            block.progress = max(block.progress or 0.0, 95.0)
+                            await db.commit()
+                            await self._run_georef_and_origin_shift(
+                                block=block,
+                                image_dir=image_dir,
+                                ctx=ctx,
+                                db=db,
+                                block_id=block_id,
+                                mapper_params=mapper_params,
+                            )
+                    except Exception as e:
+                        # Fail the task if georef explicitly requested and failed
+                        if isinstance(mapper_params, dict) and mapper_params.get("georef_enabled"):
+                            raise RuntimeError(f"Georeferencing failed: {e}") from e
+                        ctx.write_log_line(f"[GEOREF][WARNING] Skipped due to error: {e}")
+
                     # Mark as completed
                     block.status = BlockStatus.COMPLETED
                     block.completed_at = datetime.utcnow()
                     block.current_stage = "completed"
                     block.current_detail = None
                     block.progress = 100.0
+                    total_time = sum(stage_times.values())
                     block.statistics = {
                         "stage_times": stage_times,
-                        "total_time": sum(stage_times.values()),
+                        "total_time": total_time,
                         "algorithm_params": {
                             "algorithm": block.algorithm.value,
                             "matching_method": block.matching_method.value,
@@ -449,6 +492,14 @@ class TaskRunner:
                         },
                     }
                     await db.commit()
+                    
+                    # Send task completed notification
+                    await task_notifier.on_task_completed(
+                        block_id=block.id,
+                        block_name=block.name,
+                        task_type="sfm",
+                        duration=total_time,
+                    )
                 except Exception as e:
                     try:
                         result = await db.execute(select(Block).where(Block.id == block_id))
@@ -458,6 +509,21 @@ class TaskRunner:
                             block.error_message = str(e)
                             block.completed_at = datetime.utcnow()
                             await db.commit()
+                            
+                            # Send task failed notification
+                            duration = None
+                            if block.started_at:
+                                duration = (datetime.utcnow() - block.started_at).total_seconds()
+                            log_tail = list(ctx.log_buffer)[-10:] if ctx.log_buffer else None
+                            await task_notifier.on_task_failed(
+                                block_id=block.id,
+                                block_name=block.name,
+                                task_type="sfm",
+                                error=str(e),
+                                stage=block.current_stage,
+                                duration=duration,
+                                log_tail=log_tail,
+                            )
                     except Exception:
                         pass
         finally:
@@ -472,6 +538,439 @@ class TaskRunner:
                 await queue_scheduler.trigger_dispatch()
             except Exception as e:
                 print(f"Failed to trigger queue scheduler: {e}")
+
+    @staticmethod
+    def _qvec_to_rotmat(qvec: Tuple[float, float, float, float]):
+        """Convert COLMAP qvec (qw,qx,qy,qz) to rotation matrix R (3x3).
+
+        Uses COLMAP's convention.
+        """
+        qw, qx, qy, qz = qvec
+        return (
+            (1.0 - 2.0 * qy * qy - 2.0 * qz * qz, 2.0 * qx * qy - 2.0 * qw * qz, 2.0 * qx * qz + 2.0 * qw * qy),
+            (2.0 * qx * qy + 2.0 * qw * qz, 1.0 - 2.0 * qx * qx - 2.0 * qz * qz, 2.0 * qy * qz - 2.0 * qw * qx),
+            (2.0 * qx * qz - 2.0 * qw * qy, 2.0 * qy * qz + 2.0 * qw * qx, 1.0 - 2.0 * qx * qx - 2.0 * qy * qy),
+        )
+
+    @staticmethod
+    def _mat3_mul_vec3(R, v):
+        return (
+            R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
+            R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
+            R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2],
+        )
+
+    @staticmethod
+    def _find_best_sparse_input_dir(output_path: str) -> Optional[str]:
+        """Find best sparse model directory under a block output_path.
+
+        Returns either <output>/sparse/0, <output>/merged/sparse/0, <output>/sparse, etc.
+        """
+        candidates = [
+            os.path.join(output_path, "merged", "sparse", "0"),
+            os.path.join(output_path, "sparse", "0"),
+            os.path.join(output_path, "sparse"),
+            os.path.join(output_path, "openmvg_global", "sparse", "0"),
+        ]
+        for p in candidates:
+            if os.path.exists(os.path.join(p, "images.bin")) or os.path.exists(os.path.join(p, "images.txt")):
+                return p
+        return None
+
+    async def _run_georef_and_origin_shift(
+        self,
+        block: Block,
+        image_dir: str,
+        ctx: TaskContext,
+        db: AsyncSession,
+        block_id: str,
+        mapper_params: dict,
+    ):
+        """Run EXIF GPS -> UTM ref_images -> COLMAP model_aligner -> origin shift.
+
+        Output artifacts (under block.output_path):
+          - geo/gps_raw.csv
+          - geo/gps_raw_ref_images.txt
+          - geo/geo_ref.json
+          - geo/raw_to_utm_transform.txt
+          - sparse_utm/0 (aligned)
+          - sparse_enu_local/0 (shifted local ENU frame)
+        """
+        if not block.output_path:
+            raise RuntimeError("block.output_path missing")
+
+        out_root = block.output_path
+        geo_dir = os.path.join(out_root, "geo")
+        os.makedirs(geo_dir, exist_ok=True)
+
+        # If user provides an external ref_images file, prefer it (useful when images have no EXIF GPS).
+        external_ref_images_path = None
+        if isinstance(mapper_params, dict):
+            p = mapper_params.get("georef_ref_images_path")
+            if isinstance(p, str) and p.strip():
+                external_ref_images_path = p.strip()
+
+        # 1) EXIF GPS -> CSV (optional when external ref provided)
+        gps_csv = os.path.join(geo_dir, "gps_raw.csv")
+        exif_rows: List[dict] = []
+        if not external_ref_images_path:
+            cmd_exif = [
+                "exiftool",
+                "-csv",
+                "-n",
+                "-FileName",
+                "-GPSLatitude",
+                "-GPSLongitude",
+                "-GPSAltitude",
+                image_dir,
+            ]
+            ctx.write_log_line(f"[GEOREF] Extracting EXIF GPS: {' '.join(cmd_exif)}")
+
+            # Run exiftool and capture stdout to file (do NOT rely on _run_process output capture).
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_exif,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            out = []
+            while True:
+                line = await proc.stdout.readline()
+                if not line:
+                    break
+                out.append(line.decode("utf-8", errors="replace"))
+            await proc.wait()
+            if proc.returncode != 0:
+                raise RuntimeError(f"exiftool failed with code {proc.returncode}")
+
+            # exiftool may print non-CSV summary lines before the actual CSV header.
+            header_idx = None
+            for i, ln in enumerate(out):
+                if ln.startswith("SourceFile,") or ln.startswith("FileName,"):
+                    header_idx = i
+                    break
+            if header_idx is None:
+                raise RuntimeError("exiftool output does not contain CSV header (SourceFile/FileName)")
+            out = out[header_idx:]
+            with open(gps_csv, "w", encoding="utf-8") as f:
+                f.writelines(out)
+
+        # 2) Build ref_images.txt
+        try:
+            from pyproj import Transformer  # type: ignore
+        except Exception as e:
+            raise RuntimeError("pyproj is required for UTM conversion; please install pyproj") from e
+
+        rows: List[dict] = []
+        lats: List[float] = []
+        lons: List[float] = []
+        alts: List[float] = []
+        E_list: List[float] = []
+        N_list: List[float] = []
+
+        if external_ref_images_path:
+            # External file format: IMAGE_NAME X Y Z (Cartesian). Typically UTM meters.
+            p = Path(external_ref_images_path)
+            if not p.is_file():
+                raise RuntimeError(f"georef_ref_images_path not found: {external_ref_images_path}")
+
+            # Need EPSG to invert to WGS84 and build ENU->ECEF transform.
+            epsg_utm = None
+            if isinstance(mapper_params, dict):
+                epsg_utm = mapper_params.get("georef_epsg_utm")
+            if epsg_utm is None:
+                raise RuntimeError(
+                    "External ref_images provided but mapper_params.georef_epsg_utm is missing "
+                    "(required to build geo_ref.json and tileset transform)"
+                )
+            epsg_utm = int(epsg_utm)
+
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln or ln.startswith("#"):
+                        continue
+                    parts = ln.split()
+                    if len(parts) < 4:
+                        continue
+                    name = parts[0]
+                    x = float(parts[1])
+                    y = float(parts[2])
+                    z = float(parts[3])
+                    rows.append({"FileName": name})
+                    E_list.append(x)
+                    N_list.append(y)
+                    alts.append(z)
+
+            if len(rows) < 3:
+                raise RuntimeError(f"Not enough reference images in georef_ref_images_path: {len(rows)}")
+
+            # Build origin_wgs84 later via inverse transformer
+            tr_inv = Transformer.from_crs(f"EPSG:{epsg_utm}", "EPSG:4326", always_xy=True)
+            origin_E = sum(E_list) / len(E_list)
+            origin_N = sum(N_list) / len(N_list)
+            origin_H = sum(alts) / len(alts)
+            origin_lon, origin_lat = tr_inv.transform(origin_E, origin_N)
+            lon_mean = float(origin_lon)
+            lat_mean = float(origin_lat)
+
+            # For external refs, skip WGS84->UTM forward since we already have UTM coords.
+            tr = None  # type: ignore
+
+        else:
+            # Robust CSV parsing: gps_csv may still contain exiftool summary lines; skip them.
+            with open(gps_csv, "r", encoding="utf-8", errors="replace") as f:
+                raw_lines = f.read().splitlines()
+            header_idx = None
+            for i, ln in enumerate(raw_lines):
+                if ln.startswith("SourceFile,") or ln.startswith("FileName,"):
+                    header_idx = i
+                    break
+            if header_idx is None:
+                raise RuntimeError("gps_raw.csv missing CSV header (SourceFile/FileName)")
+            csv_text = "\n".join(raw_lines[header_idx:]) + "\n"
+            import io
+            reader = csv.DictReader(io.StringIO(csv_text))
+            # If exiftool found no GPS tags in any image, it may omit GPS columns entirely.
+            if not reader.fieldnames or ("GPSLatitude" not in reader.fieldnames or "GPSLongitude" not in reader.fieldnames):
+                raise RuntimeError(
+                    "No EXIF GPS tags found in images (exiftool CSV has no GPSLatitude/GPSLongitude columns). "
+                    "Either use images with EXIF GPS or provide mapper_params.georef_ref_images_path + georef_epsg_utm."
+                )
+            for r in reader:
+                if not r.get("FileName"):
+                    continue
+                if r.get("GPSLatitude") in (None, "", "nan") or r.get("GPSLongitude") in (None, "", "nan"):
+                    continue
+                rows.append(r)
+
+            if len(rows) < 3:
+                raise RuntimeError(f"Not enough GPS-tagged images for alignment: {len(rows)}")
+
+            lats = [float(r["GPSLatitude"]) for r in rows]
+            lons = [float(r["GPSLongitude"]) for r in rows]
+            alts = [float(r.get("GPSAltitude") or 0.0) for r in rows]
+            lat_mean = sum(lats) / len(lats)
+            lon_mean = sum(lons) / len(lons)
+
+            zone = int(math.floor((lon_mean + 180.0) / 6.0) + 1)
+            hemi = "N" if lat_mean >= 0 else "S"
+            epsg_utm = (32600 + zone) if hemi == "N" else (32700 + zone)
+
+            tr = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg_utm}", always_xy=True)
+            for lon, lat in zip(lons, lats):
+                E, N = tr.transform(lon, lat)
+                E_list.append(float(E))
+                N_list.append(float(N))
+
+        ref_images = os.path.join(geo_dir, "gps_raw_ref_images.txt")
+        with open(ref_images, "w", encoding="utf-8") as f:
+            for r, E, N, H in zip(rows, E_list, N_list, alts):
+                f.write(f"{r['FileName']} {E:.6f} {N:.6f} {float(H):.6f}\n")
+
+        # 3) model_aligner: raw sparse -> sparse_utm
+        input_sparse = self._find_best_sparse_input_dir(out_root)
+        if not input_sparse:
+            raise RuntimeError("Sparse output not found for georef")
+
+        sparse_utm_root = os.path.join(out_root, "sparse_utm")
+        os.makedirs(sparse_utm_root, exist_ok=True)
+        transform_path = os.path.join(geo_dir, "raw_to_utm_transform.txt")
+
+        cmd_align = [
+            COLMAP_PATH,
+            "model_aligner",
+            "--input_path",
+            input_sparse,
+            "--output_path",
+            sparse_utm_root,
+            "--ref_images_path",
+            ref_images,
+            "--ref_is_gps",
+            "0",
+            "--alignment_type",
+            "custom",
+            "--min_common_images",
+            str(int(mapper_params.get("georef_min_common_images", 3) or 3)),
+            "--alignment_max_error",
+            str(float(mapper_params.get("georef_alignment_max_error", 20) or 20)),
+            "--transform_path",
+            transform_path,
+        ]
+        ctx.write_log_line(f"[GEOREF] Running model_aligner: {' '.join(cmd_align)}")
+        await self._run_process(cmd_align, ctx, db, block_id, coarse_stage="georef")
+
+        # Normalize layout to sparse_utm/0
+        sparse_utm_0 = os.path.join(sparse_utm_root, "0")
+        if not os.path.isdir(sparse_utm_0):
+            os.makedirs(sparse_utm_0, exist_ok=True)
+            for fn in os.listdir(sparse_utm_root):
+                if fn.endswith(".bin") or fn.endswith(".txt"):
+                    try:
+                        os.replace(os.path.join(sparse_utm_root, fn), os.path.join(sparse_utm_0, fn))
+                    except Exception:
+                        pass
+
+        # 4) origin shift: create sparse_enu_local/0
+        # Choose origin as mean of UTM refs (stable)
+        origin_E = sum(E_list) / len(E_list)
+        origin_N = sum(N_list) / len(N_list)
+        origin_H = sum(alts) / len(alts)
+        O = (float(origin_E), float(origin_N), float(origin_H))
+
+        # Inverse projection for WGS84 origin
+        tr_inv = Transformer.from_crs(f"EPSG:{epsg_utm}", "EPSG:4326", always_xy=True)
+        origin_lon, origin_lat = tr_inv.transform(O[0], O[1])
+
+        # ENU->ECEF transform (column-major) using WGS84 origin (lon/lat/h)
+        lon_r = math.radians(float(origin_lon))
+        lat_r = math.radians(float(origin_lat))
+        E = (-math.sin(lon_r), math.cos(lon_r), 0.0)
+        N = (-math.sin(lat_r) * math.cos(lon_r), -math.sin(lat_r) * math.sin(lon_r), math.cos(lat_r))
+        U = (math.cos(lat_r) * math.cos(lon_r), math.cos(lat_r) * math.sin(lon_r), math.sin(lat_r))
+        tr_ecef = Transformer.from_crs("EPSG:4326", "EPSG:4978", always_xy=True)
+        x0, y0, z0 = tr_ecef.transform(float(origin_lon), float(origin_lat), float(origin_H))
+        enu_to_ecef = [
+            float(E[0]),
+            float(E[1]),
+            float(E[2]),
+            0.0,
+            float(N[0]),
+            float(N[1]),
+            float(N[2]),
+            0.0,
+            float(U[0]),
+            float(U[1]),
+            float(U[2]),
+            0.0,
+            float(x0),
+            float(y0),
+            float(z0),
+            1.0,
+        ]
+
+        geo_ref_path = os.path.join(geo_dir, "geo_ref.json")
+        geo_ref = {
+            "epsg_utm": int(epsg_utm),
+            "origin_utm": {"E": O[0], "N": O[1], "H": O[2]},
+            "origin_wgs84": {"lon": float(origin_lon), "lat": float(origin_lat), "h": float(origin_H)},
+            "offset_vector": {"E": O[0], "N": O[1], "H": O[2]},
+            "enu_to_ecef_transform_column_major": enu_to_ecef,
+        }
+        with open(geo_ref_path, "w", encoding="utf-8") as f:
+            json.dump(geo_ref, f, ensure_ascii=False, indent=2)
+        ctx.write_log_line(f"[GEOREF] Wrote geo_ref.json: {geo_ref_path}")
+
+        # Convert UTM model -> TXT (for shifting)
+        sparse_utm_txt = os.path.join(out_root, "sparse_utm_txt")
+        sparse_local_txt = os.path.join(out_root, "sparse_enu_local_txt")
+        sparse_local_root = os.path.join(out_root, "sparse_enu_local")
+        os.makedirs(sparse_utm_txt, exist_ok=True)
+        os.makedirs(sparse_local_txt, exist_ok=True)
+        os.makedirs(os.path.join(sparse_local_root, "0"), exist_ok=True)
+
+        cmd_to_txt = [
+            COLMAP_PATH,
+            "model_converter",
+            "--input_path",
+            sparse_utm_0,
+            "--output_path",
+            sparse_utm_txt,
+            "--output_type",
+            "TXT",
+        ]
+        await self._run_process(cmd_to_txt, ctx, db, block_id, coarse_stage="georef")
+
+        # Shift points3D.txt and images.txt
+        # points: X' = X - O
+        # images: t' = t + R*O (so that camera centers shift by -O)
+        cameras_src = os.path.join(sparse_utm_txt, "cameras.txt")
+        images_src = os.path.join(sparse_utm_txt, "images.txt")
+        points_src = os.path.join(sparse_utm_txt, "points3D.txt")
+        if not (os.path.exists(images_src) and os.path.exists(points_src) and os.path.exists(cameras_src)):
+            raise RuntimeError("TXT export missing required files for shifting")
+
+        # cameras.txt (copy)
+        shutil.copy2(cameras_src, os.path.join(sparse_local_txt, "cameras.txt"))
+
+        # images.txt
+        with open(images_src, "r", encoding="utf-8", errors="replace") as fin, open(
+            os.path.join(sparse_local_txt, "images.txt"), "w", encoding="utf-8"
+        ) as fout:
+            while True:
+                pose = fin.readline()
+                if not pose:
+                    break
+                if pose.startswith("#") or pose.strip() == "":
+                    fout.write(pose)
+                    continue
+                parts = pose.strip().split()
+                if len(parts) < 10:
+                    fout.write(pose)
+                    continue
+                image_id = parts[0]
+                qw, qx, qy, qz = map(float, parts[1:5])
+                tx, ty, tz = map(float, parts[5:8])
+                cam_id = parts[8]
+                name = " ".join(parts[9:])
+                R = self._qvec_to_rotmat((qw, qx, qy, qz))
+                Ro = self._mat3_mul_vec3(R, O)
+                t_new = (tx + Ro[0], ty + Ro[1], tz + Ro[2])
+                fout.write(
+                    f"{image_id} {qw:.17g} {qx:.17g} {qy:.17g} {qz:.17g} {t_new[0]:.17g} {t_new[1]:.17g} {t_new[2]:.17g} {cam_id} {name}\n"
+                )
+                pts2d = fin.readline()
+                if not pts2d:
+                    break
+                fout.write(pts2d)
+
+        # points3D.txt
+        with open(points_src, "r", encoding="utf-8", errors="replace") as fin, open(
+            os.path.join(sparse_local_txt, "points3D.txt"), "w", encoding="utf-8"
+        ) as fout:
+            for ln in fin:
+                if ln.startswith("#") or ln.strip() == "":
+                    fout.write(ln)
+                    continue
+                parts = ln.strip().split()
+                if len(parts) < 8:
+                    fout.write(ln)
+                    continue
+                pid = parts[0]
+                x, y, z = map(float, parts[1:4])
+                x -= O[0]
+                y -= O[1]
+                z -= O[2]
+                rest = " ".join(parts[4:])
+                fout.write(f"{pid} {x:.17g} {y:.17g} {z:.17g} {rest}\n")
+
+        # Convert shifted TXT -> BIN
+        cmd_to_bin = [
+            COLMAP_PATH,
+            "model_converter",
+            "--input_path",
+            sparse_local_txt,
+            "--output_path",
+            os.path.join(sparse_local_root, "0"),
+            "--output_type",
+            "BIN",
+        ]
+        await self._run_process(cmd_to_bin, ctx, db, block_id, coarse_stage="georef")
+
+        # Record stats for later consumers
+        try:
+            stats = block.statistics or {}
+            stats["georef"] = {
+                "epsg_utm": int(epsg_utm),
+                "origin_utm": geo_ref["origin_utm"],
+                "origin_wgs84": geo_ref["origin_wgs84"],
+                "sparse_utm_dir": sparse_utm_0,
+                "sparse_enu_local_dir": os.path.join(sparse_local_root, "0"),
+                "geo_ref_path": geo_ref_path,
+            }
+            block.statistics = stats
+            await db.commit()
+        except Exception:
+            pass
     
     async def _run_global_feature_and_matching(
         self,
@@ -2777,6 +3276,37 @@ class TaskRunner:
             
             # Set output_colmap_path for result reader
             block.output_colmap_path = colmap_output_dir
+
+            # Optional: geo-referencing and origin shift (same behavior as COLMAP/GLOMAP pipelines)
+            try:
+                georef_enabled = False
+                mapper_params = block.mapper_params or {}
+                if isinstance(mapper_params, dict):
+                    v = mapper_params.get("georef_enabled")
+                    if isinstance(v, bool):
+                        georef_enabled = v
+                    elif v is not None:
+                        georef_enabled = int(v) != 0
+
+                if georef_enabled and block.output_path:
+                    ctx.write_log_line("[GEOREF] (openMVG) Georeferencing enabled - starting model_aligner + origin shift ...")
+                    block.current_stage = "georef"
+                    block.current_detail = "model_aligner"
+                    block.progress = max(block.progress or 0.0, 95.0)
+                    await db.commit()
+                    await self._run_georef_and_origin_shift(
+                        block=block,
+                        image_dir=image_dir,
+                        ctx=ctx,
+                        db=db,
+                        block_id=block.id,
+                        mapper_params=mapper_params,
+                    )
+            except Exception as e:
+                # If user explicitly enabled georef, treat failure as pipeline failure
+                if isinstance(getattr(block, "mapper_params", None), dict) and (block.mapper_params or {}).get("georef_enabled"):
+                    raise RuntimeError(f"(openMVG) Georeferencing failed: {e}") from e
+                ctx.write_log_line(f"[GEOREF][WARNING] (openMVG) Skipped due to error: {e}")
             
             # Mark as completed
             block.status = BlockStatus.COMPLETED

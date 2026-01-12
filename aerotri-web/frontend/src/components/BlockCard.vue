@@ -30,6 +30,9 @@
         <el-tag type="info" size="small">
           {{ algorithmText }}
         </el-tag>
+        <el-tag type="info" size="small" effect="plain">
+          {{ imageCountText }}
+        </el-tag>
       </div>
       
       <!-- Progress (if running) -->
@@ -121,7 +124,13 @@ const statusText = computed(() => {
 const algorithmText = computed(() => {
   if (props.block.algorithm === 'glomap') return 'GLOMAP'
   if (props.block.algorithm === 'instantsfm') return 'InstantSfM'
+  if (props.block.algorithm === 'openmvg_global') return 'OpenMVG'
   return 'COLMAP'
+})
+
+const imageCountText = computed(() => {
+  const n = props.block.statistics?.num_images
+  return `图像 ${typeof n === 'number' ? n : '-'}`
 })
 
 function handleCommand(command: string) {

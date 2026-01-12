@@ -1,4 +1,5 @@
 """Queue management API endpoints."""
+import os
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func
@@ -17,9 +18,16 @@ from ..schemas import (
 router = APIRouter()
 
 # In-memory config (can be moved to database or settings later)
-_queue_config = {
-    "max_concurrent": 2
-}
+# Default is 1 (historical behavior). Can be overridden by env QUEUE_MAX_CONCURRENT.
+def _default_max_concurrent() -> int:
+    try:
+        v = int(os.environ.get("QUEUE_MAX_CONCURRENT", "1"))
+        return max(1, min(10, v))
+    except Exception:
+        return 1
+
+
+_queue_config = {"max_concurrent": _default_max_concurrent()}
 
 
 @router.get("", response_model=QueueListResponse)

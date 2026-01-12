@@ -1,5 +1,6 @@
 """Main FastAPI application."""
 import os
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,9 @@ from .services.openmvs_runner import openmvs_runner
 from .services.gs_runner import gs_runner
 from .services.tiles_runner import tiles_runner
 from .services.queue_scheduler import queue_scheduler
+from .services.notification import notification_manager, periodic_scheduler
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -25,6 +29,9 @@ async def lifespan(app: FastAPI):
     # Ensure data directories exist
     os.makedirs("/root/work/aerotri-web/data/outputs", exist_ok=True)
     os.makedirs("/root/work/aerotri-web/data/thumbnails", exist_ok=True)
+    
+    # Initialize notification service (safe to call, no-ops if disabled)
+    notification_manager.initialize()
     
     # Recover orphaned tasks from previous session
     await task_runner.recover_orphaned_tasks()
@@ -38,9 +45,34 @@ async def lifespan(app: FastAPI):
     # Start queue scheduler for automatic task dispatching
     await queue_scheduler.start()
     
+    # Send startup notification (safe to call, no-ops if disabled)
+    try:
+        await notification_manager.notify_backend_startup(version="1.0.0")
+    except Exception as e:
+        logger.warning(f"Failed to send startup notification: {e}")
+    
+    # Start periodic notification scheduler (if notification is enabled)
+    if notification_manager.enabled:
+        from .config import config_loader
+        periodic_config = config_loader.get("notification", "notification.periodic", default={})
+        periodic_scheduler.configure(periodic_config)
+        await periodic_scheduler.start()
+    
     yield
     
     # Shutdown
+    # Stop periodic scheduler first
+    try:
+        await periodic_scheduler.stop()
+    except Exception as e:
+        logger.warning(f"Failed to stop periodic scheduler: {e}")
+    
+    # Send shutdown notification before stopping services
+    try:
+        await notification_manager.notify_backend_shutdown()
+    except Exception as e:
+        logger.warning(f"Failed to send shutdown notification: {e}")
+    
     await queue_scheduler.stop()
 
 
