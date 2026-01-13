@@ -610,9 +610,11 @@ onUnmounted(() => {
 :deep(.el-tabs__content) {
   flex: 1;
   overflow: auto;
+  min-height: 0; /* 允许内容超出时滚动 */
 }
 
 :deep(.el-tab-pane) {
-  height: 100%;
+  height: auto; /* 改为 auto，允许内容决定高度 */
+  min-height: 100%; /* 最小高度保持 100% */
 }
 </style>

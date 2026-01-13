@@ -467,4 +467,3 @@ def _read_log_tail(log_path: str, lines: int) -> List[str]:
         return []
     return list(dq)
 
-

@@ -193,7 +193,7 @@
       <el-card class="viewer-card">
         <template #header>
           <div class="viewer-header">
-            <span style="color: #409eff;">🔧 测试: SplitCesiumViewer 分屏对比</span>
+            <span style="color: #409eff;">SplitCesiumViewer 分屏对比</span>
           </div>
         </template>
         <div style="margin-bottom: 16px;">
@@ -732,7 +732,7 @@ watch(() => versionsWithTiles.value.length, async (count) => {
 <style scoped>
 .tiles-panel {
   padding: 16px;
-  height: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -849,7 +849,7 @@ watch(() => versionsWithTiles.value.length, async (count) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0; /* 允许 flex 子元素缩小 */
+  min-height: 800px; /* 增加最小高度，确保查看器有足够空间 */
 }
 
 .viewer-card {
@@ -881,14 +881,15 @@ watch(() => versionsWithTiles.value.length, async (count) => {
 .viewer-container {
   width: 100%;
   flex: 1;
-  min-height: 600px;
+  min-height: 700px; /* 增加最小高度 */
+  height: 700px; /* 设置固定高度，确保有足够空间 */
   position: relative;
 }
 
 .viewer-placeholder {
   width: 100%;
   height: 100%;
-  min-height: 600px;
+  min-height: 700px; /* 与 viewer-container 保持一致 */
   display: flex;
   align-items: center;
   justify-content: center;

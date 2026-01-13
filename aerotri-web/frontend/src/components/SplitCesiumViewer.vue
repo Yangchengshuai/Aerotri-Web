@@ -254,8 +254,8 @@ onUnmounted(() => {
 .split-cesium-viewer {
   display: flex;
   width: 100%;
-  height: 600px;
-  min-height: 500px;
+  height: 700px; /* 增加高度 */
+  min-height: 700px; /* 增加最小高度 */
   position: relative;
   background: #000;
   border-radius: 8px;
