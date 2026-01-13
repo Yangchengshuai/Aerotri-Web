@@ -13,6 +13,7 @@ declare module 'vue' {
     CameraDetailPanel: typeof import('./src/components/CameraDetailPanel.vue')['default']
     CameraList: typeof import('./src/components/CameraList.vue')['default']
     CesiumViewer: typeof import('./src/components/CesiumViewer.vue')['default']
+    DenseComparisonTab: typeof import('./src/components/DenseComparisonTab.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
     ElButton: typeof import('element-plus/es')['ElButton']

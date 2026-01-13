@@ -74,6 +74,43 @@
 
       <!-- Block List -->
       <div class="block-list">
+        <!-- Selection Toolbar -->
+        <div v-if="selectionMode" class="selection-toolbar">
+          <div class="selection-info">
+            <el-checkbox
+              v-model="selectAll"
+              :indeterminate="isIndeterminate"
+              @change="handleSelectAll"
+            >
+              全选
+            </el-checkbox>
+            <span class="selected-count">
+              已选择 {{ selectedBlocks.length }} 个 Block
+            </span>
+          </div>
+          <div class="selection-actions">
+            <el-button
+              type="primary"
+              :disabled="selectedBlocks.length !== 2"
+              @click="goToCompare"
+            >
+              <el-icon><TrendCharts /></el-icon>
+              对比选中 Block ({{ selectedBlocks.length }}/2)
+            </el-button>
+            <el-button @click="cancelSelection">
+              取消
+            </el-button>
+          </div>
+        </div>
+
+        <div v-else class="section-header-bar">
+          <h3>Blocks ({{ blocksStore.blocks.length }})</h3>
+          <el-button text @click="selectionMode = true">
+            <el-icon><Grid /></el-icon>
+            批量选择
+          </el-button>
+        </div>
+
         <el-card v-if="blocksStore.loading" class="loading-card">
           <el-skeleton :rows="5" animated />
         </el-card>
@@ -92,13 +129,25 @@
         />
         
         <div v-else class="block-grid">
-          <BlockCard
+          <div
             v-for="block in blocksStore.sortedBlocks"
             :key="block.id"
-            :block="block"
-            @click="goToBlock(block.id)"
-            @delete="handleDelete(block)"
-          />
+            class="block-grid-item"
+            :class="{ 'is-selected': isBlockSelected(block.id) }"
+          >
+            <el-checkbox
+              v-if="selectionMode"
+              v-model="selectedBlocksSet"
+              :value="block.id"
+              class="block-checkbox"
+              @click.stop
+            />
+            <BlockCard
+              :block="block"
+              @click="handleBlockClick(block)"
+              @delete="handleDelete(block)"
+            />
+          </div>
         </div>
       </div>
     </el-main>
@@ -207,11 +256,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Plus, Folder, Clock, Setting } from '@element-plus/icons-vue'
+import { Plus, Folder, Clock, Setting, Grid, TrendCharts } from '@element-plus/icons-vue'
 import { useBlocksStore } from '@/stores/blocks'
 import { useQueueStore } from '@/stores/queue'
 import type { Block, DirectoryEntry } from '@/types'
@@ -246,8 +295,79 @@ const formRules: FormRules = {
     { min: 1, max: 255, message: '名称长度在 1 到 255 个字符之间', trigger: 'blur' },
   ],
   image_path: [
-    { required: true, message: '请输入图像目录路径', trigger: 'blur' },
+    { required: true, message: '请选择图像路径', trigger: 'change' },
   ],
+  algorithm: [
+    { required: true, message: '请选择算法', trigger: 'change' },
+  ],
+}
+
+// Batch selection state
+const selectionMode = ref(false)
+const selectedBlocksSet = ref<string[]>([])
+
+const selectedBlocks = computed(() => {
+  return selectedBlocksSet.value.map(id =>
+    blocksStore.blocks.find(b => b.id === id)
+  ).filter(Boolean) as Block[]
+})
+
+const selectAll = computed({
+  get: () => selectedBlocksSet.value.length === blocksStore.blocks.length && blocksStore.blocks.length > 0,
+  set: (value: boolean) => {
+    if (value) {
+      selectedBlocksSet.value = blocksStore.blocks.map(b => b.id)
+    } else {
+      selectedBlocksSet.value = []
+    }
+  }
+})
+
+const isIndeterminate = computed(() => {
+  const selectedCount = selectedBlocksSet.value.length
+  const totalCount = blocksStore.blocks.length
+  return selectedCount > 0 && selectedCount < totalCount
+})
+
+// Selection functions
+function isBlockSelected(blockId: string): boolean {
+  return selectedBlocksSet.value.includes(blockId)
+}
+
+function handleSelectAll(value: boolean) {
+  // Computed setter handles this
+}
+
+function handleBlockClick(block: Block) {
+  if (selectionMode.value) {
+    // Toggle selection
+    const index = selectedBlocksSet.value.indexOf(block.id)
+    if (index > -1) {
+      selectedBlocksSet.value.splice(index, 1)
+    } else {
+      selectedBlocksSet.value.push(block.id)
+    }
+  } else {
+    // Normal navigation
+    goToBlock(block.id)
+  }
+}
+
+function cancelSelection() {
+  selectionMode.value = false
+  selectedBlocksSet.value = []
+}
+
+function goToCompare() {
+  if (selectedBlocks.value.length === 2) {
+    router.push({
+      name: 'Compare',
+      query: {
+        left: selectedBlocks.value[0].id,
+        right: selectedBlocks.value[1].id
+      }
+    })
+  }
 }
 
 let queuePollTimer: number | null = null
@@ -604,5 +724,66 @@ function formatQueuedTime(isoTime: string): string {
 .config-hint {
   color: #909399;
   font-size: 13px;
+}
+
+/* Selection Toolbar */
+.selection-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  margin-bottom: 16px;
+}
+
+.selection-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selected-count {
+  font-size: 14px;
+  color: #606266;
+}
+
+.selection-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.section-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.section-header-bar h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #303133;
+}
+
+/* Block Grid Item with Checkbox */
+.block-grid-item {
+  position: relative;
+}
+
+.block-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 4px;
+  background: white;
+  border-radius: 4px;
+}
+
+.block-grid-item.is-selected {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 </style>
