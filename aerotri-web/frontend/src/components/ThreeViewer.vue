@@ -1,84 +1,122 @@
 <template>
-  <div class="three-viewer">
-    <!-- Controls -->
-    <div class="viewer-controls">
-      <!-- View Mode Selector (for partitioned blocks) -->
-      <div v-if="isPartitioned" class="mode-selector">
-        <el-radio-group v-model="viewMode" size="small" @change="handleModeChange">
-          <el-radio-button label="partition">单分区</el-radio-button>
-          <el-radio-button label="merged" :disabled="!isMerged">合并结果</el-radio-button>
-        </el-radio-group>
-        
-        <!-- Partition Selector (only in partition mode) -->
-        <PartitionSelector
-          v-if="viewMode === 'partition'"
-          :block-id="blockId"
-          v-model="selectedPartitionIndex"
-          @change="handlePartitionChange"
-          class="partition-selector-inline"
-        />
+  <div class="three-viewer" :class="{ 'is-fullscreen': isFullscreen }">
+    <!-- Controls Panel - Collapsible Floating Panel -->
+    <div class="viewer-controls" :class="{ 'collapsed': controlsCollapsed }">
+      <!-- Panel Header -->
+      <div class="controls-header">
+        <span class="controls-title">3D 查看控制</span>
+        <div class="controls-actions">
+          <el-button 
+            text 
+            size="small" 
+            @click="toggleFullscreen"
+            :icon="isFullscreen ? Close : FullScreen"
+            :title="isFullscreen ? '退出全屏' : '全屏'"
+          />
+          <el-button 
+            text 
+            size="small" 
+            @click="controlsCollapsed = !controlsCollapsed"
+            :icon="controlsCollapsed ? Expand : Fold"
+            :title="controlsCollapsed ? '展开控制面板' : '折叠控制面板'"
+          />
+        </div>
       </div>
       
-      <el-checkbox v-model="showCameras">显示相机</el-checkbox>
-      <el-checkbox v-model="showPoints">显示点云</el-checkbox>
-      <el-checkbox v-model="showOnlyProblemCameras" @change="handleFilterChange">只显示问题相机</el-checkbox>
-      <div class="threshold-control">
-        <span class="control-label">阈值</span>
-        <el-input-number
-          v-model="errorThreshold"
-          :min="0"
-          :max="2.0"
-          :step="0.1"
-          :precision="1"
-          :controls="true"
-          controls-position="right"
-          size="small"
-          @change="handleThresholdChange"
-          style="width: 100px;"
-        />
-        <span class="threshold-unit">px</span>
-      </div>
-      <div v-if="showCameras" class="camera-size-control">
-        <span class="control-label">相机大小</span>
-        <el-slider
-          v-model="cameraSizeMultiplier"
-          :min="0.1"
-          :max="5.0"
-          :step="0.1"
-          :show-tooltip="true"
-          :format-tooltip="(val: number) => `${val.toFixed(1)}x`"
-          @change="updateCameraSizes"
-          style="width: 120px;"
-        />
-      </div>
-      <el-button size="small" @click="fitToView">
-        <el-icon><Aim /></el-icon>
-        居中
-      </el-button>
-      <el-button size="small" @click="loadData" :loading="loading">
-        <el-icon><Refresh /></el-icon>
-        刷新
-      </el-button>
-      <el-button size="small" @click="downloadPly" :loading="downloadingPly">
-        <el-icon><Download /></el-icon>
-        下载完整点云
-      </el-button>
-      <!-- Version selector -->
-      <div v-if="versions.length > 0" class="version-selector">
-        <span class="control-label">结果版本</span>
-        <el-select
-          v-model="selectedVersionId"
-          size="small"
-          style="min-width: 220px"
-          @change="handleVersionChange"
-        >
-          <el-option
-            v-for="v in versions"
-            :key="v.id"
-            :label="v.label"
-            :value="v.id"
+      <!-- Panel Content -->
+      <div v-show="!controlsCollapsed" class="controls-content">
+        <!-- View Mode Selector (for partitioned blocks) -->
+        <div v-if="isPartitioned" class="mode-selector">
+          <el-radio-group v-model="viewMode" size="small" @change="handleModeChange">
+            <el-radio-button label="partition">单分区</el-radio-button>
+            <el-radio-button label="merged" :disabled="!isMerged">合并结果</el-radio-button>
+          </el-radio-group>
+          
+          <!-- Partition Selector (only in partition mode) -->
+          <PartitionSelector
+            v-if="viewMode === 'partition'"
+            :block-id="blockId"
+            v-model="selectedPartitionIndex"
+            @change="handlePartitionChange"
+            class="partition-selector-inline"
           />
-        </el-select>
+        </div>
+        
+        <!-- Quick Actions Row -->
+        <div class="controls-row">
+          <el-checkbox v-model="showCameras" size="small">相机</el-checkbox>
+          <el-checkbox v-model="showPoints" size="small">点云</el-checkbox>
+          <el-checkbox v-model="showOnlyProblemCameras" size="small" @change="handleFilterChange">问题</el-checkbox>
+        </div>
+        
+        <!-- Settings Row -->
+        <div class="controls-row">
+          <div class="control-item">
+            <span class="control-label">阈值</span>
+            <el-input-number
+              v-model="errorThreshold"
+              :min="0"
+              :max="2.0"
+              :step="0.1"
+              :precision="1"
+              :controls="true"
+              controls-position="right"
+              size="small"
+              @change="handleThresholdChange"
+              style="width: 90px;"
+            />
+            <span class="threshold-unit">px</span>
+          </div>
+          <div v-if="showCameras" class="control-item">
+            <span class="control-label">大小</span>
+            <el-slider
+              v-model="cameraSizeMultiplier"
+              :min="0.3"
+              :max="1.5"
+              :step="0.1"
+              :show-tooltip="true"
+              :format-tooltip="(val: number) => `${val.toFixed(1)}x`"
+              @change="updateCameraSizes"
+              style="width: 100px;"
+            />
+          </div>
+        </div>
+        
+        <!-- Version selector -->
+        <div v-if="versions.length > 0" class="controls-row">
+          <div class="control-item full-width">
+            <span class="control-label">版本</span>
+            <el-select
+              v-model="selectedVersionId"
+              size="small"
+              style="flex: 1;"
+              @change="handleVersionChange"
+            >
+              <el-option
+                v-for="v in versions"
+                :key="v.id"
+                :label="v.label"
+                :value="v.id"
+              />
+            </el-select>
+          </div>
+        </div>
+        
+        <!-- Action Buttons -->
+        <div class="controls-row buttons-row">
+          <el-button size="small" @click="fitToView" type="primary" plain>
+            <el-icon><Aim /></el-icon>
+            居中
+          </el-button>
+          <el-button size="small" @click="loadData" :loading="loading">
+            <el-icon><Refresh /></el-icon>
+            刷新
+          </el-button>
+          <el-button size="small" @click="downloadPly" :loading="downloadingPly">
+            <el-icon><Download /></el-icon>
+            下载
+          </el-button>
+        </div>
       </div>
     </div>
 
@@ -124,7 +162,7 @@
 import { ref, onMounted, onUnmounted, watch, reactive, nextTick, computed } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { Aim, Refresh, Loading, Download } from '@element-plus/icons-vue'
+import { Aim, Refresh, Loading, Download, Fold, Expand, FullScreen, Close } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import { resultApi, partitionApi, blockApi, taskApi } from '@/api'
@@ -141,11 +179,15 @@ const loading = ref(false)
 const downloadingPly = ref(false)
 const showCameras = ref(true)
 const showPoints = ref(true)
-const cameraSizeMultiplier = ref(1.0) // 用户可调节的相机大小倍数
+const cameraSizeMultiplier = ref(1.0) // 用户可调节的相机大小倍数（默认1.0，范围0.1~5.0）
 let baseCameraScale = 0.2 // 基础相机尺寸（会根据场景自动计算）
 
 // Error visualization - use store for threshold
 const showOnlyProblemCameras = ref(false) // 只显示问题相机
+
+// UI state
+const controlsCollapsed = ref(false) // 控制面板是否折叠
+const isFullscreen = ref(false) // 是否全屏模式
 
 // Computed property to sync with store's errorThreshold
 const errorThreshold = computed({
@@ -205,10 +247,40 @@ onMounted(async () => {
   // Initialize camera selection store
   cameraSelectionStore.setBlockId(props.blockId)
   
+  // Listen for fullscreen changes
+  document.addEventListener('fullscreenchange', handleFullscreenChange)
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.addEventListener('msfullscreenchange', handleFullscreenChange)
+  
   // ElementPlus tabs may mount while hidden -> container size can be 0.
-  // Use nextTick + ResizeObserver to ensure correct canvas sizing.
+  // Use nextTick + multiple attempts to ensure correct canvas sizing.
   nextTick(() => {
-    initThree()
+    // Try to initialize immediately
+    if (containerRef.value) {
+      const rect = containerRef.value.getBoundingClientRect()
+      if (rect.width > 1 && rect.height > 1) {
+        // Container is visible, initialize immediately
+        initThree()
+      } else {
+        // Container is hidden, wait a bit and try again
+        console.log('[ThreeViewer] Container not visible on mount, waiting...')
+        setTimeout(() => {
+          if (!initialized && containerRef.value) {
+            const rect2 = containerRef.value.getBoundingClientRect()
+            console.log(`[ThreeViewer] Retry init, container size: ${rect2.width}x${rect2.height}`)
+            if (rect2.width > 1 || rect2.height > 1) {
+              initThree()
+            } else {
+              // Still hidden, but initialize anyway (will resize later)
+              console.warn('[ThreeViewer] Container still hidden, initializing with default size')
+              initThree()
+            }
+          }
+        }, 100)
+      }
+    } else {
+      console.error('[ThreeViewer] containerRef.value is null on mount!')
+    }
   })
   
   // Check if block is partitioned and load data
@@ -330,15 +402,37 @@ const onVisibilityChange = () => {
 document.addEventListener('visibilitychange', onVisibilityChange)
 
 function initThree() {
-  if (!containerRef.value) return
+  // Prevent multiple initializations
+  if (initialized) {
+    console.warn('[ThreeViewer] Already initialized, skipping initThree()')
+    return
+  }
+  
+  if (!containerRef.value) {
+    console.error('[ThreeViewer] containerRef.value is null in initThree()')
+    return
+  }
+  
   const container = containerRef.value
   const rect = container.getBoundingClientRect()
-  const width = Math.max(1, Math.floor(rect.width))
-  const height = Math.max(1, Math.floor(rect.height))
+  let width = Math.max(1, Math.floor(rect.width))
+  let height = Math.max(1, Math.floor(rect.height))
+  
+  console.log(`[ThreeViewer] initThree() called, container size: ${rect.width}x${rect.height}, computed: ${width}x${height}`)
+  
+  // If container is too small (likely hidden tab), use minimum reasonable size
+  // The size will be corrected by startEnsureCanvasSizedLoop later
+  if (width <= 1 || height <= 1) {
+    console.warn(`[ThreeViewer] Container size too small (${width}x${height}), using minimum size. Will resize when visible.`)
+    width = 800  // Use reasonable default
+    height = 600
+  }
 
   // Scene
   scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x202124) // Dark grey background
+  // Use a more visible blue-grey background for better visibility
+  scene.background = new THREE.Color(0x1a1a2e) // Dark blue-grey background (matches CSS)
+  console.log(`[ThreeViewer] Scene created with background color:`, scene.background)
 
   // Camera
   camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 100000)
@@ -353,7 +447,24 @@ function initThree() {
     renderer.domElement.style.display = 'block'
     renderer.domElement.style.width = '100%'
     renderer.domElement.style.height = '100%'
+    renderer.domElement.style.position = 'relative'
+    renderer.domElement.style.zIndex = '1'
     container.appendChild(renderer.domElement)
+    
+    // Verify canvas was added to DOM
+    const canvasInDOM = container.contains(renderer.domElement)
+    const canvasSize = renderer.getSize(new THREE.Vector2())
+    console.log(`[ThreeViewer] WebGL renderer initialized: canvas size=${width}x${height}, container size=${rect.width}x${rect.height}`)
+    console.log(`[ThreeViewer] Canvas in DOM: ${canvasInDOM}, actual canvas size: ${canvasSize.x}x${canvasSize.y}`)
+    console.log(`[ThreeViewer] Canvas element:`, renderer.domElement)
+    console.log(`[ThreeViewer] WebGL context:`, renderer.getContext())
+    
+    if (!canvasInDOM) {
+      console.error('[ThreeViewer] ERROR: Canvas was not added to DOM!')
+    }
+    if (canvasSize.x === 0 || canvasSize.y === 0) {
+      console.error(`[ThreeViewer] ERROR: Canvas size is invalid: ${canvasSize.x}x${canvasSize.y}`)
+    }
   } catch (err: any) {
     console.error('Failed to create WebGL renderer:', err)
     initError.value =
@@ -383,16 +494,8 @@ function initThree() {
   rootGroup.add(camerasGroup)
   rootGroup.add(pointsGroup)
 
-  // Axes helper
-  const axesHelper = new THREE.AxesHelper(10)
-  scene.add(axesHelper)
-
-  // Grid helper
-  const gridHelper = new THREE.GridHelper(100, 100, 0x444444, 0x222222)
-  // Grid should be on the XZ plane, which is default. 
-  // But since we rotated rootGroup, the "ground" for the data is inverted.
-  // Let's keep grid at y=0.
-  scene.add(gridHelper)
+  // Grid helper removed per user request
+  // Note: Axes helper also removed per user request
 
   // Initialize raycaster for camera selection
   raycaster = new THREE.Raycaster()
@@ -433,10 +536,26 @@ function initThree() {
   startEnsureCanvasSizedLoop()
 }
 
+let renderCallCount = 0
 function animate() {
   animationId = requestAnimationFrame(animate)
-  controls.update()
-  renderer.render(scene, camera)
+  if (renderer && camera && scene) {
+    controls.update()
+    renderer.render(scene, camera)
+    renderCallCount++
+    // Log first few renders to verify animation loop is running
+    if (renderCallCount <= 3) {
+      console.log(`[ThreeViewer] Render call #${renderCallCount}, scene.children.length=${scene.children.length}`)
+    }
+  } else {
+    if (renderCallCount === 0) {
+      console.error('[ThreeViewer] Animation loop started but renderer/camera/scene not ready:', {
+        renderer: !!renderer,
+        camera: !!camera,
+        scene: !!scene
+      })
+    }
+  }
 }
 
 function onWindowResize() {
@@ -474,6 +593,7 @@ function startEnsureCanvasSizedLoop() {
     const size = renderer.getSize(new THREE.Vector2())
     const changed = Math.floor(size.x) !== w || Math.floor(size.y) !== h
     if (changed) {
+      console.log(`[ThreeViewer] Canvas size changed: ${Math.floor(size.x)}x${Math.floor(size.y)} -> ${w}x${h}`)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
       renderer.setPixelRatio(window.devicePixelRatio)
@@ -673,7 +793,7 @@ function loadCameras(cameras: CameraInfo[]) {
   // Calculate scale based on valid cameras only
   let scale = 0.2 // Default fallback
   if (validPositions.length > 1) {
-    // 1) Based on nearest neighbor distance (use smaller coefficient to avoid clustering)
+    // 1) Based on nearest neighbor distance
     const p1 = validPositions[0]
     let minDist = Infinity
     // Check more neighbors for better estimation
@@ -681,18 +801,19 @@ function loadCameras(cameras: CameraInfo[]) {
       const d = p1.distanceTo(validPositions[i])
       if (d > 0 && d < minDist) minDist = d
     }
-    if (minDist !== Infinity) {
-      scale = minDist * 0.15 // Reduced from 0.3 to 0.15 to make cameras smaller
+    if (minDist !== Infinity && minDist > 0) {
+      scale = minDist * 0.2 // Use 20% of minimum distance
     }
 
-    // 2) Based on extent of valid cameras (use even smaller percentage)
+    // 2) Based on extent of valid cameras
     const extentX = maxX - minX
     const extentY = maxY - minY
     const extentZ = maxZ - minZ
     const maxExtent = Math.max(extentX, extentY, extentZ)
     if (Number.isFinite(maxExtent) && maxExtent > 0) {
-      const extentBased = maxExtent * 0.001 // 约为有效场景尺寸的 0.1%（进一步减小）
-      // Use the smaller of the two scales to avoid clustering
+      // Use 2% of scene extent, but ensure it's not too small
+      const extentBased = maxExtent * 0.02
+      // Use the smaller of the two scales, but ensure minimum visibility
       if (extentBased < scale) {
         scale = extentBased
       }
@@ -700,7 +821,19 @@ function loadCameras(cameras: CameraInfo[]) {
   }
 
   // Store base scale for user multiplier
-  baseCameraScale = Math.max(0.01, scale)
+  // Ensure minimum scale for visibility (at least 2% of scene extent or 0.1 units)
+  const extentX = maxX - minX
+  const extentY = maxY - minY
+  const extentZ = maxZ - minZ
+  const maxExtent = Math.max(extentX, extentY, extentZ)
+  const minScale = maxExtent > 0 ? Math.max(maxExtent * 0.02, 0.1) : 0.1
+  const calculatedScale = Math.max(minScale, scale)
+  
+  // Apply 0.3x factor to base scale so that multiplier 1.0 gives the same size as previous 0.3
+  // This makes the UI more intuitive: 1.0 = normal size, can adjust up/down from there
+  baseCameraScale = calculatedScale * 0.3
+  
+  console.log(`[ThreeViewer] Camera scale calculation: scale=${scale.toFixed(6)}, maxExtent=${maxExtent.toFixed(6)}, minScale=${minScale.toFixed(6)}, calculated=${calculatedScale.toFixed(6)}, final (with 0.3x factor)=${baseCameraScale.toFixed(6)}`)
 
   // Only render valid cameras (filter out outliers)
   // Note: validCameras and validPositions are already aligned by index from the filtering loop above
@@ -717,7 +850,10 @@ function loadCameras(cameras: CameraInfo[]) {
     // Apply initial user multiplier via scale
     frustum.scale.set(cameraSizeMultiplier.value, cameraSizeMultiplier.value, cameraSizeMultiplier.value)
 
-    frustum.userData = { camera: cam, isOutlier: false, error: cam.mean_reprojection_error }
+    // Merge userData instead of overwriting (preserve lineMaterial from createCameraFrustum)
+    frustum.userData.camera = cam
+    frustum.userData.isOutlier = false
+    frustum.userData.error = cam.mean_reprojection_error
     camerasGroup.add(frustum)
   })
 
@@ -741,6 +877,16 @@ function loadCameras(cameras: CameraInfo[]) {
 
   // Update highlight based on store selection
   updateCameraHighlight()
+  
+  // Debug: log camera positions and scene bounds
+  if (validPositions.length > 0) {
+    const firstPos = validPositions[0]
+    const lastPos = validPositions[validPositions.length - 1]
+    console.log(`[ThreeViewer] Camera positions: first=(${firstPos.x.toFixed(2)}, ${firstPos.y.toFixed(2)}, ${firstPos.z.toFixed(2)}), last=(${lastPos.x.toFixed(2)}, ${lastPos.y.toFixed(2)}, ${lastPos.z.toFixed(2)})`)
+    console.log(`[ThreeViewer] Scene bounds: min=(${minX.toFixed(2)}, ${minY.toFixed(2)}, ${minZ.toFixed(2)}), max=(${maxX.toFixed(2)}, ${maxY.toFixed(2)}, ${maxZ.toFixed(2)})`)
+    console.log(`[ThreeViewer] Camera scale: ${baseCameraScale.toFixed(6)}, multiplier: ${cameraSizeMultiplier.value}`)
+    console.log(`[ThreeViewer] Cameras in scene: ${camerasGroup.children.length}`)
+  }
 }
 
 function updateCameraSizes() {
@@ -917,12 +1063,32 @@ function fitToView() {
     box.expandByObject(pointsGroup)
   }
   
-  if (box.isEmpty()) return
+  if (box.isEmpty()) {
+    console.warn('[ThreeViewer] fitToView: box is empty, camerasGroup.children.length=', camerasGroup.children.length)
+    // If box is empty but we have cameras, try to compute box from camera positions directly
+    if (camerasGroup.children.length > 0) {
+      camerasGroup.children.forEach((child) => {
+        if (child instanceof THREE.Group) {
+          const worldPos = new THREE.Vector3()
+          child.getWorldPosition(worldPos)
+          box.expandByPoint(worldPos)
+        }
+      })
+      if (box.isEmpty()) {
+        console.warn('[ThreeViewer] fitToView: box still empty after computing from world positions')
+        return
+      }
+    } else {
+      return
+    }
+  }
 
   const center = box.getCenter(new THREE.Vector3())
   const size = box.getSize(new THREE.Vector3())
   const maxDim = Math.max(size.x, size.y, size.z)
   const radius = Math.max(1e-6, maxDim * 0.5)
+  
+  console.log(`[ThreeViewer] fitToView: center=(${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}), size=(${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)}), radius=${radius.toFixed(2)}`)
 
   // Set near/far to avoid clipping on very small/large scenes
   camera.near = Math.max(0.001, radius / 1000)
@@ -958,13 +1124,13 @@ function onCanvasClick(event: MouseEvent) {
     // Find the camera object (might be nested in group)
     let cameraObj: THREE.Object3D | null = null
     for (const intersect of intersects) {
-      let obj = intersect.object
+      let obj: THREE.Object3D | null = intersect.object
       while (obj) {
         if (obj.userData.camera) {
           cameraObj = obj
           break
         }
-        obj = obj.parent
+        obj = obj.parent as THREE.Object3D | null
       }
       if (cameraObj) break
     }
@@ -1083,6 +1249,9 @@ watch(() => cameraSelectionStore.cameras, (newCameras, oldCameras) => {
 function dispose() {
   stopEnsureCanvasSizedLoop()
   document.removeEventListener('visibilitychange', onVisibilityChange)
+  document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+  document.removeEventListener('msfullscreenchange', handleFullscreenChange)
   if (animationId) {
     cancelAnimationFrame(animationId)
   }
@@ -1113,17 +1282,82 @@ watch(showPoints, (visible) => {
 function formatNumber(num: number): string {
   return num.toLocaleString()
 }
+
+// Fullscreen functionality
+function toggleFullscreen() {
+  if (!isFullscreen.value) {
+    enterFullscreen()
+  } else {
+    exitFullscreen()
+  }
+}
+
+function enterFullscreen() {
+  const element = document.querySelector('.three-viewer') as HTMLElement
+  if (element) {
+    if (element.requestFullscreen) {
+      element.requestFullscreen()
+    } else if ((element as any).webkitRequestFullscreen) {
+      (element as any).webkitRequestFullscreen()
+    } else if ((element as any).msRequestFullscreen) {
+      (element as any).msRequestFullscreen()
+    }
+    isFullscreen.value = true
+  }
+}
+
+function exitFullscreen() {
+  if (document.exitFullscreen) {
+    document.exitFullscreen()
+  } else if ((document as any).webkitExitFullscreen) {
+    (document as any).webkitExitFullscreen()
+  } else if ((document as any).msExitFullscreen) {
+    (document as any).msExitFullscreen()
+  }
+  isFullscreen.value = false
+}
+
+
+function handleFullscreenChange() {
+  const isFullscreenElement = !!(
+    document.fullscreenElement ||
+    (document as any).webkitFullscreenElement ||
+    (document as any).msFullscreenElement
+  )
+  isFullscreen.value = isFullscreenElement
+  
+  // Resize canvas when exiting fullscreen
+  if (!isFullscreenElement && renderer && containerRef.value) {
+    setTimeout(() => {
+      onWindowResize()
+      fitToView()
+    }, 100)
+  }
+}
 </script>
 
 <style scoped>
 .three-viewer {
   height: 100%;
+  width: 100%;
   display: flex;
   flex-direction: column;
   position: relative;
   background: #1a1a2e;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.three-viewer.is-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  border-radius: 0;
 }
 
 .viewer-controls {
@@ -1133,54 +1367,130 @@ function formatNumber(num: number): string {
   z-index: 10;
   display: flex;
   flex-direction: column;
+  min-width: 280px;
+  max-width: 320px;
+  max-height: calc(100vh - 24px);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.viewer-controls.collapsed {
+  min-width: auto;
+  max-width: 200px;
+}
+
+.controls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.controls-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.controls-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.controls-content {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: calc(100vh - 120px);
+}
+
+.controls-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.controls-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.controls-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.controls-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.controls-row {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+.controls-row.buttons-row {
+  justify-content: flex-start;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
 .mode-selector {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   margin-bottom: 4px;
 }
 
 .partition-selector-inline {
-  margin-left: 8px;
+  margin-left: 0;
+  margin-top: 4px;
 }
 
-.camera-size-control {
+.control-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  gap: 6px;
+  flex: 1;
+  min-width: 120px;
 }
 
-.threshold-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+.control-item.full-width {
+  width: 100%;
+  min-width: 100%;
 }
 
-.threshold-unit {
-  font-size: 12px;
-  color: #606266;
-  margin-left: 4px;
-}
-
-.control-label {
+.control-item .control-label {
   font-size: 12px;
   color: #606266;
   white-space: nowrap;
+  min-width: 40px;
+}
+
+.threshold-unit {
+  font-size: 11px;
+  color: #909399;
+  margin-left: 2px;
 }
 
 .viewer-container {
   flex: 1;
   width: 100%;
+  height: 100%;
+  min-height: 500px; /* Ensure minimum height for canvas */
+  position: relative;
+  overflow: hidden; /* Prevent scrollbars */
 }
 
 .info-panel {

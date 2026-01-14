@@ -272,6 +272,8 @@
 .viewer-wrapper {
   position: relative;
   height: 100%;
+  width: 100%;
+  min-height: 600px; /* Ensure minimum height for 3D viewer */
 }
 </style>
 
@@ -599,6 +601,13 @@ onUnmounted(() => {
   flex: 1;
   padding: 16px;
   overflow: hidden;
+  min-width: 0; /* Allow flex item to shrink below content size */
+}
+
+/* Optimize layout for 3D viewer tab */
+.center-panel :deep(.el-tab-pane[id="pane-viewer"]) {
+  padding: 0 !important;
+  height: 100% !important;
 }
 
 .main-tabs {
