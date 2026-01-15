@@ -88,17 +88,17 @@ algorithms:
   # OpenMVG 配置
   openmvg:
     # 二进制文件目录
-    bin_dir: "/usr/local/bin"
-    # 或: bin_dir: "/home/user/openmvg_build/Linux-x86_64-Release"
+    bin_dir: "/root/work/Aerotri-Web/openMVG_Build/Linux-x86_64-RELEASE"
+    # 或: bin_dir: "/root/work/Aerotri-Web/openMVG_Build/openMVG_install/bin"
 
     # 相机传感器数据库
-    sensor_db: "/usr/local/share/sensor_width_camera_database.txt"
+    sensor_db: "/root/work/Aerotri-Web/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt"
     # 或: sensor_db: "/home/user/openmvg/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt"
 
   # OpenMVS 配置
   openmvs:
     # 二进制文件目录
-    bin_dir: "/usr/local/lib/openmvs/bin"
+    bin_dir: "/root/work/Aerotri-Web/openMVS/make/bin"
     # 或: bin_dir: "/home/user/openmvs_build/bin"
 
 # ==============================================================================
