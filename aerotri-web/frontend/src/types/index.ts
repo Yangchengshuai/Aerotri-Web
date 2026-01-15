@@ -416,9 +416,19 @@ export interface DirectoryEntry {
 
 export interface DirectoryListResponse {
   root: string
+  root_name: string | null
   current: string
   parent: string | null
   entries: DirectoryEntry[]
+}
+
+export interface ImageRoot {
+  name: string
+  path: string
+}
+
+export interface ImageRootsResponse {
+  roots: ImageRoot[]
 }
 
 // GPU types

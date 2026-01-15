@@ -3,14 +3,17 @@
 This module provides YAML configuration loading with graceful fallback.
 If config files are missing or invalid, the system continues to work
 with default/empty configurations.
+
+Supports multiple image root path configurations for flexible directory browsing.
 """
 
 import os
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +159,187 @@ def get_notification_config() -> Dict[str, Any]:
 
 def is_notification_enabled() -> bool:
     """Check if notification service is enabled.
-    
+
     Returns:
         True if notification.enabled is True in config
     """
     config = get_notification_config()
     return config.get("notification", {}).get("enabled", False)
+
+
+# ============================================================================
+# Image Root Path Configuration
+# ============================================================================
+
+class ImageRoot(BaseModel):
+    """A named image root path configuration."""
+
+    name: str = Field(description="Display name for this root path")
+    path: str = Field(description="Absolute path to the root directory")
+
+    def resolve_path(self) -> Path:
+        """Resolve and validate the path."""
+        resolved = Path(self.path).expanduser().resolve()
+        if not resolved.exists():
+            raise ValueError(f"Image root does not exist: {self.path}")
+        if not resolved.is_dir():
+            raise ValueError(f"Image root is not a directory: {self.path}")
+        return resolved
+
+
+# Global image roots cache
+_image_roots: Optional[List[ImageRoot]] = None
+
+
+def get_image_roots(reload: bool = False) -> List[ImageRoot]:
+    """Get configured image root paths.
+
+    Configuration priority:
+    1. Config file (config/image_roots.yaml)
+    2. Environment variables (AEROTRI_IMAGE_ROOTS or AEROTRI_IMAGE_ROOT)
+    3. Default path (/mnt/work_odm/chengshuai)
+
+    Args:
+        reload: Force reload from disk
+
+    Returns:
+        List of ImageRoot configurations (never empty)
+    """
+    global _image_roots
+
+    if not reload and _image_roots is not None:
+        return _image_roots
+
+    image_roots: List[ImageRoot] = []
+
+    # Try loading from config file first
+    try:
+        image_roots = _load_image_roots_from_config()
+    except Exception as e:
+        logger.debug(f"No image_roots config found: {e}")
+
+    # If no config, try environment variables
+    if not image_roots:
+        image_roots = _load_image_roots_from_env()
+
+    # Ultimate fallback to default
+    if not image_roots:
+        default_path = os.getenv("AEROTRI_IMAGE_ROOT", "/mnt/work_odm/chengshuai")
+        image_roots = [
+            ImageRoot(name="默认路径", path=default_path),
+        ]
+
+    # Validate all paths exist (log warnings but don't fail)
+    validated_roots = []
+    for root in image_roots:
+        try:
+            root.resolve_path()  # Validate
+            validated_roots.append(root)
+        except ValueError as e:
+            logger.warning(f"Invalid image root '{root.name}': {e}")
+
+    _image_roots = validated_roots if validated_roots else image_roots
+    return _image_roots
+
+
+def _load_image_roots_from_config() -> List[ImageRoot]:
+    """Load image roots from YAML configuration file.
+
+    Expected format (config/image_roots.yaml):
+        image_roots:
+          - name: "项目数据"
+            path: "/data/projects"
+          - name: "外部存储"
+            path: "/mnt/external"
+
+    Returns:
+        List of ImageRoot configurations
+    """
+    config = config_loader.load("image_roots")
+    image_roots_data = config.get("image_roots", [])
+
+    if not isinstance(image_roots_data, list):
+        logger.warning("'image_roots' must be a list in configuration file")
+        return []
+
+    image_roots = []
+    for item in image_roots_data:
+        if not isinstance(item, dict):
+            logger.warning("Each image root must be a dictionary")
+            continue
+
+        name = item.get("name", "未命名路径")
+        path = item.get("path")
+        if not path:
+            logger.warning(f"Image root '{name}' is missing 'path' field")
+            continue
+
+        image_roots.append(ImageRoot(name=name, path=path))
+
+    return image_roots
+
+
+def _load_image_roots_from_env() -> List[ImageRoot]:
+    """Load image roots from environment variables.
+
+    Supports both AEROTRI_IMAGE_ROOTS (colon-separated) and AEROTRI_IMAGE_ROOT (single path).
+
+    Examples:
+        AEROTRI_IMAGE_ROOTS="/data/images:/mnt/storage:/home/user/images"
+        AEROTRI_IMAGE_ROOT="/data/images"
+
+    Returns:
+        List of ImageRoot configurations
+    """
+    image_roots: List[ImageRoot] = []
+
+    # Try AEROTRI_IMAGE_ROOTS first (colon-separated paths)
+    roots_str = os.getenv("AEROTRI_IMAGE_ROOTS", "")
+    if roots_str:
+        paths = [p.strip() for p in roots_str.split(":") if p.strip()]
+        for i, path in enumerate(paths):
+            # Generate a default name based on the path
+            name = f"路径 {i + 1}"
+            # Use the last directory component as the name if available
+            path_obj = Path(path)
+            if path_obj.name and path_obj.name != path:
+                name = path_obj.name
+            image_roots.append(ImageRoot(name=name, path=path))
+    else:
+        # Fallback to AEROTRI_IMAGE_ROOT for backward compatibility
+        single_path = os.getenv("AEROTRI_IMAGE_ROOT")
+        if single_path:
+            image_roots.append(
+                ImageRoot(name="默认路径", path=single_path),
+            )
+
+    return image_roots
+
+
+def get_image_root(identifier: str) -> Optional[ImageRoot]:
+    """Get an image root by name or path.
+
+    Args:
+        identifier: Either the display name or the path of the root
+
+    Returns:
+        The matching ImageRoot, or None if not found
+    """
+    image_roots = get_image_roots()
+    for root in image_roots:
+        if root.name == identifier or root.path == identifier:
+            return root
+    return None
+
+
+def reload_image_roots() -> List[ImageRoot]:
+    """Force reload image root configuration.
+
+    Useful for configuration changes without restarting the server.
+
+    Returns:
+        The newly loaded image roots
+    """
+    global _image_roots
+    _image_roots = None
+    return get_image_roots()

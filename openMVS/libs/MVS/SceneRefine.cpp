@@ -1323,8 +1323,9 @@ bool Scene::RefineMesh(unsigned nResolutionLevel, unsigned nMinResolution, unsig
 		if (fGradientStep == 0) {
 			// DefineProblem
 			refine.ratioRigidityElasticity = 1.f;
-			ceres::MeshProblem* problemData(new ceres::MeshProblem(refine));
-			ceres::GradientProblem problem(problemData);
+			auto problemData = std::make_unique<ceres::MeshProblem>(refine);
+			ceres::MeshProblem* problemDataPtr = problemData.get();
+			ceres::GradientProblem problem(std::move(problemData));
 			// SetMinimizerOptions
 			ceres::GradientProblemSolver::Options options;
 			if (VERBOSITY_LEVEL > 1) {
@@ -1337,10 +1338,10 @@ bool Scene::RefineMesh(unsigned nResolutionLevel, unsigned nMinResolution, unsig
 			options.function_tolerance = 1e-3;
 			options.gradient_tolerance = 1e-7;
 			options.max_num_line_search_step_size_iterations = 10;
-			options.callbacks.push_back(problemData);
+			options.callbacks.push_back(problemDataPtr);
 			ceres::GradientProblemSolver::Summary summary;
 			// SolveProblem
-			ceres::Solve(options, problem, problemData->GetParameters(), &summary);
+			ceres::Solve(options, problem, problemDataPtr->GetParameters(), &summary);
 			DEBUG_ULTIMATE(summary.FullReport().c_str());
 			switch (summary.termination_type) {
 			case ceres::TerminationType::NO_CONVERGENCE:

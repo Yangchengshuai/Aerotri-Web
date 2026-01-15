@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.block import Block, BlockStatus, AlgorithmType, MatchingMethod, GlomapMode
 from ..models.database import AsyncSessionLocal
+from ..conf.settings import get_settings
 from .log_parser import LogParser
 from .workspace_service import WorkspaceService
 from .instantsfm_visualizer_proxy import (
@@ -27,35 +28,25 @@ from .instantsfm_visualizer_proxy import (
 from .task_notifier import task_notifier
 
 
+# Load algorithm paths from configuration system
+# 环境变量向后兼容（新配置系统自动支持）
+_settings = get_settings()
+
 # COLMAP/GLOMAP executable paths
-COLMAP_PATH = os.environ.get(
-    "COLMAP_PATH", 
-    # "/root/work/colmap/build_cuda/src/colmap/exe/colmap"
-    "/usr/local/bin/colmap"
-    # "/root/work/colmap3.11/colmap/build/src/colmap/exe/colmap" # 新编译 3.11 版本
-)
-GLOMAP_PATH = os.environ.get(
-    "GLOMAP_PATH",
-    # "/root/work/colmap/build_cuda/src/glomap/glomap"
-    "/usr/local/bin/glomap"
-    # "/root/work/glomap/build/glomap/glomap" # 新编译 glomap 版本
-)
-INSTANTSFM_PATH = os.environ.get(
-    "INSTANTSFM_PATH",
-    "ins-sfm"  # Use conda environment's ins-sfm command
-)
-OPENMVG_BIN_DIR = os.environ.get(
-    "OPENMVG_BIN_DIR",
-    "/root/work/openMVG/openMVG_Build/Linux-x86_64-Release"
-)
-OPENMVG_SENSOR_DB = os.environ.get(
-    "OPENMVG_SENSOR_DB",
-    "/root/work/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt"
-)
+COLMAP_PATH = str(_settings.algorithms.colmap.path or "colmap")
+GLOMAP_PATH = str(_settings.algorithms.glomap.path or "glomap")
+INSTANTSFM_PATH = str(_settings.algorithms.instantsfm.path or "ins-sfm")
+
+# OpenMVG paths
+OPENMVG_BIN_DIR = str(_settings.algorithms.openmvg.bin_dir or "/usr/local/bin")
+OPENMVG_SENSOR_DB = str(_settings.algorithms.openmvg.sensor_db or "/usr/local/share/sensor_width_camera_database.txt")
 
 # Library paths for runtime dependencies
-# Note: CERES_LIB_PATH contains all required libraries including absl
-CERES_LIB_PATH = "/root/opt/ceres-2.3-cuda/lib"
+# Note: This should be configured via system or environment
+CERES_LIB_PATH = os.environ.get("CERES_LIB_PATH", "/root/opt/ceres-2.3-cuda/lib")
+
+# Output directories from configuration system
+OUTPUTS_DIR = _settings.paths.outputs_dir
 
 
 class TaskContext:
@@ -231,7 +222,7 @@ class TaskRunner:
                 block.working_image_path = None
 
         # Create output directory
-        output_path = f"/root/work/aerotri-web/data/outputs/{block.id}"
+        output_path = str(OUTPUTS_DIR / block.id)
         os.makedirs(output_path, exist_ok=True)
         
         # Update block status
@@ -1553,7 +1544,7 @@ class TaskRunner:
         ctx.write_log_line(f"Found COLMAP files: {', '.join(found_files)}")
 
         # Prepare output sparse directory for optimized result
-        output_root = block.output_path or f"/root/work/aerotri-web/data/outputs/{block.id}"
+        output_root = block.output_path or str(OUTPUTS_DIR / block.id)
         os.makedirs(output_root, exist_ok=True)
         sparse_path = os.path.join(output_root, "sparse")
         os.makedirs(sparse_path, exist_ok=True)
@@ -2271,7 +2262,7 @@ class TaskRunner:
             return list(ctx.log_buffer)[-lines:]
 
         # If completed, try read persisted log file
-        log_path = os.path.join("/root/work/aerotri-web/data/outputs", block_id, "run.log")
+        log_path = os.path.join(str(OUTPUTS_DIR), block_id, "run.log")
         if not os.path.exists(log_path):
             return None
         try:

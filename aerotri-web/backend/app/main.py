@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import api_router
 from .ws import progress_router, visualization_router
 from .models.database import init_db
+from .conf.validation import validate_on_startup
 from .services.task_runner import task_runner
 from .services.openmvs_runner import openmvs_runner
 from .services.gs_runner import gs_runner
@@ -24,11 +25,19 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
+
+    # 验证配置并创建必要目录
+    try:
+        warnings = validate_on_startup()
+        if warnings:
+            for warning in warnings:
+                logger.warning(f"Configuration warning: {warning}")
+    except RuntimeError as e:
+        logger.error(f"Configuration validation failed: {e}")
+        raise
+
+    # Initialize database
     await init_db()
-    
-    # Ensure data directories exist
-    os.makedirs("/root/work/aerotri-web/data/outputs", exist_ok=True)
-    os.makedirs("/root/work/aerotri-web/data/thumbnails", exist_ok=True)
     
     # Initialize notification service (safe to call, no-ops if disabled)
     notification_manager.initialize()

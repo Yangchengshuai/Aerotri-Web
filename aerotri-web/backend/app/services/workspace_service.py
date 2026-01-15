@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Iterable, List
 
+from ..conf.settings import get_settings
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
 
@@ -20,7 +21,9 @@ class WorkspaceService:
 
     @staticmethod
     def get_block_root(block_id: str) -> str:
-        return f"/root/work/aerotri-web/data/blocks/{block_id}"
+        """Get block working directory root path."""
+        settings = get_settings()
+        return str(settings.paths.blocks_dir / block_id)
 
     @staticmethod
     def get_working_images_dir(block_id: str) -> str:

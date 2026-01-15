@@ -202,6 +202,29 @@
       destroy-on-close
     >
       <div class="dir-browser">
+        <!-- Root path selector -->
+        <div v-if="imageRoots.length > 1" class="dir-browser__roots">
+          <span class="roots-label">根路径:</span>
+          <el-select
+            v-model="selectedRootPath"
+            placeholder="选择根路径"
+            size="small"
+            @change="handleRootChange"
+          >
+            <el-option
+              v-for="root in imageRoots"
+              :key="root.path"
+              :label="root.name"
+              :value="root.path"
+            >
+              <div class="root-option">
+                <span class="root-name">{{ root.name }}</span>
+                <span class="root-path">{{ root.path }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </div>
+
         <div class="dir-browser__header">
           <span class="current-path">{{ currentDir || '请选择目录' }}</span>
           <el-button text size="small" :disabled="!parentDir" @click="goParent">上一级</el-button>
@@ -263,7 +286,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { Plus, Folder, Clock, Setting, Grid, TrendCharts } from '@element-plus/icons-vue'
 import { useBlocksStore } from '@/stores/blocks'
 import { useQueueStore } from '@/stores/queue'
-import type { Block, DirectoryEntry } from '@/types'
+import type { Block, DirectoryEntry, ImageRoot } from '@/types'
 import { filesystemApi } from '@/api'
 import BlockCard from '@/components/BlockCard.vue'
 
@@ -282,6 +305,10 @@ const directoryLoading = ref(false)
 const directoryEntries = ref<DirectoryEntry[]>([])
 const currentDir = ref('')
 const parentDir = ref<string | null>(null)
+
+// Image roots configuration
+const imageRoots = ref<ImageRoot[]>([])
+const selectedRootPath = ref<string>('')
 
 const formData = reactive({
   name: '',
@@ -376,12 +403,26 @@ onMounted(async () => {
   await Promise.all([
     blocksStore.fetchBlocks(),
     queueStore.fetchQueue(),
+    loadImageRoots(),
   ])
   // Poll queue every 5 seconds
   queuePollTimer = window.setInterval(() => {
     queueStore.fetchQueue()
   }, 5000)
 })
+
+async function loadImageRoots() {
+  try {
+    const resp = await filesystemApi.listRoots()
+    imageRoots.value = resp.data.roots
+    // Set default to first root if available
+    if (imageRoots.value.length > 0 && !selectedRootPath.value) {
+      selectedRootPath.value = imageRoots.value[0].path
+    }
+  } catch (e: unknown) {
+    console.error('Failed to load image roots:', e)
+  }
+}
 
 onUnmounted(() => {
   if (queuePollTimer) {
@@ -437,7 +478,11 @@ async function handleDelete(block: Block) {
 
 async function browseDirectory() {
   showDirectoryDialog.value = true
-  await loadDirectories()
+  // If no root selected but we have roots, select the first one
+  if (!selectedRootPath.value && imageRoots.value.length > 0) {
+    selectedRootPath.value = imageRoots.value[0].path
+  }
+  await loadDirectories(selectedRootPath.value || undefined)
 }
 
 async function loadDirectories(path?: string) {
@@ -452,6 +497,11 @@ async function loadDirectories(path?: string) {
   } finally {
     directoryLoading.value = false
   }
+}
+
+function handleRootChange(rootPath: string) {
+  // Load directories from the selected root
+  loadDirectories(rootPath)
 }
 
 function openDirectory(path: string) {
@@ -577,12 +627,44 @@ function formatQueuedTime(isoTime: string): string {
   gap: 12px;
 }
 
+.dir-browser__roots {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.roots-label {
+  font-size: 13px;
+  color: #606266;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.root-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.root-name {
+  font-weight: 500;
+  color: #303133;
+}
+
+.root-path {
+  font-size: 11px;
+  color: #909399;
+}
+
 .dir-browser__header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   font-size: 14px;
   color: #606266;
+  padding-top: 4px;
 }
 
 .current-path {

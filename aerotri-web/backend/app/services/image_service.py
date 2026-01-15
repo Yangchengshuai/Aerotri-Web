@@ -4,27 +4,30 @@ import hashlib
 from pathlib import Path
 from PIL import Image
 
-# Thumbnail cache directory
-THUMBNAIL_CACHE_DIR = "/root/work/aerotri-web/data/thumbnails"
+from ..conf.settings import get_settings
+
+# Thumbnail cache directory (loaded from configuration)
+_settings = get_settings()
+THUMBNAIL_CACHE_DIR = str(_settings.paths.thumbnails_dir)
 
 
 class ImageService:
     """Service for image operations."""
-    
+
     @staticmethod
     async def get_thumbnail(image_path: str, size: int = 200) -> str:
         """Get or generate thumbnail for an image.
-        
+
         Args:
             image_path: Path to the original image
             size: Maximum dimension for thumbnail
-            
+
         Returns:
             Path to the thumbnail file
         """
         # Create cache directory if not exists
         os.makedirs(THUMBNAIL_CACHE_DIR, exist_ok=True)
-        
+
         # Generate cache key from path and size
         cache_key = hashlib.md5(f"{image_path}_{size}".encode()).hexdigest()
         thumbnail_path = os.path.join(THUMBNAIL_CACHE_DIR, f"{cache_key}.jpg")

@@ -19,7 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.block import Block
 from ..models.database import AsyncSessionLocal
+from ..conf.settings import get_settings
 from .task_notifier import task_notifier
+
+# Load output directory from configuration system
+_settings = get_settings()
+OUTPUTS_DIR = _settings.paths.outputs_dir
 
 
 class TilesProcessError(Exception):
@@ -473,8 +478,7 @@ class TilesRunner:
 
         # Fallback to persisted run_tiles.log on disk
         # We infer path from typical layout: <output>/recon/tiles/run_tiles.log
-        base_outputs_dir = "/root/work/aerotri-web/data/outputs"
-        tiles_log = Path(base_outputs_dir) / block_id / "recon" / "tiles" / "run_tiles.log"
+        tiles_log = OUTPUTS_DIR / block_id / "recon" / "tiles" / "run_tiles.log"
         if not tiles_log.is_file():
             return []
 

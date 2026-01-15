@@ -41,7 +41,6 @@
 #include <CGAL/Simple_cartesian.h>
 #include <CGAL/property_map.h>
 #include <CGAL/pca_estimate_normals.h>
-#include <CGAL/Point_set_processing_3/internal/neighbor_query.h>
 
 using namespace MVS;
 
@@ -1529,12 +1528,24 @@ void MVS::EstimatePointNormals(const ImageArr& images, PointCloud& pointcloud, i
 	// estimates normals direction;
 	// Note: pca_estimate_normals() requires an iterator over points
 	// as well as property maps to access each point's position and normal.
-	// Use CGAL 5.x named parameters API
+	#if CGAL_VERSION_NR < 1041301000
+	#if CGAL_VERSION_NR < 1040800000
+	CGAL::pca_estimate_normals(
+	#else
+	CGAL::pca_estimate_normals<CGAL::Sequential_tag>(
+	#endif
+		pointvectors.begin(), pointvectors.end(),
+		CGAL::First_of_pair_property_map<PointVectorPair>(),
+		CGAL::Second_of_pair_property_map<PointVectorPair>(),
+		numNeighbors
+	);
+	#else
 	CGAL::pca_estimate_normals<CGAL::Sequential_tag>(
 		pointvectors, numNeighbors,
 		CGAL::parameters::point_map(CGAL::First_of_pair_property_map<PointVectorPair>())
 		.normal_map(CGAL::Second_of_pair_property_map<PointVectorPair>())
 	);
+	#endif
 	// store the point normals
 	pointcloud.normals.resize(pointcloud.points.size());
 	FOREACH(i, pointcloud.normals) {

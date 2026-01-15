@@ -1,9 +1,10 @@
 import axios from 'axios'
-import type { 
-  Block, 
-  ImageListResponse, 
-  DirectoryListResponse, 
-  GPUInfo, 
+import type {
+  Block,
+  ImageListResponse,
+  DirectoryListResponse,
+  ImageRootsResponse,
+  GPUInfo,
   TaskStatus,
   CameraInfo,
   Point3D,
@@ -117,6 +118,10 @@ export const taskApi = {
 export const filesystemApi = {
   listDirs: (path?: string) =>
     api.get<DirectoryListResponse>('/filesystem/dirs', { params: { path } }),
+
+  // List all configured image root directories
+  listRoots: () =>
+    api.get<ImageRootsResponse>('/filesystem/roots'),
 }
 
 

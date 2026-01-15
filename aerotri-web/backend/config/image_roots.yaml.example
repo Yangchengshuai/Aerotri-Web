@@ -1,0 +1,41 @@
+# 图像根路径配置示例
+#
+# 复制此文件为 image_roots.yaml 并根据需要修改
+# 配置文件位置: backend/config/image_roots.yaml
+#
+# 注意: 环境变量优先级高于配置文件
+# - 如果设置了 AEROTRI_IMAGE_ROOTS,将使用环境变量
+# - 如果设置了 AEROTRI_IMAGE_ROOT,将使用环境变量(单个路径)
+# - 如果都未设置,将使用此配置文件
+
+# 图像根路径列表
+image_roots:
+  # 示例1: 项目数据目录
+  - name: "项目数据"
+    path: "/data/projects"
+
+  # 示例2: 外部存储
+  - name: "外部存储"
+    path: "/mnt/external/storage"
+
+  # 示例3: 用户目录
+  - name: "用户目录"
+    path: "/home/user/images"
+
+  # 示例4: NAS存储
+  - name: "NAS存储"
+    path: "/mnt/nas/aerotri"
+
+  # 添加更多路径...
+  # - name: "描述性名称"
+  #   path: "/absolute/path/to/images"
+
+# 配置说明:
+# 1. name: 显示在UI中的名称(中文或英文)
+# 2. path: 绝对路径(必须存在且可访问)
+#
+# 最佳实践:
+# - 使用描述性的名称,便于用户识别
+# - 路径应指向包含图像集合的根目录,而不是具体的图像目录
+# - 确保路径存在且后端进程有读取权限
+# - 可以配置多个路径,用户在创建Block时可以选择

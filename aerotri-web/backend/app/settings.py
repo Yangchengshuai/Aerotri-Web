@@ -10,7 +10,7 @@ PROJECT_ROOT = Path("/root/work/aerotri-web")
 
 # ===== OpenMVS configuration =====
 OPENMVS_BIN_DIR = Path(
-    os.getenv("OPENMVS_BIN_DIR", "/root/work/openMVS/build_cuda/bin")
+    os.getenv("OPENMVS_BIN_DIR", "/root/work/Aerotri-Web/openMVS/make/bin")
 )
 
 OPENMVS_INTERFACE_COLMAP = Path(

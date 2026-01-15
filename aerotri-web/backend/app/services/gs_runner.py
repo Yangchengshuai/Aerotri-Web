@@ -26,13 +26,22 @@ from sqlalchemy import select
 
 from ..models.block import Block
 from ..models.database import AsyncSessionLocal
-from ..settings import (
-    GS_PYTHON, GS_REPO_PATH, TENSORBOARD_PATH, TENSORBOARD_PORT_START, TENSORBOARD_PORT_END,
-    NETWORK_GUI_PORT_START, NETWORK_GUI_PORT_END, NETWORK_GUI_IP
-)
+from ..conf.settings import get_settings
 
 from .gs_tiles_runner import gs_tiles_runner  # 用于复用 PLY → SPZ 转换逻辑
 from .task_notifier import task_notifier
+
+# Load 3DGS configuration from new system
+_settings = get_settings()
+
+GS_PYTHON = str(_settings.gaussian_splatting.python)
+GS_REPO_PATH = str(_settings.gaussian_splatting.repo_path)
+TENSORBOARD_PATH = str(_settings.gaussian_splatting.tensorboard_path)
+TENSORBOARD_PORT_START = _settings.gaussian_splatting.tensorboard_port_start
+TENSORBOARD_PORT_END = _settings.gaussian_splatting.tensorboard_port_end
+NETWORK_GUI_IP = str(_settings.gaussian_splatting.network_gui_ip)
+NETWORK_GUI_PORT_START = _settings.gaussian_splatting.network_gui_port_start
+NETWORK_GUI_PORT_END = _settings.gaussian_splatting.network_gui_port_end
 
 # Import COLMAP_PATH from task_runner
 try:

@@ -21,15 +21,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.block import Block
 from ..models.recon_version import ReconVersion, ReconVersionStatus
 from ..models.database import AsyncSessionLocal
-from ..settings import (
-    OPENMVS_INTERFACE_COLMAP,
-    OPENMVS_DENSIFY,
-    OPENMVS_RECONSTRUCT,
-    OPENMVS_REFINE,
-    OPENMVS_TEXTURE,
-)
+from ..conf.settings import get_settings
 from .task_notifier import task_notifier
 from .task_runner import task_runner, CERES_LIB_PATH
+
+# Load OpenMVS configuration from new system
+_settings = get_settings()
+_openmvs_bin_dir = str(_settings.algorithms.openmvs.bin_dir or "/usr/local/lib/openmvs/bin")
+
+# OpenMVS executable paths (constructed from bin_dir)
+OPENMVS_INTERFACE_COLMAP = Path(_openmvs_bin_dir) / "InterfaceCOLMAP"
+OPENMVS_DENSIFY = Path(_openmvs_bin_dir) / "DensifyPointCloud"
+OPENMVS_RECONSTRUCT = Path(_openmvs_bin_dir) / "ReconstructMesh"
+OPENMVS_REFINE = Path(_openmvs_bin_dir) / "RefineMesh"
+OPENMVS_TEXTURE = Path(_openmvs_bin_dir) / "TextureMesh"
+
+# Output directories from configuration system
+OUTPUTS_DIR = _settings.paths.outputs_dir
 
 
 class OpenMVSProcessError(Exception):
@@ -1873,8 +1881,7 @@ class OpenMVSRunner:
 
         # Fallback to persisted run_recon.log on disk
         # We infer path from typical layout: <output>/recon/run_recon.log
-        base_outputs_dir = "/root/work/aerotri-web/data/outputs"
-        recon_log = Path(base_outputs_dir) / block_id / "recon" / "run_recon.log"
+        recon_log = OUTPUTS_DIR / block_id / "recon" / "run_recon.log"
         if not recon_log.is_file():
             return None
 

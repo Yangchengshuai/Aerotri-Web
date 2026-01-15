@@ -70,7 +70,7 @@ ENDIF()
 #   CMake files in this project can refer to the root source directory
 #   as ${OpenMVS_SOURCE_DIR} and to the root binary directory as
 #   ${OpenMVS_BINARY_DIR}.
-PROJECT(OpenMVS LANGUAGES CXX)
+PROJECT(OpenMVS LANGUAGES C CXX)
 
 SET(OpenMVS_MAJOR_VERSION 2)
 SET(OpenMVS_MINOR_VERSION 3)

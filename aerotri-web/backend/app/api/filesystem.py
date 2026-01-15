@@ -7,11 +7,12 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
+from ..config import ImageRoot, get_image_root, get_image_roots
 from ..services.workspace_service import IMAGE_EXTENSIONS
 
 router = APIRouter()
 
-# Restrict browsing to a configurable root to avoid arbitrary filesystem access
+# Legacy: Restrict browsing to a single configurable root (for backward compatibility)
 IMAGE_ROOT = Path(os.getenv("AEROTRI_IMAGE_ROOT", "/mnt/work_odm/chengshuai")).resolve()
 
 
@@ -28,25 +29,68 @@ class DirectoryListResponse(BaseModel):
     """Response model for directory listing."""
 
     root: str
+    root_name: Optional[str]  # Name of the root (if from named roots)
     current: str
     parent: Optional[str]
     entries: List[DirectoryEntry]
 
 
-def _resolve_safe_path(path_value: Optional[str]) -> Path:
-    """Resolve path and ensure it stays within IMAGE_ROOT."""
-    base = IMAGE_ROOT
+class ImageRootResponse(BaseModel):
+    """Response model for image root configuration."""
+
+    name: str
+    path: str
+
+
+class ImageRootsResponse(BaseModel):
+    """Response model for listing all configured image roots."""
+
+    roots: List[ImageRootResponse]
+
+
+def _resolve_safe_path(
+    path_value: Optional[str], allowed_root: Optional[Path] = None
+) -> Path:
+    """Resolve path and ensure it stays within an allowed root.
+
+    Args:
+        path_value: The path to resolve (None returns the root)
+        allowed_root: The specific root to check against (None checks all configured roots)
+
+    Returns:
+        The resolved, safe Path
+
+    Raises:
+        HTTPException: If path is outside allowed roots or doesn't exist
+    """
+    # Determine the base root to use
+    base = allowed_root if allowed_root else IMAGE_ROOT
+
     if path_value:
         candidate = Path(path_value).expanduser().resolve()
     else:
         candidate = base
 
-    # Prevent escaping the allowed root
+    # Check if path is within the allowed root
     if candidate != base and base not in candidate.parents:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path not allowed: {candidate}",
-        )
+        # If not in the specified root, check all configured roots
+        image_roots = get_image_roots()
+        is_allowed = False
+        for root in image_roots:
+            try:
+                root_path = root.resolve_path()
+                if candidate == root_path or root_path in candidate.parents:
+                    is_allowed = True
+                    base = root_path
+                    break
+            except ValueError:
+                continue
+
+        if not is_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Path not allowed: {candidate}",
+            )
 
     if not candidate.exists() or not candidate.is_dir():
         raise HTTPException(
@@ -58,9 +102,24 @@ def _resolve_safe_path(path_value: Optional[str]) -> Path:
 
 
 @router.get("/filesystem/dirs", response_model=DirectoryListResponse)
-async def list_directories(path: str = Query(default=None, description="Absolute path inside allowed root")):
-    """List subdirectories under the given path (bounded to IMAGE_ROOT)."""
-    current = _resolve_safe_path(path)
+async def list_directories(
+    path: str = Query(default=None, description="Absolute path inside allowed root"),
+    root: str = Query(default=None, description="Optional: specific root path to browse"),
+):
+    """List subdirectories under the given path (bounded to allowed image roots).
+
+    Args:
+        path: Absolute path to list (must be within configured image roots)
+        root: Optional specific root path to restrict browsing to
+    """
+    # Determine the allowed root if specified
+    allowed_root = None
+    if root:
+        root_config = get_image_root(root)
+        if root_config:
+            allowed_root = root_config.resolve_path()
+
+    current = _resolve_safe_path(path, allowed_root)
     entries: List[DirectoryEntry] = []
 
     try:
@@ -100,12 +159,41 @@ async def list_directories(path: str = Query(default=None, description="Absolute
             )
         )
 
-    parent = str(current.parent) if current != IMAGE_ROOT else None
+    # Determine parent path
+    base = allowed_root if allowed_root else IMAGE_ROOT
+    parent = str(current.parent) if current != base else None
+
+    # Determine root name
+    root_name = None
+    image_roots = get_image_roots()
+    for image_root in image_roots:
+        try:
+            if str(current).startswith(str(image_root.resolve_path())):
+                root_name = image_root.name
+                break
+        except ValueError:
+            continue
 
     return DirectoryListResponse(
-        root=str(IMAGE_ROOT),
+        root=str(base),
+        root_name=root_name,
         current=str(current),
         parent=parent,
         entries=entries,
     )
+
+
+@router.get("/filesystem/roots", response_model=ImageRootsResponse)
+async def list_image_roots():
+    """List all configured image root directories.
+
+    Returns the available root paths that users can browse when creating blocks.
+    """
+    image_roots = get_image_roots()
+
+    roots = [
+        ImageRootResponse(name=root.name, path=root.path) for root in image_roots
+    ]
+
+    return ImageRootsResponse(roots=roots)
 

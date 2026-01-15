@@ -1,11 +1,15 @@
 """Database configuration and session management."""
 import os
+from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
-# Database file path
-DATABASE_PATH = os.environ.get("AEROTRI_DB_PATH", "/root/work/aerotri-web/data/aerotri.db")
+from ..conf.settings import get_settings
+
+# Load database path from configuration system
+_settings = get_settings()
+DATABASE_PATH = str(_settings.database.path)
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
 # Create async engine

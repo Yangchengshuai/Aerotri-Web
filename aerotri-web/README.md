@@ -152,21 +152,118 @@ npm run test
 
 ## 环境变量
 
-### 后端
+### 后端配置
+
+AeroTri Web 支持灵活的配置方式，优先级从高到低为：**环境变量 > YAML 配置文件 > 默认值**。
+
+### 最小化启动（无需配置）
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+系统会使用以下默认值：
+- 数据库：`./data/aerotri.db`
+- 输出目录：`./data/outputs/`
+- 算法路径：假设在系统 `PATH` 中
+
+### 环境变量配置
+
+**核心配置**：
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `AEROTRI_DB_PATH` | 数据库文件路径 | `/root/work/aerotri-web/data/aerotri.db` |
-| `AEROTRI_IMAGE_ROOT` | 图像浏览根目录 | `/mnt/work_odm/chengshuai` |
-| `COLMAP_PATH` | COLMAP 可执行文件路径 | `/usr/local/bin/colmap`（可改为自编译路径，如 `/root/work/colmap3.11/colmap/build/src/colmap/exe/colmap`） |
-| `GLOMAP_PATH` | GLOMAP 可执行文件路径 | `/usr/local/bin/glomap`（可改为自编译路径，如 `/root/work/glomap/build/glomap/glomap`） |
-| `INSTANTSFM_PATH` | InstantSfM 可执行文件路径 | 根据安装路径配置（例如 `ins-sfm`） |
-| `GS_REPO_PATH` | 3DGS 训练仓库路径（包含 `train.py`） | `/root/work/gs_workspace/gaussian-splatting` |
-| `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 gaussian-splatting 依赖与 CUDA 扩展） | `/root/work/gs_workspace/gs_env/bin/python`（默认值，可通过环境变量覆盖） |
-| `OPENMVG_BIN_DIR` | OpenMVG 可执行文件目录 | `/root/work/openMVG/openMVG_Build/Linux-x86_64-Release` |
-| `OPENMVG_SENSOR_DB` | OpenMVG 相机传感器数据库 | `/root/work/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt` |
+| `AEROTRI_ENV` | 运行环境（development/production） | `production` |
+| `AEROTRI_DEBUG` | 调试模式 | `false` |
+| `AEROTRI_DB_PATH` | 数据库文件路径 | `./data/aerotri.db` |
+| `AEROTRI_IMAGE_ROOT` | 图像浏览根目录（单个，向后兼容） | `./data/images` |
+| `AEROTRI_IMAGE_ROOTS` | 图像浏览根目录（多个，冒号分隔） | - |
+
+**算法路径**：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `COLMAP_PATH` | COLMAP 可执行文件路径 | `colmap`（从 PATH 查找） |
+| `GLOMAP_PATH` | GLOMAP 可执行文件路径 | `glomap`（从 PATH 查找） |
+| `INSTANTSFM_PATH` | InstantSfM 可执行文件路径 | `ins-sfm` |
+| `OPENMVG_BIN_DIR` | OpenMVG 可执行文件目录 | `/usr/local/bin` |
+| `OPENMVG_SENSOR_DB` | OpenMVG 相机传感器数据库 | `/usr/local/share/sensor_width_camera_database.txt` |
+| `OPENMVS_BIN_DIR` | OpenMVS 可执行文件目录 | `/usr/local/lib/openmvs/bin` |
+
+**3D Gaussian Splatting**：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `GS_REPO_PATH` | 3DGS 训练仓库路径（包含 `train.py`） | `/opt/gaussian-splatting` |
+| `GS_PYTHON` | 运行 3DGS 的 Python 解释器（已装好 CUDA 扩展） | `python` |
+| `TENSORBOARD_PATH` | TensorBoard 可执行文件 | `tensorboard` |
+| `SPZ_PYTHON` | SPZ Python 环境路径 | `python` |
+
+**队列配置**：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
 | `QUEUE_MAX_CONCURRENT` | 队列最大并发数 | `1`（范围 1-10） |
-| `SPZ_PYTHON` | SPZ Python 环境路径 | `/root/miniconda3/envs/spz-env/bin/python` |
+
+### 使用配置文件（推荐用于生产）
+
+创建 `backend/config/settings.yaml`：
+
+```yaml
+# 应用配置
+app:
+  debug: false
+  environment: production
+
+# 路径配置
+paths:
+  data_dir: "./data"
+  outputs_dir: "./data/outputs"
+
+# 算法配置
+algorithms:
+  colmap:
+    path: "/usr/local/bin/colmap"
+  glomap:
+    path: "/usr/local/bin/glomap"
+
+# 3DGS 配置
+gaussian_splatting:
+  repo_path: "/opt/gaussian-splatting"
+  python: "/opt/gs_env/bin/python"
+
+# 图像根路径
+image_roots:
+  paths:
+    - name: "本地数据"
+      path: "/data/images"
+    - name: "NAS 存储"
+      path: "/mnt/storage"
+```
+
+### 多环境配置
+
+为不同环境创建独立配置文件：
+
+```bash
+# 开发环境
+backend/config/settings.development.yaml
+
+# 生产环境
+backend/config/settings.production.yaml
+
+# 激活环境
+export AEROTRI_ENV=development
+uvicorn app.main:app --reload
+```
+
+### 更多配置选项
+
+详细的配置说明请参阅：
+- **[完整配置指南](docs/CONFIGURATION.md)** - 所有配置项的详细说明
+- **[迁移指南](docs/MIGRATION.md)** - 从旧配置系统迁移的步骤
 
 ## API 文档
 

@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## MCP Usage Rules
+
+**Context7 MCP**: Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask. This is especially important for:
+- Finding up-to-date API documentation for external libraries (FastAPI, Vue.js, SQLAlchemy, Pinia, etc.)
+- Getting code examples for specific library versions
+- Configuration and setup instructions
+- Best practices and patterns
+
 ## Project Overview
 
 **AeroTri** is a photogrammetry and 3D reconstruction platform that integrates multiple computer vision libraries with a web interface for aerotriangulation (SfM - Structure from Motion) workflows.
@@ -134,7 +142,16 @@ npm run lint
 ```bash
 # Backend
 AEROTRI_DB_PATH=/root/work/aerotri-web/data/aerotri.db
+
+# Image Root Paths (for directory browsing when creating Blocks)
+# Single root (backward compatible):
 AEROTRI_IMAGE_ROOT=/path/to/images
+
+# Multiple roots (colon-separated, recommended for production):
+AEROTRI_IMAGE_ROOTS=/data/images:/mnt/storage:/mnt/nas
+
+# Or use YAML config file: backend/config/image_roots.yaml
+# Priority: AEROTRI_IMAGE_ROOTS > AEROTRI_IMAGE_ROOT > config file > default
 
 # Algorithm Executables
 COLMAP_PATH=/usr/local/bin/colmap
@@ -191,6 +208,19 @@ SPZ_PYTHON=/root/miniconda3/envs/spz-env/bin/python
 - `/ws/blocks/{id}/visualization` - InstantSfM real-time visualization
 
 ## Important Implementation Details
+
+### Image Root Path Configuration (Multi-Path Support)
+- **Multiple Image Roots**: System supports configuring multiple image root directories for flexible directory browsing
+- **Configuration Priority**:
+  1. Environment variable `AEROTRI_IMAGE_ROOTS` (colon-separated paths, e.g., `/data/images:/mnt/storage`)
+  2. Environment variable `AEROTRI_IMAGE_ROOT` (single path, backward compatible)
+  3. YAML config file `backend/config/image_roots.yaml` (supports named paths)
+  4. Default path `/mnt/work_odm/chengshuai`
+- **Frontend Integration**: Directory browser shows root selector when multiple paths configured
+- **Security**: All paths validated on backend, prevents directory traversal attacks
+- **API Endpoint**: `GET /api/filesystem/roots` returns available image roots
+- **Configuration Module**: `backend/app/config.py` - `get_image_roots()`, `get_image_root()`
+- **See Also**: `IMAGE_ROOTS_CONFIG.md` for detailed configuration guide
 
 ### Camera Model Handling
 - COLMAP supports various camera models (OPENCV, SIMPLE_RADIAL, RADIAL, etc.)
