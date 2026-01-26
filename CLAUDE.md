@@ -166,6 +166,10 @@ GS_PYTHON=/root/work/gs_workspace/gs_env/bin/python
 
 # SPZ Compression (optional)
 SPZ_PYTHON=/root/miniconda3/envs/spz-env/bin/python
+
+# cuDSS for Ceres Solver GPU acceleration (optional but recommended)
+# Without cuDSS, Bundle Adjustment falls back to CPU and runs much slower
+CUDSS_DIR=/opt/cudss
 ```
 
 ## Key API Endpoints
@@ -268,6 +272,26 @@ SPZ_PYTHON=/root/miniconda3/envs/spz-env/bin/python
 - Optional notification service for task lifecycle events
 - Sends notifications on: backend startup/shutdown, task start/complete/fail
 - Configured via `notification` config section, can be disabled gracefully
+
+### cuDSS GPU Acceleration for Bundle Adjustment
+- **Purpose**: cuDSS (CUDA Dense Sparse Solver) accelerates Ceres Solver's Bundle Adjustment in COLMAP/GLOMAP
+- **Impact**: Without cuDSS, BA falls back to CPU-based solvers (significantly slower)
+- **Symptoms**: Log shows "Requested to use GPU for bundle adjustment, but Ceres was compiled without cuDSS support"
+- **Verification**:
+  ```bash
+  ls /root/opt/ceres-2.3-cuda/lib | grep ceres
+  ```
+  Expected output includes `libceres.so` and cuDSS-related libraries
+- **Installation**:
+  1. Download cuDSS from NVIDIA (requires developer account): https://developer.nvidia.com/cudss
+  2. Rebuild Ceres Solver with cuDSS support:
+     ```bash
+     cd ceres-solver && mkdir build && cd build
+     cmake .. -DCMAKE_CUDA_ARCHITECTURES=native -DCUDSS_DIR=/path/to/cudss -DBUILD_SHARED_LIBS=ON
+     make -j$(nproc) && sudo make install
+     ```
+  3. Rebuild COLMAP/GLOMAP against cuDSS-enabled Ceres
+- **See Also**: Environment variable `CUDSS_DIR` for cuDSS installation path
 
 ## File Structure Conventions
 

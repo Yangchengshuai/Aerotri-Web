@@ -327,7 +327,7 @@ def convert_to_opensfm(cameras, images, points3D, output_dir, image_dir):
     # 1. 生成 camera_models.json
     camera_models = {}
     for cam_id, cam in cameras.items():
-        model_key = f"v1 colmap {cam['width']} {cam['height']} brown {cam['fx']/normalizer:.4f}"
+        model_key = f"v1 OpenSfM - AT {cam['width']} {cam['height']} brown {cam['fx']/normalizer:.4f}"
 
         camera_models[model_key] = {
             "projection_type": "brown",
@@ -353,7 +353,7 @@ def convert_to_opensfm(cameras, images, points3D, output_dir, image_dir):
 
     for img_id, img in images.items():
         cam = cameras[img['camera_id']]
-        model_key = f"v1 colmap {cam['width']} {cam['height']} brown {cam['fx']/normalizer:.4f}"
+        model_key = f"v1 OpenSfM - AT {cam['width']} {cam['height']} brown {cam['fx']/normalizer:.4f}"
 
         # 转换四元数到旋转矩阵
         rotation = R.from_quat([img['qx'], img['qy'], img['qz'], img['qw']])
@@ -376,7 +376,7 @@ def convert_to_opensfm(cameras, images, points3D, output_dir, image_dir):
             "photo_id": str(img_id),
             "rotation": r_vector,
             "translation": t_wc.tolist(),
-            "camera": camera_models[model_key],
+            "camera": model_key,
             "orientation": 1,
             "capture_time": 0,
             "gps_dop": 0.0422,
@@ -417,8 +417,8 @@ def convert_to_opensfm(cameras, images, points3D, output_dir, image_dir):
     with open(os.path.join(output_dir, 'image_list.json'), 'w') as f:
         json.dump(image_list, f, indent=2)
 
-    # 5. 生成 tracks.csv
-    with open(os.path.join(output_dir, 'tracks.csv'), 'w', newline='') as f:
+    # 5. 生成 converted_tracks.csv
+    with open(os.path.join(output_dir, 'converted_tracks.csv'), 'w', newline='') as f:
         writer = csv.writer(f, delimiter='\t')
         for img_id, img in images.items():
             image_name = os.path.basename(img['name'])

@@ -145,6 +145,7 @@ Services are singletons managed at module level:
 | `SPZ_PYTHON` | Python with SPZ bindings | `/root/miniconda3/envs/spz-env/bin/python` |
 | `AEROTRI_FRONTEND_ORIGIN` | CORS frontend origin | Optional |
 | `QUEUE_MAX_CONCURRENT` | Queue max concurrent tasks | `1` (range: 1-10) |
+| `CUDSS_DIR` | cuDSS installation path for BA acceleration | `/opt/cudss` |
 
 ### Frontend Configuration
 Build-time configuration in `frontend/src/api/index.ts` - set `BASE_URL` for backend API.
@@ -234,6 +235,26 @@ All runners implement `recover_orphaned_*()` methods called during app lifespan 
 - Sends notifications on: backend startup/shutdown, task start/complete/fail
 - Configured via `notification` config section, can be disabled gracefully
 - Periodic scheduler for recurring notifications (if enabled)
+
+### cuDSS GPU Acceleration for Bundle Adjustment
+- **Purpose**: cuDSS (CUDA Dense Sparse Solver) accelerates Ceres Solver's Bundle Adjustment in COLMAP/GLOMAP
+- **Impact**: Without cuDSS, BA falls back to CPU-based solvers (10-100x slower)
+- **Symptoms**: Log shows "Requested to use GPU for bundle adjustment, but Ceres was compiled without cuDSS support"
+- **Verification**:
+  ```bash
+  ls /root/opt/ceres-2.3-cuda/lib | grep ceres
+  ```
+  Expected output includes `libceres.so` and cuDSS-related libraries
+- **Installation**:
+  1. Download cuDSS from NVIDIA (requires developer account): https://developer.nvidia.com/cudss
+  2. Rebuild Ceres Solver with cuDSS support:
+     ```bash
+     cd ceres-solver && mkdir build && cd build
+     cmake .. -DCMAKE_CUDA_ARCHITECTURES=native -DCUDSS_DIR=/path/to/cudss -DBUILD_SHARED_LIBS=ON
+     make -j$(nproc) && sudo make install
+     ```
+  3. Rebuild COLMAP/GLOMAP against cuDSS-enabled Ceres
+- **See Also**: Environment variable `CUDSS_DIR` for cuDSS installation path
 
 ## Common Modification Patterns
 

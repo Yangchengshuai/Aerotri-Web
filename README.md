@@ -124,6 +124,53 @@ python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 > 如需启用 GLOMAP / InstantSfM / OpenMVS / OpenMVG，请根据文档提前准备好对应可执行程序与环境变量（如 `GLOMAP_PATH`、`INSTANTSFM_PATH`、`OPENMVG_BIN_DIR`、`OPENMVG_SENSOR_DB` 等）。
 
+### cuDSS 加速支持（推荐）
+
+**重要提示**：COLMAP 和 GLOMAP 的 Bundle Adjustment 阶段可以使用 cuDSS（CUDA Dense Sparse Solver）进行 GPU 加速，但需要 Ceres Solver 编译时启用 cuDSS 支持。
+
+如果没有正确安装 cuDSS，算法日志会输出：
+```
+Requested to use GPU for bundle adjustment, but Ceres was compiled without cuDSS support. Falling back to CPU-based sparse solvers
+```
+
+这会导致 Bundle Adjustment 阶段运行时间显著延长。
+
+**检查 cuDSS 支持状态**：
+
+```bash
+# 检查 Ceres 库是否包含 cuDSS 支持
+ls /root/opt/ceres-2.3-cuda/lib | grep ceres
+
+# 预期输出应包含以下文件（表示已编译 cuDSS 支持）：
+# libceres.so
+# libcudss.so（或类似 cuDSS 相关库）
+```
+
+**安装 cuDSS**：
+
+1. 下载 cuDSS（需要 NVIDIA 账号）：https://developer.nvidia.com/cudss
+2. 安装 cuDSS 库到系统路径
+3. 重新编译 Ceres Solver 并启用 cuDSS 支持：
+
+```bash
+cd ceres-solver
+mkdir build && cd build
+cmake .. \
+  -DCMAKE_CUDA_ARCHITECTURES=native \
+  -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda \
+  -DCUDSS_DIR=/path/to/cudss \
+  -DBUILD_SHARED_LIBS=ON
+make -j$(nproc)
+sudo make install
+```
+
+**验证安装**：
+
+重新编译 COLMAP/GLOMAP 后，运行 Bundle Adjustment 时日志应显示：
+```
+Using GPU for bundle adjustment with cuDSS support
+```
+
 ### 前端
 
 ```bash

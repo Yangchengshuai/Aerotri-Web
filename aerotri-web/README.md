@@ -201,6 +201,44 @@ uvicorn app.main:app --reload
 | `TENSORBOARD_PATH` | TensorBoard 可执行文件 | `tensorboard` |
 | `SPZ_PYTHON` | SPZ Python 环境路径 | `python` |
 
+**cuDSS 加速支持**（推荐）：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CUDSS_DIR` | cuDSS 安装路径 | `/opt/cudss` |
+
+> **重要提示**：COLMAP 和 GLOMAP 的 Bundle Adjustment 阶段可以使用 cuDSS（CUDA Dense Sparse Solver）进行 GPU 加速。
+>
+> 如果没有正确安装 cuDSS，算法日志会输出：
+> ```
+> Requested to use GPU for bundle adjustment, but Ceres was compiled without cuDSS support. Falling back to CPU-based sparse solvers
+> ```
+>
+> 这会导致 Bundle Adjustment 阶段运行时间显著延长。
+>
+> **检查 cuDSS 支持状态**：
+> ```bash
+> # 检查 Ceres 库是否包含 cuDSS 支持
+> ls /root/opt/ceres-2.3-cuda/lib | grep ceres
+> ```
+>
+> 预期输出应包含 `libceres.so` 和 cuDSS 相关库文件。
+>
+> **安装 cuDSS**（需要 NVIDIA 开发者账号）：
+> 1. 从 https://developer.nvidia.com/cudss 下载 cuDSS
+> 2. 重新编译 Ceres Solver 并启用 cuDSS 支持：
+>    ```bash
+>    cd ceres-solver
+>    mkdir build && cd build
+>    cmake .. \
+>      -DCMAKE_CUDA_ARCHITECTURES=native \
+>      -DCUDSS_DIR=/path/to/cudss \
+>      -DBUILD_SHARED_LIBS=ON
+>    make -j$(nproc)
+>    sudo make install
+>    ```
+> 3. 重新编译 COLMAP/GLOMAP
+
 **队列配置**：
 
 | 变量 | 说明 | 默认值 |
