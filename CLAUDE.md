@@ -254,6 +254,11 @@ CUDSS_DIR=/opt/cudss
 
 ### RTX 5090 Support
 - Automatically sets `TORCH_CUDA_ARCH_LIST=12.0` for Blackwell architecture
+- **PyTorch Installation**: For RTX 5090 with CUDA 12.8, install PyTorch 2.9.0:
+  ```bash
+  pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+  ```
+- Reference: https://pytorch.org/get-started/previous-versions/
 
 ### Georeferencing (GPS → UTM → ENU)
 - Optional georeferencing step after SfM mapping stage

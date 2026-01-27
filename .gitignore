@@ -41,7 +41,9 @@ colmap/**/CMakeFiles/
 colmap/.git.bak-colmap_glomap_upload/
 
 # Other local folders under /root/work that are not part of deliverables
-.claude/
+# But keep .claude/skills/ for version control
+.claude/*
+!.claude/skills/
 hloc-glomap/
 
 # Ceres-solver / COLMAP 3.11 / GLOMAP local build artifacts (keep source, ignore builds)

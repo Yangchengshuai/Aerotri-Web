@@ -89,6 +89,11 @@ AeroTri Web 后端通过 FastAPI 暴露统一接口，前端使用 Vue3 + Elemen
   - 内置基于 WebGPU 的 `visionary` 预览页，可在线预览导出的 `point_cloud.ply`
   - **自动相机模型检测与去畸变**: 训练前自动检测相机模型，如非 PINHOLE/SIMPLE_PINHOLE 则自动运行 COLMAP image_undistorter
   - **RTX 5090 支持**: 自动配置 CUDA 架构以支持 RTX 5090（Blackwell sm_120）
+    - PyTorch 安装命令（CUDA 12.8）:
+      ```bash
+      pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+      ```
+    - 参考文档: https://pytorch.org/get-started/previous-versions/
 - 3D GS Tiles 转换
   - 支持将 3DGS 训练产物（PLY 格式）转换为 3D Tiles 格式
   - Block 维度维护独立的 3D GS Tiles 状态字段（`gs_tiles_status`、`gs_tiles_progress`、`gs_tiles_current_stage` 等），支持任务恢复
