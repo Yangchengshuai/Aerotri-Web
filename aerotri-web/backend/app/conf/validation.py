@@ -104,7 +104,56 @@ def validate_on_startup() -> List[str]:
             logger.warning(f"Configuration warning: {warning}")
 
     logger.info("Configuration validated successfully")
+
+    # 记录配置摘要
+    _log_config_summary(settings)
+
     return warnings
+
+
+def _log_config_summary(settings) -> None:
+    """
+    记录配置摘要信息
+
+    Args:
+        settings: AppSettings 配置实例
+    """
+    logger.info("=" * 60)
+    logger.info("Configuration Summary")
+    logger.info("=" * 60)
+
+    # 基本信息
+    logger.info(f"Application: {settings.name} v{settings.version}")
+    logger.info(f"Environment: {settings.environment}")
+    logger.info(f"Debug Mode: {settings.debug}")
+
+    # 路径配置
+    logger.info(f"Project Root: {settings.paths.project_root}")
+    logger.info(f"Database Path: {settings.database.path}")
+    logger.info(f"Outputs Directory: {settings.paths.outputs_dir}")
+    logger.info(f"Blocks Directory: {settings.paths.blocks_dir}")
+    logger.info(f"Thumbnails Directory: {settings.paths.thumbnails_dir}")
+
+    # 算法配置
+    logger.info("Algorithm Paths:")
+    logger.info(f"  - COLMAP: {settings.algorithms.colmap.path}")
+    logger.info(f"  - GLOMAP: {settings.algorithms.glomap.path}")
+    logger.info(f"  - InstantSfM: {settings.algorithms.instantsfm.path}")
+    logger.info(f"  - OpenMVG: {settings.algorithms.openmvg.bin_dir}")
+    logger.info(f"  - OpenMVS: {settings.algorithms.openmvs.bin_dir}")
+
+    # 3DGS 配置
+    logger.info(f"3DGS Repository: {settings.gaussian_splatting.repo_path}")
+    logger.info(f"3DGS Python: {settings.gaussian_splatting.python}")
+
+    # 队列配置
+    logger.info(f"Queue Max Concurrent: {settings.queue.max_concurrent}")
+
+    # GPU 配置
+    logger.info(f"GPU Monitor Interval: {settings.gpu.monitor_interval}s")
+    logger.info(f"GPU Auto Selection: {settings.gpu.auto_selection}")
+
+    logger.info("=" * 60)
 
 
 def validate_path_exists(path: Path, path_type: str = "path") -> Tuple[bool, str]:

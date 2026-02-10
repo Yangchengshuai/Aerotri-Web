@@ -342,6 +342,68 @@ class TestConfigValidation:
                 # 目录应该被创建
                 assert data_dir.exists()
 
+    def test_validate_config_missing_executable(self):
+        """测试验证缺失的可执行文件"""
+        settings = AppSettings()
+
+        # 设置一个不存在的可执行文件路径
+        settings.algorithms.colmap.path = "/nonexistent/path/to/colmap"
+
+        # 验证应该返回缺失的可执行文件
+        missing = settings.validate_executables()
+
+        assert isinstance(missing, dict)
+        assert 'colmap' in missing
+        assert '/nonexistent/path/to/colmap' in missing['colmap']
+
+    def test_validate_config_no_write_permission(self):
+        """测试验证目录写权限（通过模拟文件创建失败）"""
+        from unittest.mock import MagicMock, patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+
+            with patch.dict(os.environ, {"AEROTRI_DB_PATH": str(db_path)}):
+                reload_settings()
+                settings = get_settings()
+
+                # Mock Path.touch to raise PermissionError
+                original_touch = Path.touch
+
+                def mock_touch_permission_error(self, *args, **kwargs):
+                    if self == db_path:
+                        raise PermissionError(f"Permission denied: {self}")
+                    return original_touch(self, *args, **kwargs)
+
+                with patch.object(Path, 'touch', mock_touch_permission_error):
+                    # 验证应该失败
+                    with pytest.raises(RuntimeError) as exc_info:
+                        validate_on_startup()
+
+                    # 错误信息应该包含数据库路径
+                    assert "Database" in str(exc_info.value) or "database" in str(exc_info.value)
+                    assert "not writable" in str(exc_info.value).lower() or "permission" in str(exc_info.value).lower()
+
+    def test_startup_validates_config(self):
+        """测试启动时验证配置"""
+        from app.conf.validation import validate_on_startup
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+
+            with patch.dict(os.environ, {"AEROTRI_DB_PATH": str(db_path)}):
+                # 重新加载配置
+                reload_settings()
+
+                # 运行启动验证
+                warnings = validate_on_startup()
+
+                # 验证应该成功（可能有警告）
+                assert isinstance(warnings, list)
+
+                # 数据库文件应该可以被创建（验证了写权限）
+                # 注意：validate_on_startup 会创建并删除测试文件
+
 
 class TestDefaultsYaml:
     """测试 defaults.yaml 文件"""
