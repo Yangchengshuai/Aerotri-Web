@@ -936,33 +936,44 @@ const canStartTilesConversion = computed(() => {
 
 // Get the latest previewable file (prefer .spz, then .ply)
 const latestPreviewableFile = computed(() => {
-  const previewableFiles = state.value.files.filter(f => f.preview_supported)
+  const previewableFiles = state.value.files.filter(f => f && f.name && f.preview_supported)
   if (previewableFiles.length === 0) return null
-  
+
   // Prefer .spz files, then .ply files
   const spzFiles = previewableFiles.filter(f => f.name.endsWith('.spz'))
   if (spzFiles.length > 0) {
     // Return the latest SPZ file
     return spzFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
   }
-  
+
   // Return the latest PLY file
   const plyFiles = previewableFiles.filter(f => f.name.endsWith('.ply'))
   if (plyFiles.length > 0) {
     return plyFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
   }
-  
+
   // Fallback to any previewable file
   return previewableFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
 })
 
 // Latest SPZ file (Cautious: 内嵌预览只针对 SPZ，避免加载超级大的 PLY)
 const latestSpzFile = computed<GSFileInfo | null>(() => {
+  if (!state.value.files || state.value.files.length === 0) return null
+
   const spzFiles = state.value.files.filter(
-    f => f.preview_supported && f.name.endsWith('.spz')
+    f => f && f.name && f.preview_supported && f.name.endsWith('.spz')
   )
+
   if (spzFiles.length === 0) return null
-  return spzFiles.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())[0]
+
+  // Sort by mtime (newest first)
+  const sorted = spzFiles.sort((a, b) => {
+    const timeA = new Date(a.mtime).getTime()
+    const timeB = new Date(b.mtime).getTime()
+    return timeB - timeA
+  })
+
+  return sorted[0]
 })
 
 const spzPreviewTitle = computed(() => {
@@ -972,11 +983,26 @@ const spzPreviewTitle = computed(() => {
 })
 
 function openSpzPreviewDialog(file?: GSFileInfo) {
-  const target = file ?? latestSpzFile.value
+  // Ignore event object (when button is clicked without explicit argument)
+  // Check if file is a valid GSFileInfo by checking for 'name' property
+  const isEventObject = file && typeof file === 'object' && !('name' in file)
+  const target = isEventObject ? latestSpzFile.value : (file ?? latestSpzFile.value)
+
+  // Debug logging
+  console.log('[openSpzPreviewDialog] called with:', { file, latestSpzFile: latestSpzFile.value, target })
+  console.log('[openSpzPreviewDialog] state.files:', state.value.files)
+
   if (!target) {
     ElMessage.warning('没有可用于内嵌预览的 SPZ 文件')
     return
   }
+
+  if (!target.name) {
+    ElMessage.warning('文件信息不完整（缺少 name 字段）')
+    console.error('[openSpzPreviewDialog] target has no name:', target)
+    return
+  }
+
   if (!target.name.endsWith('.spz')) {
     ElMessage.warning('内嵌预览目前仅支持 SPZ 文件')
     return
@@ -1003,10 +1029,10 @@ function buildAbsoluteGsUrl(downloadUrl: string): string {
 
 function getVisionarySimpleBaseUrl(): string {
   // 允许通过环境变量注入自定义 Visionary Simple Viewer 地址
-  // 例如 VITE_VISIONARY_SIMPLE_URL=http://localhost:3001/demo/simple/index.html
+  // 例如 VITE_VISIONARY_SIMPLE_URL=http://localhost:3000/demo/simple/index.html
   // @ts-expect-error: Vite env 注入在运行时存在
   const envUrl = import.meta.env?.VITE_VISIONARY_SIMPLE_URL as string | undefined
-  return envUrl || 'http://localhost:3001/demo/simple/index.html'
+  return envUrl || 'http://localhost:3000/demo/simple/index.html'
 }
 
 function openPreviewInNewTab(file: GSFileInfo) {

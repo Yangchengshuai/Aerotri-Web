@@ -801,16 +801,12 @@ class GSRunner:
 
                 env = os.environ.copy()
                 env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-                
-                # Set PYTHONPATH to include gaussian-splatting and all submodules
-                # This is required for importing diff_gaussian_rasterization, simple_knn, etc.
+
+                # Set PYTHONPATH to gaussian-splatting repo only
+                # The submodules are installed in the conda environment, so we don't need them in PYTHONPATH
+                # Setting submodules in PYTHONPATH causes circular import issues
                 gs_repo_str = str(GS_REPO_PATH)
-                submodules = [
-                    os.path.join(gs_repo_str, "submodules", "diff-gaussian-rasterization"),
-                    os.path.join(gs_repo_str, "submodules", "simple-knn"),
-                    os.path.join(gs_repo_str, "submodules", "fused-ssim"),
-                ]
-                pythonpath_parts = [gs_repo_str] + submodules
+                pythonpath_parts = [gs_repo_str]
                 current_pythonpath = env.get("PYTHONPATH", "")
                 if current_pythonpath:
                     pythonpath_parts.append(current_pythonpath)

@@ -11,6 +11,13 @@
           <el-button type="text" :icon="MoreFilled" />
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item
+                v-if="canReset"
+                command="reset"
+              >
+                <el-icon><RefreshRight /></el-icon>
+                重置
+              </el-dropdown-item>
               <el-dropdown-item command="delete" :disabled="block.status === 'running'">
                 <el-icon><Delete /></el-icon>
                 删除
@@ -88,7 +95,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { MoreFilled, Delete, Folder } from '@element-plus/icons-vue'
+import { MoreFilled, Delete, Folder, RefreshRight } from '@element-plus/icons-vue'
 import type { Block } from '@/types'
 
 const props = defineProps<{
@@ -98,6 +105,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'click'): void
   (e: 'delete', block: Block): void
+  (e: 'reset', block: Block): void
 }>()
 
 const statusType = computed(() => {
@@ -133,9 +141,16 @@ const imageCountText = computed(() => {
   return `图像 ${typeof n === 'number' ? n : '-'}`
 })
 
+const canReset = computed(() => {
+  // Only show reset for failed, completed, or cancelled blocks
+  return ['failed', 'completed', 'cancelled'].includes(props.block.status)
+})
+
 function handleCommand(command: string) {
   if (command === 'delete') {
     emit('delete', props.block)
+  } else if (command === 'reset') {
+    emit('reset', props.block)
   }
 }
 

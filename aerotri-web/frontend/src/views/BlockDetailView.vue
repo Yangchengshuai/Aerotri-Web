@@ -414,12 +414,50 @@ async function handleRun() {
 
 async function handleEnqueue() {
   try {
+    const currentBlock = block.value
+    if (!currentBlock) {
+      ElMessage.error('Block 信息未加载')
+      return
+    }
+
+    // Auto-reset if block is not in CREATED status
+    if (currentBlock.status !== 'created') {
+      await ElMessageBox.confirm(
+        `Block 当前状态为 "${getStatusText(currentBlock.status)}"，需要先重置才能加入队列。是否自动重置并加入队列？`,
+        '需要重置',
+        {
+          type: 'info',
+          confirmButtonText: '重置并加入队列',
+          cancelButtonText: '取消',
+        }
+      )
+
+      // Reset the block first
+      await blocksStore.resetBlock(blockId.value)
+      ElMessage.info('已重置，正在加入队列...')
+    }
+
     await queueApi.enqueue(blockId.value)
     ElMessage.success('已加入队列')
     await blocksStore.fetchBlock(blockId.value)
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加入队列失败')
+    if (e !== false) { // false means user cancelled
+      ElMessage.error(e instanceof Error ? e.message : '加入队列失败')
+    }
   }
+}
+
+// Helper function to get status text
+function getStatusText(status: string): string {
+  const statusMap: Record<string, string> = {
+    'created': '待处理',
+    'queued': '已入队',
+    'running': '运行中',
+    'completed': '已完成',
+    'failed': '失败',
+    'cancelled': '已取消',
+  }
+  return statusMap[status] || status
 }
 
 async function handleDequeue() {

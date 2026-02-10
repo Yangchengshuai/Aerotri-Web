@@ -146,6 +146,7 @@
               :block="block"
               @click="handleBlockClick(block)"
               @delete="handleDelete(block)"
+              @reset="handleReset(block)"
             />
           </div>
         </div>
@@ -468,11 +469,29 @@ async function handleDelete(block: Block) {
       '确认删除',
       { type: 'warning' }
     )
-    
+
     await blocksStore.deleteBlock(block.id)
     ElMessage.success('删除成功')
   } catch {
     // User cancelled or error
+  }
+}
+
+async function handleReset(block: Block) {
+  try {
+    await ElMessageBox.confirm(
+      `重置将清除 Block "${block.name}" 的状态和进度，允许修改配置后重新运行。确定要重置吗？`,
+      '确认重置',
+      { type: 'info', confirmButtonText: '重置', cancelButtonText: '取消' }
+    )
+
+    await blocksStore.resetBlock(block.id)
+    ElMessage.success('重置成功，现在可以修改配置并重新运行')
+  } catch (e: unknown) {
+    // User cancelled or error
+    if (e !== false) {  // false means user cancelled
+      ElMessage.error(e instanceof Error ? e.message : '重置失败')
+    }
   }
 }
 

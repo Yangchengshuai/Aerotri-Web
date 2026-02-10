@@ -31,9 +31,9 @@ const api = axios.create({
 // Block API
 export const blockApi = {
   list: () => api.get<{ blocks: Block[], total: number }>('/blocks'),
-  
+
   get: (id: string) => api.get<Block>(`/blocks/${id}`),
-  
+
   create: (data: {
     name: string
     image_path: string
@@ -43,9 +43,12 @@ export const blockApi = {
     matching_params?: Record<string, unknown>
     mapper_params?: Record<string, unknown>
   }) => api.post<Block>('/blocks', data),
-  
+
   update: (id: string, data: Partial<Block>) => api.patch<Block>(`/blocks/${id}`, data),
-  
+
+  // Reset a failed/completed block to CREATED status for re-running
+  reset: (id: string) => api.post<Block>(`/blocks/${id}/reset`),
+
   delete: (id: string) => api.delete(`/blocks/${id}`),
 }
 

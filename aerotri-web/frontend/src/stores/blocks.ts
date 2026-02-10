@@ -130,6 +130,29 @@ export const useBlocksStore = defineStore('blocks', () => {
     }
   }
 
+  async function resetBlock(id: string) {
+    loading.value = true
+    error.value = null
+    try {
+      const response = await blockApi.reset(id)
+      // Update in list
+      const index = blocks.value.findIndex(b => b.id === id)
+      if (index >= 0) {
+        blocks.value[index] = response.data
+      }
+      // Update current block if it matches
+      if (currentBlock.value?.id === id) {
+        currentBlock.value = response.data
+      }
+      return response.data
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Failed to reset block'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
   function setCurrentBlock(block: Block | null) {
     currentBlock.value = block
   }
@@ -248,6 +271,7 @@ export const useBlocksStore = defineStore('blocks', () => {
     createBlock,
     updateBlock,
     deleteBlock,
+    resetBlock,
     setCurrentBlock,
     reconstruction,
     getReconstructionState,

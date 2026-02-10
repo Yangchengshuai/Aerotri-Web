@@ -56,10 +56,13 @@ async def start_gs_training(
     if block.gs_status == "RUNNING":
         raise HTTPException(status_code=409, detail="3DGS training is already running for this block.")
 
+    # Extract train_params (handle None case)
+    train_params = payload.train_params.model_dump() if payload.train_params else {}
+
     await gs_runner.start_training(
         block=block,
         gpu_index=payload.gpu_index,
-        train_params=payload.train_params.model_dump(),
+        train_params=train_params,
     )
 
     # Re-read state after runner initialization

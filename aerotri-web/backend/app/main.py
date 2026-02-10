@@ -2,7 +2,9 @@
 import os
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -139,3 +141,12 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/test-glb")
+async def test_glb_page():
+    """Serve test page for GLB loading."""
+    test_html_path = Path(__file__).parent.parent / "test-glb.html"
+    if test_html_path.exists():
+        return FileResponse(test_html_path, media_type="text/html")
+    return {"error": "Test page not found"}
