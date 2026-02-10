@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## [Aerotri-Web Docs Index]
+
+IMPORTANT: Prefer retrieval-led reasoning over pre-training-led reasoning. When working on this project, consult the actual code files rather than relying on training data.
+
+|Backend API:app/api:{blocks.py,filesystem.py,georef.py,gpu.py,gs.py,gs_tiles.py,images.py,partitions.py,queue.py,recon_versions.py,reconstruction.py,results.py,system.py,tasks.py,tiles.py,unified_tasks.py}
+|Backend Services:app/services:{gltf_gaussian_builder.py,gpu_service.py,gs_runner.py,gs_tiles_runner.py,image_service.py,log_parser.py,openmvs_runner.py,partition_service.py,ply_parser.py,queue_scheduler.py,result_reader.py,sfm_merge_service.py,spz_loader.py,spz_loader_helper.py,system_monitor.py,task_notifier.py,task_runner.py,task_view_service.py,tiles_runner.py,tiles_slicer.py,workspace_service.py}
+|Backend Services Notification:app/services/notification:{base.py,dingtalk.py,manager.py,scheduler.py,templates.py}
+|Backend Models:app/models:{block.py,database.py,partition.py,recon_version.py}
+|Backend WebSocket:app/ws:{progress.py,visualization.py}
+|Backend Config:backend/config:{defaults.yaml,image_roots.yaml,image_roots.yaml.example,notification.yaml,notification.yaml.example,settings.yaml,settings.yaml.example}
+|Backend Core:app/:{main.py,settings.py,config.py,schemas.py}
+|Frontend Views:frontend/src/views:{App.vue,HomeView.vue,BlockDetailView.vue,CompareView.vue,ReconCompareView.vue}
+|Frontend Components:frontend/src/components:{BlockCard.vue,BlockStats.vue,BrushCompareViewer.vue,CameraDetailPanel.vue,CameraList.vue,CesiumViewer.vue,DenseComparisonTab.vue,GPUSelector.vue,GaussianSplattingPanel.vue,GaussianSplattingViewer.vue,ImagePreview.vue,InstantSfMRealtimeViewer.vue,ParameterForm.vue,ParameterSummary.vue,PartitionConfigPanel.vue,PartitionList.vue,PartitionSelector.vue,ProgressView.vue,ReconParamsConfig.vue,ReconstructionPanel.vue,ReconstructionViewer.vue,SplitCesiumViewer.vue,SplitModelViewer.vue,StatisticsView.vue,ThreeViewer.vue,TilesConversionPanel.vue}
+|Frontend Stores:frontend/src/stores:{blocks.ts,cameraSelection.ts,gpu.ts,queue.ts}
+|Frontend API:frontend/src/api:{index.ts}
+|Frontend Composables:frontend/src/composables:{useInstantsfmVisualization.ts,useThreeScene.ts,useThreeViewer.ts,useWebSocket.ts}
+|Frontend Types:frontend/src/types:{index.ts}
+|Frontend Core:frontend/src/:{main.ts,router.ts}
+|Tests:backend/tests/:{test_algorithm_integration.py,test_config.py,test_core_paths_integration.py,test_output_paths_integration.py}
+|Tests:frontend/tests/:{components/BlockCard.test.ts,stores/blocks.test.ts,setup.ts}
+
+---
+
 ## MCP Usage Rules
 
 **Context7 MCP**: Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask. This is especially important for:
@@ -135,6 +160,46 @@ npm run lint
    - OpenMVS OBJ → GLB → 3D Tiles
    - 3DGS PLY → [SPZ] → GLTF → 3D Tiles
 ```
+
+## Configuration System
+
+**Configuration Priority** (Highest to Lowest):
+1. **Environment Variables** (e.g., `COLMAP_PATH=/usr/bin/colmap`)
+2. **config/settings.yaml** - User custom configuration (optional, git-ignored)
+3. **config/defaults.yaml** - Default values (version-controlled)
+
+**Configuration Files:**
+- `config/defaults.yaml` - Default configuration (version-controlled)
+- `config/settings.yaml` - Your custom configuration (create from `.example`, git-ignored)
+- `config/image_roots.yaml` - Image root paths (optional)
+- `config/notification.yaml` - DingTalk notification (optional)
+
+**Key Environment Variables:**
+- `COLMAP_PATH`, `GLOMAP_PATH` - Algorithm paths
+- `GS_REPO_PATH`, `GS_PYTHON` - 3DGS configuration
+- `AEROTRI_DB_PATH` - Database path
+- `QUEUE_MAX_CONCURRENT` - Max concurrent tasks (1-10)
+- `CUDSS_DIR` - cuDSS installation path for GPU-accelerated Bundle Adjustment
+
+**Quick Start:**
+```bash
+# Copy example configuration
+cp config/settings.yaml.example config/settings.yaml
+
+# Edit with your paths
+vim config/settings.yaml
+
+# Or use environment variables (highest priority)
+export COLMAP_PATH=/usr/local/bin/colmap
+export GS_REPO_PATH=/path/to/gaussian-splatting
+```
+
+**Configuration System Details:**
+- Type-safe configuration with Pydantic models
+- Automatic path resolution (relative paths resolved to project root)
+- Validation on startup (checks executables, creates directories)
+- Hot-reload support via `/api/system/config/reload` endpoint
+- See `CONFIGURATION.md` for complete guide
 
 ## Environment Variables
 
@@ -339,3 +404,29 @@ data/outputs/{block_id}/
 - Backend tests use `pytest` with `pytest-asyncio` for async endpoints
 - Frontend tests use `vitest` with `@vue/test-utils`
 - Test files located in `aerotri-web/backend/tests/` and `aerotri-web/frontend/tests/`
+
+## Development Tips
+
+### GitHub Access Issues
+**Problem**: Direct GitHub access may fail due to network restrictions or DNS issues in some environments.
+
+**Solution**: Use `ghfast.top` mirror as a prefix:
+```bash
+# Instead of:
+git clone https://github.com/user/repo.git
+
+# Use:
+git clone https://ghfast.top/https://github.com/user/repo.git
+```
+
+**Example**: Cloning the visionary 3DGS viewer
+```bash
+git clone https://ghfast.top/https://github.com/Visionary-Laboratory/visionary.git
+```
+
+### Conda 加速（清华源）
+```bash
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+conda config --set show_channel_urls yes
+```
