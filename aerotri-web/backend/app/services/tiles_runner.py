@@ -21,6 +21,7 @@ from ..models.block import Block
 from ..models.database import AsyncSessionLocal
 from ..conf.settings import get_settings
 from .task_notifier import task_notifier
+from .task_runner_integration import on_task_failure
 
 # Load output directory from configuration system
 _settings = get_settings()
@@ -294,7 +295,7 @@ class TilesRunner:
                 block.tiles_status = "FAILED"
                 block.tiles_error_message = str(e)
                 await db.commit()
-                
+
                 # Send task failed notification
                 log_tail = list(log_buffer)[-10:] if log_buffer else None
                 await task_notifier.on_task_failed(
@@ -305,11 +306,24 @@ class TilesRunner:
                     stage=block.tiles_current_stage,
                     log_tail=log_tail,
                 )
+
+                # Trigger diagnostic agent (async, non-blocking)
+                try:
+                    asyncio.create_task(on_task_failure(
+                        block_id=block.id,
+                        task_type="tiles",
+                        error_message=str(e),
+                        stage=block.tiles_current_stage,
+                        auto_fix=False,  # Tiles conversion usually needs manual intervention
+                    ))
+                except Exception as diag_e:
+                    # Diagnostic failure should not affect main flow
+                    log_buffer.append(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
             except Exception as e:
                 block.tiles_status = "FAILED"
                 block.tiles_error_message = f"Unexpected error: {str(e)}"
                 await db.commit()
-                
+
                 # Send task failed notification
                 log_tail = list(log_buffer)[-10:] if log_buffer else None
                 await task_notifier.on_task_failed(
@@ -320,6 +334,19 @@ class TilesRunner:
                     stage=block.tiles_current_stage,
                     log_tail=log_tail,
                 )
+
+                # Trigger diagnostic agent (async, non-blocking)
+                try:
+                    asyncio.create_task(on_task_failure(
+                        block_id=block.id,
+                        task_type="tiles",
+                        error_message=str(e),
+                        stage=block.tiles_current_stage,
+                        auto_fix=False,
+                    ))
+                except Exception as diag_e:
+                    # Diagnostic failure should not affect main flow
+                    log_buffer.append(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
             finally:
                 # Cleanup
                 if block_id in self._processes:
@@ -706,7 +733,7 @@ class TilesRunner:
                 version.tiles_status = "FAILED"
                 version.tiles_error_message = str(e)
                 await db.commit()
-                
+
                 # Send task failed notification
                 if block:
                     log_tail = list(log_buffer)[-10:] if log_buffer else None
@@ -718,10 +745,37 @@ class TilesRunner:
                         log_tail=log_tail,
                     )
 
+                    # Trigger diagnostic agent (async, non-blocking)
+                    try:
+                        asyncio.create_task(on_task_failure(
+                            block_id=block.id,
+                            task_type="tiles",
+                            error_message=str(e),
+                            stage=version.tiles_current_stage,
+                            auto_fix=False,
+                        ))
+                    except Exception as diag_e:
+                        # Diagnostic failure should not affect main flow
+                        log_buffer.append(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
+
             except Exception as e:
                 version.tiles_status = "FAILED"
                 version.tiles_error_message = f"Unexpected error: {e}"
                 await db.commit()
+
+                # Trigger diagnostic agent (async, non-blocking)
+                if block:
+                    try:
+                        asyncio.create_task(on_task_failure(
+                            block_id=block.id,
+                            task_type="tiles",
+                            error_message=str(e),
+                            stage=version.tiles_current_stage if version else "unknown",
+                            auto_fix=False,
+                        ))
+                    except Exception as diag_e:
+                        # Diagnostic failure should not affect main flow
+                        log_buffer.append(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
 
             finally:
                 # Cleanup

@@ -500,7 +500,21 @@ class TaskRunner:
                             block.error_message = str(e)
                             block.completed_at = datetime.utcnow()
                             await db.commit()
-                            
+
+                            # Trigger diagnostic agent (async, non-blocking)
+                            try:
+                                from .task_runner_integration import on_task_failure
+                                asyncio.create_task(on_task_failure(
+                                    block_id=int(block_id),
+                                    task_type="sfm",
+                                    error_message=str(e),
+                                    stage=block.current_stage,
+                                    auto_fix=True,  # 尝试自动修复
+                                ))
+                            except Exception as diag_e:
+                                # Diagnostic failure should not affect main flow
+                                ctx.write_log_line(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
+
                             # Send task failed notification
                             duration = None
                             if block.started_at:
@@ -2479,6 +2493,20 @@ class TaskRunner:
                         block.error_message = str(e)
                         block.completed_at = datetime.utcnow()
                         await db.commit()
+
+                        # Trigger diagnostic agent (async, non-blocking)
+                        try:
+                            from .task_runner_integration import on_task_failure
+                            asyncio.create_task(on_task_failure(
+                                block_id=int(block_id),
+                                task_type="sfm",
+                                error_message=str(e),
+                                stage="partition",
+                                auto_fix=False,  # 分区失败不自动修复
+                            ))
+                        except Exception as diag_e:
+                            # Diagnostic failure should not affect main flow
+                            print(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
             except Exception:
                 pass
         finally:
@@ -2600,6 +2628,20 @@ class TaskRunner:
                         block.completed_at = datetime.utcnow()
                         block.current_stage = "merge_failed"
                         await db.commit()
+
+                        # Trigger diagnostic agent (async, non-blocking)
+                        try:
+                            from .task_runner_integration import on_task_failure
+                            asyncio.create_task(on_task_failure(
+                                block_id=int(block_id),
+                                task_type="sfm",
+                                error_message=str(e),
+                                stage="merge",
+                                auto_fix=False,  # merge 失败不自动修复
+                            ))
+                        except Exception as diag_e:
+                            # Diagnostic failure should not affect main flow
+                            print(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
             except Exception:
                 pass
             raise
@@ -3324,6 +3366,20 @@ class TaskRunner:
             block.status = BlockStatus.FAILED
             block.error_message = str(e)
             block.completed_at = datetime.utcnow()
+
+            # Trigger diagnostic agent (async, non-blocking)
+            try:
+                from .task_runner_integration import on_task_failure
+                asyncio.create_task(on_task_failure(
+                    block_id=int(block.id),
+                    task_type="sfm",
+                    error_message=str(e),
+                    stage=block.current_stage,
+                    auto_fix=True,
+                ))
+            except Exception as diag_e:
+                # Diagnostic failure should not affect main flow
+                ctx.write_log_line(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
             block.current_stage = "failed"
             await db.commit()
             ctx.write_log_line(f"OpenMVG Pipeline failed: {e}")

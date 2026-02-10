@@ -17,7 +17,10 @@ from typing import Dict, Optional
 import numpy as np
 
 # Import settings for SPZ_PYTHON configuration
-from ..settings import SPZ_PYTHON
+from app.conf.settings import get_settings
+
+settings = get_settings()
+SPZ_PYTHON = settings.spz.python or "/root/miniconda3/envs/spz-env/bin/python"
 
 # Try to import SPZ module
 # If not available (e.g., not in conda environment), will fail gracefully

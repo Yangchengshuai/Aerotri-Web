@@ -30,6 +30,7 @@ from ..conf.settings import get_settings
 
 from .gs_tiles_runner import gs_tiles_runner  # 用于复用 PLY → SPZ 转换逻辑
 from .task_notifier import task_notifier
+from .task_runner_integration import on_task_failure
 
 # Load 3DGS configuration from new system
 _settings = get_settings()
@@ -977,6 +978,21 @@ class GSRunner:
                         duration=total_time,
                         log_tail=log_tail,
                     )
+
+                    # Trigger diagnostic agent (async, non-blocking)
+                    try:
+                        # Store current stage for diagnostic context
+                        failed_stage = block.gs_current_stage or "training"
+                        asyncio.create_task(on_task_failure(
+                            block_id=block.id,
+                            task_type="gs",
+                            error_message=str(e),
+                            stage=failed_stage,
+                            auto_fix=True,
+                        ))
+                    except Exception as diag_e:
+                        # Diagnostic failure should not affect main flow
+                        log(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
         finally:
             self._processes.pop(block_id, None)
             self._network_gui_ports.pop(block_id, None)

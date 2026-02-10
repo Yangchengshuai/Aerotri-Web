@@ -6,6 +6,7 @@ on top of existing COLMAP/GLOMAP sparse outputs for a Block.
 
 import asyncio
 import glob
+import logging
 import os
 import shlex
 import tempfile
@@ -14,6 +15,8 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Deque, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +27,7 @@ from ..models.database import AsyncSessionLocal
 from ..conf.settings import get_settings
 from .task_notifier import task_notifier
 from .task_runner import task_runner, CERES_LIB_PATH
+from .task_runner_integration import on_task_failure
 
 # Load OpenMVS configuration from new system
 _settings = get_settings()
@@ -958,7 +962,7 @@ class OpenMVSRunner:
                     block.recon_status = "FAILED"
                     # Prefer detailed message from OpenMVSProcessError
                     block.recon_error_message = str(exc)
-                    
+
                     # Send task failed notification
                     log_tail = list(self._log_buffers.get(block_id, []))[-10:]
                     await task_notifier.on_task_failed(
@@ -969,6 +973,22 @@ class OpenMVSRunner:
                         stage=block.recon_current_stage,
                         log_tail=log_tail if log_tail else None,
                     )
+
+                    # Trigger diagnostic agent (async, non-blocking)
+                    try:
+                        asyncio.create_task(on_task_failure(
+                            block_id=block.id,
+                            task_type="openmvs",
+                            error_message=str(exc),
+                            stage=block.recon_current_stage,
+                            auto_fix=True,
+                        ))
+                    except Exception as diag_e:
+                        # Diagnostic failure should not affect main flow
+                        log_tail_msg = list(self._log_buffers.get(block_id, []))[-1:]
+                        if log_tail_msg:
+                            import logging
+                            logging.getLogger(__name__).warning(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
                 await db.commit()
         finally:
             self._log_buffers.pop(block_id, None)
@@ -2241,15 +2261,32 @@ class OpenMVSRunner:
                 await db.commit()
 
         except Exception as exc:
+            # Store stage for diagnostic before DB session closes
+            failed_stage = "unknown"
             async with AsyncSessionLocal() as db:
                 result = await db.execute(select(ReconVersion).where(ReconVersion.id == version_id))
                 version = result.scalar_one_or_none()
                 if not version:
                     return
+                failed_stage = version.current_stage or "unknown"
                 version.status = ReconVersionStatus.FAILED.value
                 version.error_message = str(exc)
                 await self._sync_block_recon_status(block_id, version, db)
                 await db.commit()
+
+            # Trigger diagnostic agent (async, non-blocking)
+            try:
+                asyncio.create_task(on_task_failure(
+                    block_id=int(block_id),
+                    task_type="openmvs",
+                    error_message=str(exc),
+                    stage=failed_stage,
+                    auto_fix=True,
+                ))
+            except Exception as diag_e:
+                # Diagnostic failure should not affect main flow
+                import logging
+                logging.getLogger(__name__).warning(f"[DIAGNOSTIC] Failed to trigger diagnosis: {diag_e}")
         finally:
             # Cleanup
             self._version_log_buffers.pop(version_id, None)
@@ -2264,8 +2301,16 @@ class OpenMVSRunner:
         log_path: str,
         cwd: Optional[str] = None,
         env: Optional[Dict[str, str]] = None,
+        output_validation_paths: Optional[List[str]] = None,
     ) -> None:
-        """Run a subprocess for version-based reconstruction."""
+        """Run a subprocess for version-based reconstruction.
+
+        Args:
+            output_validation_paths: List of file paths to validate on non-zero exit.
+                If any of these files exist and are non-empty, the stage is considered
+                successful despite the exit code. This handles cases where algorithms
+                crash during cleanup (e.g., free(): invalid pointer).
+        """
         pretty_cmd = " ".join(shlex.quote(str(x)) for x in cmd)
         buffer = self._version_log_buffers.setdefault(version_id, deque(maxlen=1000))
 
@@ -2309,6 +2354,34 @@ class OpenMVSRunner:
             buffer.append(f"====== [{stage}] Exit code: {process.returncode} ======")
 
             if process.returncode != 0:
+                # Check for user cancellation first
+                if self._version_cancelled.get(version_id) or process.returncode in (-15, -2, -9):
+                    cancel_msg = f"[CANCELLED] Stage '{stage}' terminated (returncode {process.returncode})"
+                    buffer.append(cancel_msg)
+                    log_fp.write(cancel_msg + "\n")
+                    return
+
+                # Validate output files if provided
+                if output_validation_paths:
+                    valid_outputs = []
+                    for path in output_validation_paths:
+                        if os.path.exists(path) and os.path.getsize(path) > 0:
+                            valid_outputs.append(path)
+                            logger.info(f"Output validation: {path} exists ({os.path.getsize(path)} bytes)")
+
+                    if valid_outputs:
+                        success_msg = (
+                            f"[SUCCESS] Stage '{stage}' completed successfully "
+                            f"despite non-zero exit code {process.returncode}. "
+                            f"Validated {len(valid_outputs)} output file(s): "
+                            f"{', '.join(os.path.basename(p) for p in valid_outputs)}"
+                        )
+                        buffer.append(success_msg)
+                        log_fp.write(success_msg + "\n")
+                        logger.info(f"Version {version_id}, stage {stage}: {success_msg}")
+                        return
+
+                # No valid outputs found or no validation paths - raise error
                 raise OpenMVSProcessError(
                     stage=stage,
                     return_code=process.returncode,
@@ -2337,11 +2410,16 @@ class OpenMVSRunner:
             "--output_type",
             "COLMAP",
         ]
+        # Validate undistort output in case of cleanup crash
+        # Check for images directory and cameras.bin
+        images_dir = os.path.join(dense_dir, "images")
+        cameras_bin = os.path.join(dense_dir, "sparse", "cameras.bin")
         await self._run_version_process(
             version_id=version_id,
             stage="undistort",
             cmd=cmd,
             log_path=log_path,
+            output_validation_paths=[cameras_bin],
         )
 
     async def _run_interface_colmap_for_version(
@@ -2352,12 +2430,13 @@ class OpenMVSRunner:
     ) -> None:
         """Run InterfaceCOLMAP for version."""
         dense_dir_abs = str(Path(dense_dir).resolve())
+        scene_mvs_path = os.path.join(dense_dir_abs, "scene.mvs")
         cmd = [
             str(OPENMVS_INTERFACE_COLMAP),
             "--input-file",
             dense_dir_abs,
             "--output-file",
-            os.path.join(dense_dir_abs, "scene.mvs"),
+            scene_mvs_path,
             "--working-folder",
             dense_dir_abs,
             "-v",
@@ -2365,6 +2444,7 @@ class OpenMVSRunner:
         ]
         env = os.environ.copy()
         env["PWD"] = dense_dir_abs
+        # Validate scene.mvs output in case of cleanup crash (e.g., free(): invalid pointer)
         await self._run_version_process(
             version_id=version_id,
             stage="convert",
@@ -2372,6 +2452,7 @@ class OpenMVSRunner:
             log_path=log_path,
             cwd=dense_dir_abs,
             env=env,
+            output_validation_paths=[scene_mvs_path],
         )
 
     async def _run_densify_for_version(
@@ -2385,6 +2466,7 @@ class OpenMVSRunner:
         """Run DensifyPointCloud for version."""
         dense_dir_abs = str(Path(dense_dir).resolve())
         scene_path = os.path.join(dense_dir_abs, "scene.mvs")
+        scene_dense_mvs_path = os.path.join(dense_dir_abs, "scene_dense.mvs")
         resolution_level = params.get("resolution_level", 1)
         number_views = params.get("number_views", 5)
         number_views_fuse = params.get("number_views_fuse", 3)
@@ -2410,6 +2492,7 @@ class OpenMVSRunner:
         ]
         env = os.environ.copy()
         env["PWD"] = dense_dir_abs
+        # Validate scene_dense.mvs output in case of cleanup crash
         await self._run_version_process(
             version_id=version_id,
             stage="densify",
@@ -2417,6 +2500,7 @@ class OpenMVSRunner:
             log_path=log_path,
             cwd=dense_dir_abs,
             env=env,
+            output_validation_paths=[scene_dense_mvs_path],
         )
 
     async def _run_mesh_for_version(
@@ -2434,6 +2518,8 @@ class OpenMVSRunner:
         quality_factor = params.get("quality_factor", 1.0)
         dense_dir_abs = str(Path(dense_dir).resolve())
         dense_mvs = os.path.join(dense_dir_abs, "scene_dense.mvs")
+        # Mesh output can be in multiple locations
+        mesh_ply_path = os.path.join(dense_dir_abs, "scene_dense_mesh.ply")
         cmd = [
             str(OPENMVS_RECONSTRUCT),
             dense_mvs,
@@ -2452,6 +2538,7 @@ class OpenMVSRunner:
         ]
         env = os.environ.copy()
         env["PWD"] = mesh_dir
+        # Validate mesh output in case of cleanup crash
         await self._run_version_process(
             version_id=version_id,
             stage="mesh",
@@ -2459,6 +2546,7 @@ class OpenMVSRunner:
             log_path=log_path,
             cwd=mesh_dir,
             env=env,
+            output_validation_paths=[mesh_ply_path],
         )
 
     async def _run_refine_for_version(
@@ -2479,6 +2567,8 @@ class OpenMVSRunner:
         mesh_ply = os.path.join(mesh_dir, "scene_dense_mesh.ply")
         if not os.path.exists(mesh_ply):
             mesh_ply = os.path.join(dense_dir_abs, "scene_dense_mesh.ply")
+        # Refine output can be in multiple locations
+        refine_ply_path = os.path.join(dense_dir_abs, "scene_dense_refine.ply")
         cmd = [
             str(OPENMVS_REFINE),
             dense_mvs,
@@ -2499,6 +2589,7 @@ class OpenMVSRunner:
         ]
         env = os.environ.copy()
         env["PWD"] = refine_dir
+        # Validate refine output in case of cleanup crash
         await self._run_version_process(
             version_id=version_id,
             stage="refine",
@@ -2506,6 +2597,7 @@ class OpenMVSRunner:
             log_path=log_path,
             cwd=refine_dir,
             env=env,
+            output_validation_paths=[refine_ply_path],
         )
 
     async def _run_texture_for_version(
@@ -2524,7 +2616,7 @@ class OpenMVSRunner:
         min_resolution = params.get("min_resolution", 1024)
         dense_dir_abs = str(Path(dense_dir).resolve())
         dense_mvs = os.path.join(dense_dir_abs, "scene_dense.mvs")
-        
+
         # Find refine output
         refine_ply = None
         possible_names = ["scene_dense_refine.ply", "scene_dense_mesh_refine.ply"]
@@ -2549,7 +2641,12 @@ class OpenMVSRunner:
                     refine_ply = mesh_ply
         if not refine_ply:
             refine_ply = os.path.join(refine_dir, "scene_dense_refine.ply")
-        
+
+        # TextureMesh outputs OBJ file
+        # Note: The output filename is scene_dense_texture.obj (not scene_dense_mesh.obj)
+        texture_obj_path = os.path.join(dense_dir_abs, "scene_dense_texture.obj")
+        texture_obj_alt = os.path.join(texture_dir, "scene_dense_texture.obj")
+
         cmd = [
             str(OPENMVS_TEXTURE),
             dense_mvs,
@@ -2570,6 +2667,7 @@ class OpenMVSRunner:
         ]
         env = os.environ.copy()
         env["PWD"] = texture_dir
+        # Validate texture OBJ output in case of cleanup crash
         await self._run_version_process(
             version_id=version_id,
             stage="texture",
@@ -2577,6 +2675,7 @@ class OpenMVSRunner:
             log_path=log_path,
             cwd=texture_dir,
             env=env,
+            output_validation_paths=[texture_obj_path, texture_obj_alt],
         )
 
     async def cancel_reconstruction_version(self, version_id: str) -> None:
