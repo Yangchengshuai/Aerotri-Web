@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Block, BlockStatus, get_db
 from ..schemas import BlockCreate, BlockUpdate, BlockResponse, BlockListResponse
 from ..services.workspace_service import WorkspaceService
+from ..conf.settings import get_settings
 
+
+_settings = get_settings()
 router = APIRouter()
 
 # Keep consistent with app/api/images.py
@@ -157,6 +160,51 @@ async def update_block(
     return block
 
 
+@router.post("/{block_id}/reset", response_model=BlockResponse)
+async def reset_block(block_id: str, db: AsyncSession = Depends(get_db)):
+    """Reset a failed or completed block to CREATED status for re-running.
+
+    This clears status, progress, statistics, and error messages while preserving
+    configuration (algorithm, parameters, etc.) so the block can be re-run with
+    modified or original settings.
+    """
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Block not found: {block_id}"
+        )
+
+    # Only allow resetting failed or completed blocks
+    if block.status not in (BlockStatus.FAILED, BlockStatus.COMPLETED, BlockStatus.CANCELLED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Can only reset failed, completed, or cancelled blocks. Current status: {block.status.value}",
+        )
+
+    # Reset status and progress fields
+    block.status = BlockStatus.CREATED
+    block.progress = 0.0
+    block.current_stage = None
+    block.current_detail = None
+    block.error_message = None
+    block.started_at = None
+    block.completed_at = None
+
+    # Clear statistics (will be regenerated on next run)
+    block.statistics = {"num_images": block.statistics.get("num_images", 0) if block.statistics else 0}
+
+    # Clear queue fields if any
+    block.queue_position = None
+    block.queued_at = None
+
+    await db.commit()
+    await db.refresh(block)
+
+    return block
+
+
 @router.delete("/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_block(block_id: str, db: AsyncSession = Depends(get_db)):
     """Delete a block and its associated data directories."""
@@ -184,7 +232,7 @@ async def delete_block(block_id: str, db: AsyncSession = Depends(get_db)):
             print(f"Warning: Failed to delete block directory {block_dir}: {e}")
 
     # Delete outputs directory (intermediate files and logs)
-    outputs_dir = f"/root/work/aerotri-web/data/outputs/{block_id}"
+    outputs_dir = str(_settings.get_absolute_paths()['outputs_dir'] / str(block_id))
     if os.path.exists(outputs_dir):
         try:
             shutil.rmtree(outputs_dir)
