@@ -26,8 +26,10 @@ from ..services.openmvs_runner import (
     PARAMS_SCHEMA,
     STAGE_LABELS,
 )
+from ..conf.settings import get_settings
 
 
+_settings = get_settings()
 router = APIRouter()
 
 
@@ -86,8 +88,8 @@ async def start_reconstruct(
             detail="Reconstruction is already running for this block.",
         )
 
-    # Default to CUDA device 7 for OpenMVS reconstruction; can be extended to reuse SfM GPU config.
-    gpu_index = 7
+    # Use configured default GPU device for OpenMVS reconstruction
+    gpu_index = _settings.gpu.default_device
 
     # Convert custom_params to dict if provided
     custom_params_dict = None
