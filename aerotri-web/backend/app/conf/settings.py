@@ -195,6 +195,7 @@ class GPUConfig(BaseModel):
         default="most_free",
         description="自动选择策略: most_free | least_used | first_available"
     )
+    default_device: int = Field(default=0, ge=0, description="默认 GPU 设备索引")
 
     @field_validator("auto_selection")
     @classmethod
