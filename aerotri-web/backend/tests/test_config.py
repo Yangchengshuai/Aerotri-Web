@@ -234,7 +234,7 @@ class TestAppSettings:
             overrides = AppSettings.load_env_overrides()
 
             assert overrides["database"]["path"] == "/tmp/test.db"
-            assert overrides["algorithms"]["colmap_path"] == "/usr/bin/colmap"
+            assert overrides["algorithms"]["colmap"]["path"] == "/usr/bin/colmap"
             assert overrides["queue"]["max_concurrent"] == 4
 
     def test_flatten_config(self):
@@ -387,8 +387,9 @@ class TestEnvironmentCompatibility:
             overrides = AppSettings.load_env_overrides()
 
             assert "algorithms" in overrides
-            assert "colmap_path" in overrides["algorithms"]
-            assert overrides["algorithms"]["colmap_path"] == "/usr/bin/colmap"
+            assert "colmap" in overrides["algorithms"]
+            assert "path" in overrides["algorithms"]["colmap"]
+            assert overrides["algorithms"]["colmap"]["path"] == "/usr/bin/colmap"
 
     def test_legacy_gs_paths(self):
         """测试旧的 GS 环境变量仍然有效"""
