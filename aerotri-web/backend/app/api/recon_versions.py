@@ -19,8 +19,10 @@ from ..schemas import (
     ReconstructionFileInfo,
 )
 from ..services.openmvs_runner import openmvs_runner, QUALITY_PRESETS
+from ..conf.settings import get_settings
 
 
+_settings = get_settings()
 router = APIRouter()
 
 
@@ -168,11 +170,11 @@ async def create_recon_version(
     db.add(version)
     await db.commit()
     await db.refresh(version)
-    
+
     # Start reconstruction in background
-    # GPU index default to 7 (can be made configurable)
-    gpu_index = 7
-    
+    # Use configured default GPU device
+    gpu_index = _settings.gpu.default_device
+
     await openmvs_runner.start_reconstruction_version(
         block=block,
         version=version,
