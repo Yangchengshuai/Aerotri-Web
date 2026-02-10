@@ -20,6 +20,11 @@ dist/
 # Large datasets / outputs (do NOT commit)
 aerotri-web/data/
 
+# Backend config files (local settings, sensitive info, local paths)
+aerotri-web/backend/config/settings.yaml
+aerotri-web/backend/config/image_roots.yaml
+aerotri-web/backend/config/notification.yaml
+
 # AeroTri logs
 *.log
 
