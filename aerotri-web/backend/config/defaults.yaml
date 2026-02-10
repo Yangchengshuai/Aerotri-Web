@@ -1,184 +1,53 @@
-# AeroTri Web 默认配置
-#
-# 此文件包含默认配置值，当用户没有提供 settings.yaml 时使用。
-# 设计原则：默认值应该对开源环境友好，使用相对路径或常见安装位置。
-#
-# 配置优先级：
-# 1. 环境变量（最高优先级）
-# 2. settings.{environment}.yaml（如 settings.development.yaml）
-# 3. settings.yaml
-# 4. defaults.yaml（最低优先级，本文件）
-
-# ============================================================================
-# 应用配置
-# ============================================================================
+# 应用基础配置
 app:
-  name: "AeroTri Web"
+  name: "AeroTri-Web"
   version: "1.0.0"
   debug: false
-  environment: "production"  # development | staging | production
-
-  # CORS 配置
   cors_origins:
-    - "http://localhost:3000"
-    - "http://127.0.0.1:3000"
+    - "http://localhost:5173"
 
-  # 日志配置
-  log_level: "INFO"  # DEBUG | INFO | WARNING | ERROR
-  log_file: null  # 可选：日志文件路径（绝对路径或相对于 project_root）
-
-# ============================================================================
-# 路径配置
-# ============================================================================
-# 所有相对路径都相对于 project_root（自动检测为 backend/../）
+# 路径配置（相对路径基于 backend/ 目录）
 paths:
-  # 数据目录（数据库、缩略图等）
+  project_root: ".."
   data_dir: "./data"
-
-  # 任务输出目录（SfM、OpenMVS、3DGS 等输出）
   outputs_dir: "./data/outputs"
-
-  # Block 工作目录
   blocks_dir: "./data/blocks"
-
-  # 缩略图缓存目录
   thumbnails_dir: "./data/thumbnails"
+  db_path: "./data/aerotri.db"
 
-# ============================================================================
-# 数据库配置
-# ============================================================================
-database:
-  # SQLite 数据库路径（相对或绝对路径）
-  path: "./data/aerotri.db"
-
-  # 连接池配置
-  pool_size: 5
-  max_overflow: 10
-
-# ============================================================================
-# 算法可执行文件路径
-# ============================================================================
+# 算法路径（使用系统 PATH 中的命令）
 algorithms:
-  # COLMAP
-  # - path: 可执行文件的完整路径，或 "colmap" 从 PATH 查找
   colmap:
-    path: "colmap"  # 假设在 PATH 中（Docker/标准安装）
-
-  # GLOMAP
+    path: "colmap"
   glomap:
-    path: "glomap"  # 假设在 PATH 中
-
-  # InstantSfM
+    path: "glomap"
   instantsfm:
-    path: "ins-sfm"  # 假设在 conda 环境的 PATH 中
-
-  # OpenMVG
-  # - bin_dir: 包含 OpenMVG 可执行文件的目录
-  # - sensor_db: 相机传感器数据库路径
+    path: "ins-sfm"
   openmvg:
     bin_dir: "/usr/local/bin"
     sensor_db: "/usr/local/share/sensor_width_camera_database.txt"
-
-  # OpenMVS
-  # - bin_dir: 包含 OpenMVS 可执行文件的目录
   openmvs:
     bin_dir: "/usr/local/lib/openmvs/bin"
 
-# ============================================================================
-# 3D Gaussian Splatting 配置
-# ============================================================================
+# 3D Gaussian Splatting
 gaussian_splatting:
-  # 仓库路径（包含 train.py 的目录）
-  repo_path: "/opt/gaussian-splatting"
-
-  # Python 环境（包含 torch + CUDA 扩展）
-  python: "python"  # 或绝对路径如 "/opt/gs_env/bin/python"
-
-  # TensorBoard 配置
-  tensorboard_path: "tensorboard"  # 或绝对路径
+  repo_path: "./gs_workspace/gaussian-splatting"
+  python: "python"
+  tensorboard_path: "tensorboard"
   tensorboard_port_start: 6006
-  tensorboard_port_end: 6100
-
-  # Network GUI 配置
   network_gui_ip: "127.0.0.1"
   network_gui_port_start: 6009
-  network_gui_port_end: 6109
 
-# ============================================================================
-# SPZ 压缩配置
-# ============================================================================
-spz:
-  # Python 解释器（包含 SPZ Python 绑定）
-  python: "python"  # 或绝对路径如 "/opt/spz-env/bin/python"
-
-# ============================================================================
-# 图像根路径配置
-# ============================================================================
-# 注意：也可以通过 config/image_roots.yaml 配置
-image_roots:
-  # 默认路径（当没有其他配置时使用）
-  default: "./data/images"
-
-  # 多个命名路径（可选，也可以在 image_roots.yaml 中配置）
-  paths:
-    - name: "默认"
-      path: "./data/images"
-
-# ============================================================================
 # 队列配置
-# ============================================================================
 queue:
-  # 最大并发任务数（范围：1-10）
   max_concurrent: 1
-
-  # 调度间隔（秒）
   scheduler_interval: 5
 
-# ============================================================================
 # GPU 配置
-# ============================================================================
 gpu:
-  # GPU 监控间隔（秒）
   monitor_interval: 2
-
-  # 自动选择策略
-  # - most_free: 选择显存最多的 GPU
-  # - least_used: 选择使用率最低的 GPU
-  # - first_available: 选择第一个可用的 GPU
   auto_selection: "most_free"
+  default_device: 0
 
-# ============================================================================
-# 环境变量覆盖
-# ============================================================================
-# 以下环境变量可以覆盖本配置：
-#
-# 应用配置：
-#   AEROTRI_ENV=production
-#   AEROTRI_DEBUG=false
-#
-# 路径配置：
-#   AEROTRI_DB_PATH=/var/lib/aerotri/aerotri.db
-#
-# 算法路径：
-#   COLMAP_PATH=/usr/local/bin/colmap
-#   GLOMAP_PATH=/usr/local/bin/glomap
-#   INSTANTSFM_PATH=ins-sfm
-#   OPENMVG_BIN_DIR=/usr/local/bin
-#   OPENMVG_SENSOR_DB=/usr/local/share/sensor_width_camera_database.txt
-#   OPENMVS_BIN_DIR=/usr/local/lib/openmvs/bin
-#
-# 3DGS 配置：
-#   GS_REPO_PATH=/opt/gaussian-splatting
-#   GS_PYTHON=/opt/gs_env/bin/python
-#   TENSORBOARD_PATH=/opt/gs_env/bin/tensorboard
-#   SPZ_PYTHON=/opt/spz-env/bin/python
-#
-# 图像路径：
-#   AEROTRI_IMAGE_ROOT=/mnt/data/images
-#   AEROTRI_IMAGE_ROOTS=/mnt/data/images:/mnt/storage
-#
-# 队列配置：
-#   QUEUE_MAX_CONCURRENT=2
-#
-# CORS：
-#   AEROTRI_FRONTEND_ORIGIN=http://example.com
+# cuDSS（可选）
+cudss_dir: null
