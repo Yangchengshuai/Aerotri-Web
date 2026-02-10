@@ -412,5 +412,54 @@ class TestEnvironmentCompatibility:
             assert overrides["queue"]["max_concurrent"] == 3
 
 
+class TestSettingsExampleFile:
+    """测试 settings.yaml.example 示例文件"""
+
+    def test_settings_example_exists(self):
+        """测试 settings.yaml.example 存在且语法正确"""
+        from pathlib import Path
+
+        example_path = Path(__file__).parent.parent / "config" / "settings.yaml.example"
+        assert example_path.exists(), f"settings.yaml.example not found at {example_path}"
+
+        with open(example_path) as f:
+            config = yaml.safe_load(f)
+
+        assert config is not None, "settings.yaml.example is empty or invalid"
+        assert "app" in config, "settings.yaml.example missing 'app' section"
+        assert "paths" in config, "settings.yaml.example missing 'paths' section"
+        assert "algorithms" in config, "settings.yaml.example missing 'algorithms' section"
+
+    def test_settings_example_has_documentation(self):
+        """测试 settings.yaml.example 包含使用说明"""
+        from pathlib import Path
+
+        example_path = Path(__file__).parent.parent / "config" / "settings.yaml.example"
+
+        with open(example_path) as f:
+            content = f.read()
+
+        # 检查关键文档字符串存在
+        assert "使用说明" in content or "Usage" in content, \
+            "settings.yaml.example should have usage instructions"
+        assert "复制本文件为 settings.yaml" in content or "cp settings.yaml.example settings.yaml" in content, \
+            "settings.yaml.example should explain how to use it"
+
+    def test_settings_example_config_priority(self):
+        """测试 settings.yaml.example 说明配置优先级"""
+        from pathlib import Path
+
+        example_path = Path(__file__).parent.parent / "config" / "settings.yaml.example"
+
+        with open(example_path) as f:
+            content = f.read()
+
+        # 检查优先级说明
+        assert "优先级" in content or "priority" in content.lower(), \
+            "settings.yaml.example should explain configuration priority"
+        assert "环境变量" in content or "environment variable" in content.lower(), \
+            "settings.yaml.example should mention environment variables"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
