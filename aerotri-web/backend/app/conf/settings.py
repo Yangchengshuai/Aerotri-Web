@@ -462,6 +462,31 @@ class AppSettings(BaseModel):
         """创建必要的目录"""
         self.paths.setup_directories()
 
+    def get_absolute_paths(self) -> Dict[str, Path]:
+        """
+        获取所有绝对路径配置
+
+        Returns:
+            包含所有绝对路径的字典 {
+                'project_root': Path,
+                'data_dir': Path,
+                'outputs_dir': Path,
+                'blocks_dir': Path,
+                'thumbnails_dir': Path,
+                'database_path': Path,
+                'gs_repo_path': Path
+            }
+        """
+        return {
+            'project_root': self.paths.project_root,
+            'data_dir': self.paths.data_dir,
+            'outputs_dir': self.paths.outputs_dir,
+            'blocks_dir': self.paths.blocks_dir,
+            'thumbnails_dir': self.paths.thumbnails_dir,
+            'database_path': self.database.path,
+            'gs_repo_path': self.gaussian_splatting.repo_path,
+        }
+
     def validate_executables(self) -> Dict[str, List[str]]:
         """
         验证关键可执行文件是否存在

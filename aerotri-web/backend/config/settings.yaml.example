@@ -19,20 +19,19 @@
 # ==============================================================================
 # 应用配置
 # ==============================================================================
-app:
-  # 调试模式（开发环境建议开启）
-  debug: false
+# 调试模式（开发环境建议开启）
+debug: false
 
-  # 运行环境（会影响某些默认行为）
-  environment: production  # development | staging | production
+# 运行环境（会影响某些默认行为）
+environment: production  # development | staging | production
 
-  # CORS 允许的前端源（添加你的前端 URL）
-  cors_origins:
-    - "http://localhost:3000"
-    # - "https://your-frontend-domain.com"
+# CORS 允许的前端源（添加你的前端 URL）
+cors_origins:
+  - "http://localhost:3000"
+  # - "https://your-frontend-domain.com"
 
-  # 日志级别
-  log_level: INFO  # DEBUG | INFO | WARNING | ERROR
+# 日志级别
+log_level: INFO  # DEBUG | INFO | WARNING | ERROR
 
 # ==============================================================================
 # 路径配置
@@ -218,9 +217,8 @@ gpu:
 
 # 场景 1: 开发环境（使用相对路径）
 # 复制本文件为 settings.development.yaml 并修改：
-# app:
-#   debug: true
-#   environment: development
+# debug: true
+# environment: development
 # paths:
 #   data_dir: "./data"
 # algorithms:
@@ -231,9 +229,8 @@ gpu:
 # export AEROTRI_ENV=development
 
 # 场景 2: 生产环境（使用绝对路径）
-# app:
-#   debug: false
-#   environment: production
+# debug: false
+# environment: production
 # paths:
 #   data_dir: "/var/lib/aerotri/data"
 # database:

@@ -1,10 +1,11 @@
 # 应用基础配置
-app:
-  name: "AeroTri-Web"
-  version: "1.0.0"
-  debug: false
-  cors_origins:
-    - "http://localhost:5173"
+name: "AeroTri-Web"
+version: "1.0.0"
+debug: false
+environment: "production"
+cors_origins:
+  - "http://localhost:5173"
+log_level: "INFO"
 
 # 路径配置（相对路径基于 backend/ 目录）
 paths:
@@ -13,7 +14,12 @@ paths:
   outputs_dir: "./data/outputs"
   blocks_dir: "./data/blocks"
   thumbnails_dir: "./data/thumbnails"
-  db_path: "./data/aerotri.db"
+
+# 数据库配置
+database:
+  path: "./data/aerotri.db"
+  pool_size: 5
+  max_overflow: 10
 
 # 算法路径（使用系统 PATH 中的命令）
 algorithms:
@@ -51,3 +57,12 @@ gpu:
 
 # cuDSS（可选）
 cudss_dir: null
+
+# SPZ 压缩配置
+spz:
+  python: "python"
+
+# 图像根路径配置
+image_roots:
+  default: "./data/images"
+  paths: []

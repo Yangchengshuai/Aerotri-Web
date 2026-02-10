@@ -355,10 +355,10 @@ class TestDefaultsYaml:
             config = yaml.safe_load(f)
 
         assert config is not None
-        assert "app" in config
+        assert "name" in config
         assert "paths" in config
         assert "algorithms" in config
-        assert config["app"]["name"] == "AeroTri-Web"
+        assert config["name"] == "AeroTri-Web"
 
     def test_defaults_yaml_relative_paths(self):
         """测试 defaults.yaml 使用相对路径"""
@@ -426,7 +426,7 @@ class TestSettingsExampleFile:
             config = yaml.safe_load(f)
 
         assert config is not None, "settings.yaml.example is empty or invalid"
-        assert "app" in config, "settings.yaml.example missing 'app' section"
+        assert "debug" in config, "settings.yaml.example missing 'debug' field"
         assert "paths" in config, "settings.yaml.example missing 'paths' section"
         assert "algorithms" in config, "settings.yaml.example missing 'algorithms' section"
 
@@ -459,6 +459,143 @@ class TestSettingsExampleFile:
             "settings.yaml.example should explain configuration priority"
         assert "环境变量" in content or "environment variable" in content.lower(), \
             "settings.yaml.example should mention environment variables"
+
+
+class TestAppSettingsCreate:
+    """测试 AppSettings.create() 方法"""
+
+    def test_load_defaults_config(self):
+        """测试加载 defaults.yaml 配置"""
+        from app.conf.settings import AppSettings
+
+        settings = AppSettings.create()
+
+        # 验证应用配置
+        assert settings.name == "AeroTri-Web"
+        assert settings.version == "1.0.0"
+
+        # 验证路径配置（project_root 应该被自动检测）
+        assert settings.paths.project_root is not None
+        # project_root 应该是 backend/ 目录（从 backend/config/../ 向上解析）
+        # test_config.py 在 backend/tests/，向上2级到 backend/
+        expected_root = Path(__file__).parent.parent.resolve()
+        assert settings.paths.project_root == expected_root
+
+        # 验证算法配置
+        assert settings.algorithms.colmap.path == "colmap"
+        assert settings.algorithms.glomap.path == "glomap"
+        assert settings.algorithms.instantsfm.path == "ins-sfm"
+
+        # 验证其他配置
+        assert settings.queue.max_concurrent == 1
+        assert settings.gpu.monitor_interval == 2
+
+    def test_environment_variable_override(self):
+        """测试环境变量覆盖配置"""
+        import os
+        from app.conf.settings import AppSettings, reload_settings
+
+        # 设置环境变量
+        os.environ["COLMAP_PATH"] = "/custom/colmap"
+        os.environ["QUEUE_MAX_CONCURRENT"] = "4"
+
+        try:
+            # 重新加载配置以应用环境变量
+            settings = AppSettings.create()
+
+            # 验证环境变量覆盖
+            assert settings.algorithms.colmap.path == "/custom/colmap"
+            assert settings.queue.max_concurrent == 4
+        finally:
+            # 清理环境变量
+            if "COLMAP_PATH" in os.environ:
+                del os.environ["COLMAP_PATH"]
+            if "QUEUE_MAX_CONCURRENT" in os.environ:
+                del os.environ["QUEUE_MAX_CONCURRENT"]
+            # 重新加载以恢复默认配置
+            reload_settings()
+
+    def test_settings_yaml_overrides_defaults(self):
+        """测试 settings.yaml 覆盖 defaults.yaml"""
+        from app.conf.settings import AppSettings
+        import tempfile
+        import yaml
+
+        # 创建临时 settings.yaml
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump({
+                "app": {
+                    "name": "Custom AeroTri",
+                    "debug": True
+                },
+                "algorithms": {
+                    "colmap": {
+                        "path": "/custom/bin/colmap"
+                    }
+                }
+            }, f)
+            temp_file = Path(f.name)
+
+        try:
+            # 模拟加载临时配置文件
+            # 注意：这个测试需要 mock config_dir 路径
+            # 这里我们只测试 _merge_dict 功能
+            base = {"app": {"name": "AeroTri-Web", "debug": False}}
+            override = {"app": {"debug": True}}
+
+            AppSettings._merge_dict(base, override)
+
+            assert base["app"]["name"] == "AeroTri-Web"  # 保持原值
+            assert base["app"]["debug"] is True  # 被覆盖
+        finally:
+            temp_file.unlink()
+
+    def test_deep_merge_nested_configs(self):
+        """测试深度合并嵌套配置"""
+        from app.conf.settings import AppSettings
+
+        # 测试深度合并
+        base = {
+            "algorithms": {
+                "colmap": {"path": "colmap", "bin_dir": "/usr/bin"},
+                "glomap": {"path": "glomap"}
+            },
+            "paths": {
+                "data_dir": "./data"
+            }
+        }
+
+        override = {
+            "algorithms": {
+                "colmap": {"path": "/custom/colmap"}
+            },
+            "queue": {
+                "max_concurrent": 5
+            }
+        }
+
+        AppSettings._merge_dict(base, override)
+
+        # 验证深度合并结果
+        assert base["algorithms"]["colmap"]["path"] == "/custom/colmap"
+        assert base["algorithms"]["colmap"]["bin_dir"] == "/usr/bin"  # 保持原值
+        assert base["algorithms"]["glomap"]["path"] == "glomap"  # 保持原值
+        assert base["paths"]["data_dir"] == "./data"  # 保持原值
+        assert base["queue"]["max_concurrent"] == 5  # 新增字段
+
+    def test_get_absolute_paths(self):
+        """测试获取绝对路径配置"""
+        from app.conf.settings import AppSettings
+
+        settings = AppSettings.create()
+
+        # 验证所有路径都是绝对路径
+        assert settings.paths.data_dir.is_absolute()
+        assert settings.paths.outputs_dir.is_absolute()
+        assert settings.paths.blocks_dir.is_absolute()
+        assert settings.paths.thumbnails_dir.is_absolute()
+        assert settings.database.path.is_absolute()
+        assert settings.gaussian_splatting.repo_path.is_absolute()
 
 
 if __name__ == "__main__":
