@@ -1,18 +1,11 @@
-[submodule "aerotri-web/backend/third_party/spz"]
-	path = aerotri-web/backend/third_party/spz
-	url = https://github.com/nianticlabs/spz.git
-[submodule "ceres-solver"]
-	path = ceres-solver
-	url = https://github.com/ceres-solver/ceres-solver.git
-[submodule "instantsfm"]
-	path = instantsfm
-	url = https://github.com/nianticlabs/instantsfm.git
-[submodule "openMVG"]
-	path = openMVG
-	url = https://github.com/openMVG/openMVG.git
 [submodule "visionary"]
 	path = visionary
-	url = https://github.com/nianticlabs/visionary.git
-[submodule "colmap3.11/colmap"]
-	path = colmap3.11/colmap
-	url = https://github.com/colmap/colmap.git
+	url = /root/work/Aerotri-Web/visionary
+
+[submodule "ceres-solver"]
+	path = ceres-solver
+	url = https://github.com/AeroTri/ceres-solver.git
+
+[submodule "CesiumGS"]
+	path = CesiumGS
+	url = https://github.com/AeroTri/CesiumGS.git
