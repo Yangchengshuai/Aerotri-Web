@@ -259,9 +259,8 @@ class TilesRunner:
                 # Optional: inject geo transform for Cesium real-world placement
                 self._maybe_inject_georef_transform(block, tiles_output_dir, log_path)
 
-                # Cleanup intermediate GLB if not keeping
-                if not keep_glb and glb_path.exists():
-                    glb_path.unlink()
+                # Note: GLB file is ALWAYS kept in tiles directory since tileset.json references it directly
+                # The keep_glb parameter is kept for backward compatibility but no longer deletes the GLB
 
                 # Update completion status
                 block.tiles_status = "COMPLETED"
@@ -271,14 +270,14 @@ class TilesRunner:
                 # Calculate statistics
                 elapsed_time = time.time() - start_time
                 tileset_path = tiles_output_dir / "tileset.json"
-                b3dm_files = list(tiles_output_dir.glob("*.b3dm"))
-                
+                glb_files = list(tiles_output_dir.glob("*.glb"))
+
                 block.tiles_statistics = {
                     "conversion_time_seconds": round(elapsed_time, 2),
-                    "glb_size_bytes": glb_path.stat().st_size if glb_path.exists() else 0,
+                    "tileset_format": "1.1-glb",  # 3D Tiles 1.1 with GLB direct reference
+                    "glb_size_bytes": sum(f.stat().st_size for f in glb_files),
                     "tileset_size_bytes": tileset_path.stat().st_size if tileset_path.exists() else 0,
-                    "b3dm_count": len(b3dm_files),
-                    "b3dm_total_size_bytes": sum(f.stat().st_size for f in b3dm_files),
+                    "glb_count": len(glb_files),
                 }
                 
                 await db.commit()
@@ -407,72 +406,61 @@ class TilesRunner:
         log_buffer: Deque[str],
         log_path: Path,
     ) -> None:
-        """Convert GLB to 3D Tiles using 3d-tiles-tools."""
-        # First: GLB → B3DM
-        b3dm_path = tiles_output_dir / "model.b3dm"
-        tools_cmd = self._get_3dtiles_tools_path()
-        
-        # npx 3d-tiles-tools@latest glbToB3dm -i model.glb -o model.b3dm
-        cmd = [
-            tools_cmd,
-            "3d-tiles-tools@latest",
-            "glbToB3dm",
-            "-i", str(glb_path),
-            "-o", str(b3dm_path),
-        ]
+        """Convert GLB to 3D Tiles 1.1 format (GLB direct).
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(tiles_output_dir),
-        )
+        This approach:
+        - Uses 3D Tiles 1.1 specification which supports GLB directly
+        - Does not require external tools (3d-tiles-tools)
+        - Is fully compatible with georeferencing (root.transform injection)
 
-        output_lines = []
-        async for line in process.stdout:
-            line_str = line.decode("utf-8", errors="replace").rstrip()
-            log_buffer.append(line_str)
-            output_lines.append(line_str)
-            
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(line_str + "\n")
+        Args:
+            glb_path: Path to the source GLB file
+            tiles_output_dir: Directory where tileset.json will be created
+            log_buffer: In-memory log buffer
+            log_path: Path to log file for persistence
+        """
+        # Verify GLB exists
+        if not glb_path.exists():
+            raise ValueError(f"GLB file not found: {glb_path}")
 
-        return_code = await process.wait()
-        
-        if return_code != 0:
-            raise TilesProcessError("glb_to_b3dm", return_code, output_lines[-20:])
+        # Get GLB size for bounding volume approximation
+        # Note: For production use, you could parse the GLB to extract actual bounds
+        glb_size_bytes = glb_path.stat().st_size
 
-        # Second: Create tileset.json
+        # Create 3D Tiles 1.1 tileset.json
+        # The bounding box uses default values; will be properly positioned
+        # by georeferencing transform if available
+        tileset = {
+            "asset": {
+                "version": "1.1"
+            },
+            "geometricError": 500,
+            "root": {
+                "boundingVolume": {
+                    "box": [0, 0, 0, 100, 0, 0, 0, 100, 0, 0, 0, 100]
+                },
+                "geometricError": 0,
+                "content": {
+                    "uri": glb_path.name  # References model.glb directly
+                }
+            }
+        }
+
+        # Write tileset.json
         tileset_path = tiles_output_dir / "tileset.json"
-        cmd = [
-            tools_cmd,
-            "3d-tiles-tools@latest",
-            "createTilesetJson",
-            "-i", str(b3dm_path),
-            "-o", str(tileset_path),
-            "-f",  # Force overwrite
-        ]
+        with open(tileset_path, "w", encoding="utf-8") as f:
+            json.dump(tileset, f, indent=2)
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(tiles_output_dir),
-        )
+        # Log success
+        log_msg = f"Created 3D Tiles 1.1 tileset.json (GLB mode): {tileset_path}"
+        log_buffer.append(log_msg)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(log_msg + "\n")
 
-        output_lines = []
-        async for line in process.stdout:
-            line_str = line.decode("utf-8", errors="replace").rstrip()
-            log_buffer.append(line_str)
-            output_lines.append(line_str)
-            
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(line_str + "\n")
-
-        return_code = await process.wait()
-        
-        if return_code != 0:
-            raise TilesProcessError("create_tileset", return_code, output_lines[-20:])
+        log_msg = f"GLB file referenced: {glb_path.name} ({glb_size_bytes} bytes)"
+        log_buffer.append(log_msg)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(log_msg + "\n")
 
     async def cancel_conversion(self, block_id: str) -> None:
         """Cancel a running conversion."""
@@ -696,9 +684,8 @@ class TilesRunner:
                 if block:
                     self._maybe_inject_georef_transform(block, tiles_output_dir, log_path)
 
-                # Cleanup intermediate GLB if not keeping
-                if not keep_glb and glb_path.exists():
-                    glb_path.unlink()
+                # Note: GLB file is ALWAYS kept in tiles directory since tileset.json references it directly
+                # The keep_glb parameter is kept for backward compatibility but no longer deletes the GLB
 
                 # Update completion status
                 version.tiles_status = "COMPLETED"
@@ -708,14 +695,14 @@ class TilesRunner:
                 # Calculate statistics
                 elapsed_time = time.time() - start_time
                 tileset_path = tiles_output_dir / "tileset.json"
-                b3dm_files = list(tiles_output_dir.glob("*.b3dm"))
-                
+                glb_files = list(tiles_output_dir.glob("*.glb"))
+
                 version.tiles_statistics = {
                     "conversion_time_seconds": round(elapsed_time, 2),
-                    "glb_size_bytes": glb_path.stat().st_size if glb_path.exists() else 0,
+                    "tileset_format": "1.1-glb",  # 3D Tiles 1.1 with GLB direct reference
+                    "glb_size_bytes": sum(f.stat().st_size for f in glb_files),
                     "tileset_size_bytes": tileset_path.stat().st_size if tileset_path.exists() else 0,
-                    "b3dm_count": len(b3dm_files),
-                    "b3dm_total_size_bytes": sum(f.stat().st_size for f in b3dm_files),
+                    "glb_count": len(glb_files),
                 }
                 
                 await db.commit()

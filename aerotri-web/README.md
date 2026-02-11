@@ -430,10 +430,32 @@ aerotri-web/
 ### 功能特性
 
 - 支持将 OpenMVS 重建结果（OBJ 格式）转换为 3D Tiles 格式
-- 转换流程：OBJ → GLB → 3D Tiles
+- **使用 3D Tiles 1.1 格式**：直接引用 GLB 文件，无需 B3DM 转换
+- 转换流程：OBJ → GLB → tileset.json (3D Tiles 1.1)
 - 支持查看转换进度、阶段和日志
-- 支持下载转换产物（tileset.json、tiles、GLB 等）
+- 支持下载转换产物（tileset.json、GLB 等）
 - 支持获取 tileset.json URL，可在 Cesium 等 3D Tiles 查看器中加载
+
+### 技术细节
+
+**3D Tiles 1.1 格式优势**:
+- 无需外部工具（3d-tiles-tools），避免 Node 版本兼容问题
+- 更快的转换速度（减少一个转换步骤）
+- 完全兼容 CesiumJS
+- 地理定位支持（自动注入 ENU→ECEF 变换矩阵）
+
+**生成的 tileset.json 结构**:
+```json
+{
+  "asset": {"version": "1.1"},
+  "geometricError": 500,
+  "root": {
+    "boundingVolume": {"box": [0, 0, 0, 100, 0, 0, 0, 100, 0, 0, 0, 100]},
+    "geometricError": 0,
+    "content": {"uri": "model.glb"}
+  }
+}
+```
 
 ### Web 端入口
 

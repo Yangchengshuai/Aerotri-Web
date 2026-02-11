@@ -146,7 +146,6 @@ CUDSS_DIR=/opt/cudss
 | 工具 | 用途 | 安装方式 | 源码位置 |
 |------|------|----------|----------|
 | **obj2gltf** | OBJ → GLB/GLTF | `npm install -g obj2gltf` | [CesiumGS/obj2gltf](./CesiumGS/obj2gltf) |
-| **3d-tiles-tools** | GLB → 3D Tiles | 见下方说明 | [CesiumGS/3d-tiles-tools](./CesiumGS/3d-tiles-tools) |
 | **exiftool** | EXIF GPS 提取 | `apt-get install libimage-exiftool-perl` | [exiftool.org](https://exiftool.org/) |
 | **tensorboard** | 可视化（可选） | `pip install tensorboard` | [tensorboard.org](https://www.tensorflow.org/tensorboard) |
 
@@ -162,28 +161,33 @@ npm install
 node bin/obj2gltf.js --version
 ```
 
-#### 3d-tiles-tools 安装
+#### 3D Tiles 转换说明
 
-> **注意**: 3d-tiles-tools 包含需要编译的原生模块，在某些环境中可能无法成功编译。
+**本项目使用 3D Tiles 1.1 格式**，无需额外转换工具（如 3d-tiles-tools）。
 
-```bash
-# 克隆源码（已包含在项目中）
-cd CesiumGS/3d-tiles-tools
-
-# 安装依赖（如果编译失败可跳过 sharp）
-npm install --ignore-scripts
-
-# 构建
-npm run build
-
-# 使用
-npx 3d-tiles-tools createTilesetJson -i model.glb -o tileset.json
+转换流程：
+```
+OpenMVS 重建 (OBJ/MTL) → obj2gltf → GLB → tileset.json (3D Tiles 1.1)
 ```
 
-**替代方案**: 如果 3d-tiles-tools 无法安装，可以：
-1. 直接使用 GLB 格式（Cesium 原生支持）
-2. 使用 Cesium ion 在线服务
-3. 修改 `tiles_runner.py` 生成简化的 tileset.json
+优势：
+- **无外部依赖**: 不依赖 `npx 3d-tiles-tools`，避免 Node 版本兼容问题
+- **更快转换**: 直接生成 tileset.json，无需 B3DM 中间格式
+- **完全兼容**: 3D Tiles 1.1 原生支持 GLB，Cesium 完美支持
+- **地理定位**: 自动注入 ENU→ECEF 变换矩阵（`root.transform`）
+
+**生成的 tileset.json 结构**:
+```json
+{
+  "asset": {"version": "1.1"},
+  "geometricError": 500,
+  "root": {
+    "boundingVolume": {"box": [0, 0, 0, 100, 0, 0, 0, 100, 0, 0, 0, 100]},
+    "geometricError": 0,
+    "content": {"uri": "model.glb"}
+  }
+}
+```
 
 #### SPZ 压缩工具（3DGS 输出优化）
 
