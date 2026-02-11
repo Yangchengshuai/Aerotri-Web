@@ -4,7 +4,7 @@ version: "1.0.0"
 debug: false
 environment: "production"
 cors_origins:
-  - "http://localhost:5173"
+  - "http://localhost:3000"
 log_level: "INFO"
 
 # 路径配置（相对路径基于 backend/ 目录）
@@ -69,7 +69,7 @@ image_roots:
 
 # 诊断Agent配置（可选功能）
 diagnostic:
-  enabled: true  # 全局开关，默认关闭
+  enabled: false  # 全局开关，默认关闭
   openclaw_cmd: "openclaw"  # OpenClaw CLI路径（需要在PATH中或绝对路径）
   agent_id: "main"  # OpenClaw Agent ID
   # 路径配置：支持绝对路径（推荐）和相对路径

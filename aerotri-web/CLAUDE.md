@@ -13,7 +13,8 @@ AeroTri Web is a web-based aerial triangulation tool for photogrammetry applicat
 ### Backend Development
 ```bash
 cd backend
-pip install -r requirements.txt
+# 安装核心依赖
+pip install fastapi uvicorn sqlalchemy pydantic aiofiles python-multipart pyproj numpy scipy opencv-python
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 

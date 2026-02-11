@@ -54,7 +54,8 @@ open http://localhost:8000
 **后端**:
 ```bash
 cd aerotri-web/backend
-pip install -r requirements.txt
+# 安装依赖（需要手动创建requirements.txt或使用poetry/pip-tools）
+pip install fastapi uvicorn sqlalchemy pydantic aiofiles python-multipart
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -62,7 +63,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```bash
 cd aerotri-web/frontend
 npm install
-npm run dev -- --host 0.0.0.0 --port 5173
+npm run dev -- --host 0.0.0.0 --port 3000
 ```
 
 👉 [详细安装指南](./docs/02-installation/)

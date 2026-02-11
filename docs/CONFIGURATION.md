@@ -122,7 +122,7 @@ algorithms:
 
 # 3D Gaussian Splatting
 gaussian_splatting:
-  repo_path: "/opt/gaussian-splatting"
+  repo_path: "./gs_workspace/gaussian-splatting"
   python: "python"
 
 # 图像根路径
@@ -195,7 +195,7 @@ paths:
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
-| `GS_REPO_PATH` | `/opt/gaussian-splatting` | 3DGS 仓库路径 |
+| `GS_REPO_PATH` | `./gs_workspace/gaussian-splatting` | 3DGS 仓库路径 |
 | `GS_PYTHON` | `python` | 3DGS Python 解释器 |
 | `TENSORBOARD_PATH` | `tensorboard` | TensorBoard 可执行文件 |
 | `TENSORBOARD_PORT_START` | `6006` | TensorBoard 端口范围起始 |
@@ -335,7 +335,7 @@ algorithms:
 
 ```yaml
 gaussian_splatting:
-  repo_path: "/opt/gaussian-splatting"
+  repo_path: "./gs_workspace/gaussian-splatting"
   python: "python"
   tensorboard_path: "tensorboard"
   tensorboard_port_start: 6006
@@ -485,7 +485,7 @@ services:
       # 算法路径
       - COLMAP_PATH=/usr/local/bin/colmap
       - GLOMAP_PATH=/usr/local/bin/glomap
-      - GS_REPO_PATH=/opt/gaussian-splatting
+      - GS_REPO_PATH=./gs_workspace/gaussian-splatting
       - GS_PYTHON=/opt/gs_env/bin/python
 
       # 队列配置
