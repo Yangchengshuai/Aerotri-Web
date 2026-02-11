@@ -984,7 +984,7 @@ class GSRunner:
                             task_type="gs",
                             error_message=str(e),
                             stage=failed_stage,
-                            auto_fix=True,
+                            auto_diagnose=True,  # 修复参数名：auto_fix -> auto_diagnose
                         ))
                     except Exception as diag_e:
                         # Diagnostic failure should not affect main flow

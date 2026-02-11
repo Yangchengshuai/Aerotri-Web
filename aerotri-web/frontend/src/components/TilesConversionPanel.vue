@@ -122,6 +122,16 @@
           <div class="viewer-header">
             <span>倾斜模型 Cesium显示</span>
             <div class="viewer-header-actions">
+              <!-- Mode toggle for geographic reference -->
+              <el-radio-group
+                v-if="hasGeoref"
+                v-model="cesiumMode"
+                size="small"
+                style="margin-right: 12px"
+              >
+                <el-radio-button value="geographic">地理模式</el-radio-button>
+                <el-radio-button value="local">局部模式</el-radio-button>
+              </el-radio-group>
               <!-- Version selector for viewer -->
               <el-select
                 v-if="versionsWithTiles.length > 0"
@@ -182,7 +192,9 @@
           <CesiumViewer
             v-else-if="tilesetUrl"
             :tileset-url="tilesetUrl"
-            :key="tilesetUrl"
+            :show-geographic-environment="cesiumMode === 'geographic'"
+            :geo-ref-data="geoRefData"
+            :key="`${tilesetUrl}-${cesiumMode}`"
           />
         </div>
       </el-card>
@@ -285,6 +297,11 @@ let statusTimer: number | null = null
 const versions = ref<ReconVersion[]>([])
 const selectedVersionId = ref<string | null>(null)
 const viewerVersionId = ref<string | null>(null) // Version for Cesium viewer
+
+// Geographic mode state
+const cesiumMode = ref<'geographic' | 'local'>('local')
+const hasGeoref = ref(false)
+const geoRefData = ref<{ lon: number; lat: number; height?: number } | null>(null)
 
 // TEMP: SplitCesiumViewer test state
 const testLeftVersionId = ref<string | null>(null)
@@ -564,11 +581,46 @@ async function loadViewerTileset() {
 // Handle viewer version change
 async function onViewerVersionChange() {
   await loadViewerTileset()
+  await fetchGeoRefData()
 }
 
 // Reload viewer
 async function reloadViewer() {
   await loadViewerTileset()
+}
+
+// Fetch georeference data for current viewer version
+async function fetchGeoRefData() {
+  if (!props.block?.id || !viewerVersionId.value) {
+    hasGeoref.value = false
+    geoRefData.value = null
+    cesiumMode.value = 'local'
+    return
+  }
+
+  try {
+    const response = await tilesApi.versionGeoref(props.block.id, viewerVersionId.value)
+    if (response.data.has_georef && response.data.lon !== undefined && response.data.lat !== undefined) {
+      hasGeoref.value = true
+      geoRefData.value = {
+        lon: response.data.lon,
+        lat: response.data.lat,
+        height: response.data.height || 500
+      }
+      // Auto-select geographic mode when georeference is available
+      cesiumMode.value = 'geographic'
+      console.log('[TilesConversionPanel] Georef data loaded:', geoRefData.value)
+    } else {
+      hasGeoref.value = false
+      geoRefData.value = null
+      cesiumMode.value = 'local'
+    }
+  } catch (err) {
+    console.warn('[TilesConversionPanel] Failed to fetch georef data:', err)
+    hasGeoref.value = false
+    geoRefData.value = null
+    cesiumMode.value = 'local'
+  }
 }
 
 async function onStart() {
@@ -713,6 +765,7 @@ watch(() => versionsWithTiles.value.length, async (count) => {
     if (!viewerVersionId.value) {
       viewerVersionId.value = versionsWithTiles.value[0].id
       await loadViewerTileset()
+      await fetchGeoRefData()
     } else {
       // Check if current viewer version still has tiles
       const currentVersion = versionsWithTiles.value.find(v => v.id === viewerVersionId.value)
@@ -720,13 +773,22 @@ watch(() => versionsWithTiles.value.length, async (count) => {
         // Current version no longer has tiles, switch to latest
         viewerVersionId.value = versionsWithTiles.value[0].id
         await loadViewerTileset()
+        await fetchGeoRefData()
       } else {
         // Reload tileset for current version (might have been updated)
         await loadViewerTileset()
+        await fetchGeoRefData()
       }
     }
   }
 }, { immediate: true })
+
+// Watch viewer version changes to fetch georeference data
+watch(viewerVersionId, async (newVersionId) => {
+  if (newVersionId) {
+    await fetchGeoRefData()
+  }
+})
 </script>
 
 <style scoped>

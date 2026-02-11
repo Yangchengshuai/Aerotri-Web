@@ -158,7 +158,9 @@ class Block(Base):
     gs_error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # JSON statistics for 3DGS (stage times, params, iterations, etc.)
     gs_statistics: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    
+    # 保存 3DGS 训练参数快照
+    gs_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
     # ====== 3D GS Tiles Conversion fields ======
     # Status of 3D GS PLY to 3D Tiles conversion pipeline
     gs_tiles_status: Mapped[Optional[str]] = mapped_column(
@@ -293,6 +295,7 @@ class Block(Base):
             "gs_output_path": self.gs_output_path,
             "gs_error_message": self.gs_error_message,
             "gs_statistics": self.gs_statistics,
+            "gs_params": self.gs_params,
             "gs_tiles_status": self.gs_tiles_status,
             "gs_tiles_progress": self.gs_tiles_progress,
             "gs_tiles_current_stage": self.gs_tiles_current_stage,

@@ -1,0 +1,163 @@
+# 诊断Agent配置示例
+#
+# 此文件为可选的独立诊断配置示例，供高级用户参考。
+# 诊断Agent的主要配置在 settings.yaml 中（diagnostic 段）。
+#
+# 使用方法：
+# 1. 诊断Agent默认在 settings.yaml 中配置（推荐）
+# 2. 如需独立配置，可参考本文件创建 diagnostic.yaml
+#
+# 注意：
+# - 诊断Agent需要 OpenClaw CLI 支持（https://github.com/fengbopenclaw/openclaw）
+# - 默认禁用，适合开源环境
+# - 启用前请确保 OpenClaw 已安装并在 PATH 中可用
+# - 诊断失败不会影响主流程（graceful fallback）
+
+# ============================================================================
+# 方式1: 在 settings.yaml 中配置（推荐）
+# ============================================================================
+
+# 在 backend/config/settings.yaml 中添加：
+#
+# diagnostic:
+#   enabled: false  # 改为 true 启用
+#   openclaw_cmd: "openclaw"  # 或绝对路径 "/usr/local/bin/openclaw"
+#   agent_id: "main"
+#   agent_memory_path: "./data/diagnostics/AerotriWeb_AGENT.md"
+#   history_log_path: "./data/diagnostics/diagnosis_history.log"
+#   claude_md_path: "./CLAUDE.md"
+#   timeout_seconds: 60
+#   auto_fix: false  # 谨慎启用
+
+# ============================================================================
+# 方式2: 使用环境变量（优先级最高）
+# ============================================================================
+
+# export AEROTRI_DIAGNOSTIC_ENABLED=true
+# export AEROTRI_DIAGNOSTIC_OPENCLAW_CMD=/path/to/openclaw
+# export AEROTRI_DIAGNOSTIC_AUTO_FIX=false
+
+# ============================================================================
+# 配置说明
+# ============================================================================
+
+# enabled:
+#   - 是否启用诊断Agent（默认：false）
+#   - true: 任务失败时自动调用 OpenClaw 进行AI诊断
+#   - false: 完全禁用诊断功能（适合开源环境）
+#
+# openclaw_cmd:
+#   - OpenClaw CLI 命令路径（默认：openclaw）
+#   - 可以是在 PATH 中的命令名，或绝对路径
+#   - 示例: "openclaw" 或 "/usr/local/bin/openclaw"
+#
+# agent_id:
+#   - OpenClaw Agent ID（默认：main）
+#   - 用于标识不同的 OpenClaw Agent
+#
+# agent_memory_path:
+#   - Agent知识库路径（默认：./data/diagnostics/AerotriWeb_AGENT.md）
+#   - 存储诊断经验和新问题模式
+#   - 相对路径会自动解析为绝对路径
+#
+# history_log_path:
+#   - 诊断历史日志路径（默认：./data/diagnostics/diagnosis_history.log）
+#   - 记录所有诊断请求和结果
+#
+# claude_md_path:
+#   - 项目文档路径 CLAUDE.md（默认：./CLAUDE.md）
+#   - 诊断时会参考此文档提供准确建议
+#
+# timeout_seconds:
+#   - OpenClaw 调用超时时间（默认：60秒，范围：10-600）
+#   - 避免诊断请求长时间挂起
+#
+# auto_fix:
+#   - 是否尝试自动修复（默认：false）
+#   - true: 对某些简单问题（如相机模型不兼容）自动修复
+#   - false: 仅诊断，不自动修复
+#   - 谨慎启用：自动修复可能产生意外结果
+
+# ============================================================================
+# 工作流程
+# ============================================================================
+
+# 1. 任务失败（SfM/OpenMVS/3DGS/Tiles）
+#    ↓
+# 2. 触发 on_task_failure() 钩子
+#    ↓
+# 3. 检查配置是否启用（diagnostic.enabled）
+#    ↓
+# 4. 收集诊断上下文（logs、系统状态、Block信息等）
+#    ↓
+# 5. 构建 Prompt（包含历史经验和系统文档）
+#    ↓
+# 6. 调用 OpenClaw CLI 进行AI分析
+#    ↓
+# 7. 解析诊断结果（错误类型、修复建议、置信度）
+#    ↓
+# 8. 更新知识库（如果是新问题模式）
+#    ↓
+# 9. 记录诊断历史
+#    ↓
+# 10. （可选）尝试自动修复
+
+# ============================================================================
+# Graceful Fallback
+# ============================================================================
+
+# 如果以下情况发生，诊断会静默跳过，不影响主流程：
+#
+# 1. diagnostic.enabled = false（默认）
+# 2. OpenClaw CLI 不存在或不可执行
+# 3. OpenClaw 调用超时
+# 4. OpenClaw 响应解析失败
+# 5. 任何其他诊断错误
+#
+# 这确保了开源环境中没有 OpenClaw 时，系统仍然正常工作。
+
+# ============================================================================
+# 与通知服务集成
+# ============================================================================
+
+# 诊断结果可以通过 DingTalk 通知发送（需单独配置 notification.yaml）：
+#
+# notification:
+#   enabled: true
+#   dingtalk:
+#     channels:
+#       block_events:
+#         events:
+#           - task_failed  # 失败通知中可包含诊断结果
+#
+# 未来功能：诊断结果自动推送到钉钉
+
+# ============================================================================
+# 输出文件
+# ============================================================================
+
+# 启用诊断后，会在 data/diagnostics/ 目录下生成：
+#
+# data/diagnostics/
+# ├── AerotriWeb_AGENT.md        # Agent知识库（问题模式、经验）
+# ├── diagnosis_history.log      # 诊断历史记录
+# └── diagnosis_reports/          # 详细诊断报告（可选）
+#     ├── block_123_{timestamp}.md
+#     ├── block_456_{timestamp}.md
+#     └── ...
+
+# ============================================================================
+# 故障排查
+# ============================================================================
+
+# Q: 如何确认诊断是否启用？
+# A: 查看后端日志："Task failed for block X, triggering diagnosis..."
+#
+# Q: OpenClaw 不可用会发生什么？
+# A: 静默跳过诊断，不影响主流程，日志：级别为 DEBUG
+#
+# Q: 如何测试诊断功能？
+# A: 设置 diagnostic.enabled=true 后故意触发一个任务失败
+#
+# Q: 诊断会影响性能吗？
+# A: 诊断在后台异步执行（asyncio.create_task），不阻塞主流程

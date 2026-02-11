@@ -66,3 +66,17 @@ spz:
 image_roots:
   default: "./data/images"
   paths: []
+
+# 诊断Agent配置（可选功能）
+diagnostic:
+  enabled: true  # 全局开关，默认关闭
+  openclaw_cmd: "openclaw"  # OpenClaw CLI路径（需要在PATH中或绝对路径）
+  agent_id: "main"  # OpenClaw Agent ID
+  # 路径配置：支持绝对路径（推荐）和相对路径
+  agent_memory_path: "/root/work/aerotri-web/data/diagnostics/AerotriWeb_AGENT.md"  # Agent知识库
+  history_log_path: "/root/work/aerotri-web/data/diagnostics/diagnosis_history.log"  # 诊断历史
+  claude_md_path: "/root/work/Aerotri-Web/aerotri-web/CLAUDE.md"  # 项目文档路径
+  # 上下文持久化目录（用于调试，存储发送给OpenClaw的完整上下文）
+  context_output_dir: "/root/work/aerotri-web/data/diagnostics/contexts"
+  timeout_seconds: 180  # OpenClaw调用超时时间
+  auto_fix: false  # 是否尝试自动修复（谨慎启用）

@@ -590,13 +590,14 @@ const logLines = ref<string[]>([])
 let logTimer: number | null = null
 let statusTimer: number | null = null
 
-const params = ref({
+// 默认参数定义
+const defaultParams = {
   // Basic parameters - 与 gaussian-splatting 源码默认值一致
   iterations: 30000,  // OptimizationParams.iterations = 30_000
   resolution: -1,  // ModelParams._resolution = -1 (使用原始分辨率)
   data_device: 'cuda' as 'cpu' | 'cuda',  // ModelParams.data_device = "cuda"
   sh_degree: 3,  // ModelParams.sh_degree = 3
-  
+
   // Optimization parameters - 与 OptimizationParams 默认值一致
   position_lr_init: 0.00016,  // OptimizationParams.position_lr_init = 0.00016
   position_lr_final: 0.0000016,  // OptimizationParams.position_lr_final = 0.0000016
@@ -613,7 +614,7 @@ const params = ref({
   densify_from_iter: 500,  // OptimizationParams.densify_from_iter = 500
   densify_until_iter: 15000,  // OptimizationParams.densify_until_iter = 15_000
   densify_grad_threshold: 0.0002,  // OptimizationParams.densify_grad_threshold = 0.0002
-  
+
   // Advanced parameters - 与源码默认值一致
   white_background: false,  // ModelParams._white_background = False
   random_background: false,  // OptimizationParams.random_background = False
@@ -624,6 +625,12 @@ const params = ref({
   disable_viewer: false,  // train.py default: False (action="store_true")
   // Export options
   export_spz_on_complete: false,
+}
+
+// 从 block.gs_params 读取保存的参数，否则使用默认值
+const params = ref({
+  ...defaultParams,
+  ...(props.block.gs_params || {})
 })
 
 const advancedParamsExpanded = ref<string[]>([])

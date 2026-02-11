@@ -176,6 +176,41 @@ gpu:
   auto_selection: "most_free"
 
 # ==============================================================================
+# 诊断Agent配置（可选功能）
+# ==============================================================================
+# 诊断Agent是任务失败时的AI诊断助手，需要 OpenClaw 支持。
+# 默认禁用，适合开源环境。启用前请确保 OpenClaw CLI 可用。
+#
+# OpenClaw: https://github.com/fengbopenclaw/openclaw
+# 详细配置: 参见 config/diagnostic.yaml.example
+#
+diagnostic:
+  # 全局开关（默认关闭）
+  enabled: false  # 改为 true 启用
+
+  # OpenClaw CLI 路径（需要在 PATH 中或绝对路径）
+  openclaw_cmd: "openclaw"
+  # 或使用绝对路径: openclaw_cmd: "/usr/local/bin/openclaw"
+
+  # OpenClaw Agent ID
+  agent_id: "main"
+
+  # Agent知识库路径（存储诊断经验）
+  agent_memory_path: "./data/diagnostics/AerotriWeb_AGENT.md"
+
+  # 诊断历史日志路径
+  history_log_path: "./data/diagnostics/diagnosis_history.log"
+
+  # 项目文档路径（诊断时参考）
+  claude_md_path: "./CLAUDE.md"
+
+  # OpenClaw 调用超时时间（秒）
+  timeout_seconds: 60
+
+  # 是否尝试自动修复（谨慎启用）
+  auto_fix: false
+
+# ==============================================================================
 # 环境变量快速参考
 # ==============================================================================
 # 如果不想修改本文件，可以通过环境变量配置：
@@ -207,6 +242,11 @@ gpu:
 #
 # 队列配置：
 #   export QUEUE_MAX_CONCURRENT=2
+#
+# 诊断Agent配置：
+#   export AEROTRI_DIAGNOSTIC_ENABLED=true
+#   export AEROTRI_DIAGNOSTIC_OPENCLAW_CMD=/usr/local/bin/openclaw
+#   export AEROTRI_DIAGNOSTIC_AUTO_FIX=false
 #
 # CORS 配置：
 #   export AEROTRI_FRONTEND_ORIGIN=https://your-frontend-domain.com

@@ -106,3 +106,54 @@ gs_workspace/**/output/
 gs_workspace/**/outputs/
 gs_workspace/**/data/
 gs_workspace/**/*.log
+
+# Diagnostic test files
+*_test.py
+test_*.py
+*_test.html
+test_*.sh
+test_*.json
+
+# Diagnostic documentation (temporary)
+*_REPORT.md
+*_GUIDE.md
+*_SUMMARY.md
+DIAGNOSTIC_*.md
+
+# Diagnostic logs and contexts
+contexts/
+diagnostics/
+AerotriWeb_AGENT.md
+diagnosis_history.log
+
+# Project data
+project_data/
+
+# Third-party dependencies
+ceres-solver/
+colmap3.11/
+gs_workspace/
+openMVG/
+visionary/
+openMVG_Build/
+eigen-3.4.0/
+cudss-local-repo-*.deb
+vcg/
+
+# Build artifacts
+*.deb
+install_log.txt
+
+# Claude Code skills (external)
+.claude/skills/
+
+# IDE
+.cursor/
+
+# Documentation drafts
+CHANGELOG.md
+FIX_SUMMARY.txt
+README_INTERNAL.md
+
+# Tools outputs
+diff.txt

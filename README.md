@@ -345,3 +345,16 @@ CesiumGS/cesium            # CesiumJS 前端库（可选）
 ---
 
 **用 ❤️ 和 AI 协作开发**
+
+## 📄 配置
+
+完整配置指南请查看：
+- **[配置指南](aerotri-web/backend/config/CONFIGURATION_GUIDE.md)** - 所有配置参数说明
+
+快速配置：
+```bash
+cd aerotri-web/backend/config
+cp settings.yaml.example settings.yaml
+vim settings.yaml  # 编辑你的配置
+```
+

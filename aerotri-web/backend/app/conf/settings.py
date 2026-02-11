@@ -208,6 +208,97 @@ class GPUConfig(BaseModel):
 
 
 # ============================================================================
+# 诊断Agent配置
+# ============================================================================
+
+class DiagnosticConfig(BaseModel):
+    """诊断Agent配置模型
+
+    可选功能：任务失败时自动调用OpenClaw进行AI诊断。
+    默认禁用，适合开源环境。
+    """
+    enabled: bool = Field(
+        default=False,
+        description="是否启用诊断Agent（默认关闭）"
+    )
+    openclaw_cmd: str = Field(
+        default="openclaw",
+        description="OpenClaw CLI命令路径"
+    )
+    agent_id: str = Field(
+        default="main",
+        description="OpenClaw Agent ID"
+    )
+    agent_memory_path: Path = Field(
+        default=Path("./data/diagnostics/AerotriWeb_AGENT.md"),
+        description="Agent知识库路径"
+    )
+    history_log_path: Path = Field(
+        default=Path("./data/diagnostics/diagnosis_history.log"),
+        description="诊断历史日志路径"
+    )
+    claude_md_path: Path = Field(
+        default=Path("./CLAUDE.md"),
+        description="项目文档路径（CLAUDE.md）"
+    )
+    context_output_dir: Path = Field(
+        default=Path("./data/diagnostics/contexts"),
+        description="上下文持久化目录（存储发送给OpenClaw的完整上下文，用于调试）"
+    )
+    timeout_seconds: int = Field(
+        default=60,
+        ge=10,
+        le=600,
+        description="OpenClaw调用超时时间（秒）"
+    )
+    auto_fix: bool = Field(
+        default=False,
+        description="是否尝试自动修复（谨慎启用）"
+    )
+
+    def resolve_paths(self, project_root: Path) -> None:
+        """解析相对路径为绝对路径
+
+        支持绝对路径和相对路径：
+        - 绝对路径：直接使用，不修改
+        - 相对路径：相对于 project_root 解析
+
+        Args:
+            project_root: 项目根目录
+        """
+        for attr in ['agent_memory_path', 'history_log_path', 'claude_md_path', 'context_output_dir']:
+            value = getattr(self, attr)
+            if not isinstance(value, Path):
+                value = Path(value)
+            # 如果是绝对路径，直接使用
+            if value.is_absolute():
+                logger.debug(f"Diagnostic {attr}: using absolute path {value}")
+            # 如果是相对路径，相对于 project_root 解析
+            else:
+                value = (project_root / value).resolve()
+                logger.debug(f"Diagnostic {attr}: resolved to {value}")
+            object.__setattr__(self, attr, value)
+
+    def setup_directories(self) -> None:
+        """创建必要的目录"""
+        # 创建诊断数据目录
+        diag_dir = self.agent_memory_path.parent
+        try:
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Ensured diagnostics directory exists: {diag_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to create diagnostics directory {diag_dir}: {e}")
+
+        # 创建上下文输出目录
+        context_dir = self.context_output_dir
+        try:
+            context_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Ensured context output directory exists: {context_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to create context output directory {context_dir}: {e}")
+
+
+# ============================================================================
 # 图像根路径配置
 # ============================================================================
 
@@ -261,6 +352,7 @@ class AppSettings(BaseModel):
     queue: QueueConfig = Field(default_factory=QueueConfig)
     gpu: GPUConfig = Field(default_factory=GPUConfig)
     image_roots: ImageRootModel = Field(default_factory=ImageRootModel)
+    diagnostic: DiagnosticConfig = Field(default_factory=DiagnosticConfig)
 
     def __init__(self, **data):
         """初始化配置并解析路径"""
@@ -278,6 +370,9 @@ class AppSettings(BaseModel):
 
         # 解析 3DGS 仓库路径
         self.gaussian_splatting.resolve_repo_path(self.paths.project_root)
+
+        # 解析诊断Agent路径
+        self.diagnostic.resolve_paths(self.paths.project_root)
 
     @classmethod
     def load_from_yaml(cls, config_file: Path) -> Dict[str, Any]:
@@ -376,6 +471,27 @@ class AppSettings(BaseModel):
         if "AEROTRI_ENV" in os.environ:
             overrides["environment"] = os.getenv("AEROTRI_ENV", "production")
 
+        # 诊断Agent配置
+        if "AEROTRI_DIAGNOSTIC_ENABLED" in os.environ:
+            overrides.setdefault("diagnostic", {})["enabled"] = (
+                os.getenv("AEROTRI_DIAGNOSTIC_ENABLED", "false").lower() == "true"
+            )
+        if "AEROTRI_DIAGNOSTIC_OPENCLAW_CMD" in os.environ:
+            overrides.setdefault("diagnostic", {})["openclaw_cmd"] = os.getenv("AEROTRI_DIAGNOSTIC_OPENCLAW_CMD")
+        if "AEROTRI_DIAGNOSTIC_AUTO_FIX" in os.environ:
+            overrides.setdefault("diagnostic", {})["auto_fix"] = (
+                os.getenv("AEROTRI_DIAGNOSTIC_AUTO_FIX", "false").lower() == "true"
+            )
+        # 路径配置环境变量（支持绝对路径）
+        if "AEROTRI_DIAGNOSTIC_AGENT_MEMORY" in os.environ:
+            overrides.setdefault("diagnostic", {})["agent_memory_path"] = Path(os.getenv("AEROTRI_DIAGNOSTIC_AGENT_MEMORY"))
+        if "AEROTRI_DIAGNOSTIC_HISTORY_LOG" in os.environ:
+            overrides.setdefault("diagnostic", {})["history_log_path"] = Path(os.getenv("AEROTRI_DIAGNOSTIC_HISTORY_LOG"))
+        if "AEROTRI_DIAGNOSTIC_CLAUDE_MD" in os.environ:
+            overrides.setdefault("diagnostic", {})["claude_md_path"] = Path(os.getenv("AEROTRI_DIAGNOSTIC_CLAUDE_MD"))
+        if "AEROTRI_DIAGNOSTIC_CONTEXT_DIR" in os.environ:
+            overrides.setdefault("diagnostic", {})["context_output_dir"] = Path(os.getenv("AEROTRI_DIAGNOSTIC_CONTEXT_DIR"))
+
         return overrides
 
     @classmethod
@@ -462,6 +578,7 @@ class AppSettings(BaseModel):
     def setup_directories(self) -> None:
         """创建必要的目录"""
         self.paths.setup_directories()
+        self.diagnostic.setup_directories()
 
     def get_absolute_paths(self) -> Dict[str, Path]:
         """

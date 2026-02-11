@@ -42,6 +42,15 @@
         定位到模型
       </el-button>
       <el-button
+        v-if="showGeographicEnvironment"
+        size="small"
+        @click="toggleMapDetails"
+        :type="showMapDetails ? 'primary' : 'default'"
+        style="margin-bottom: 8px"
+      >
+        {{ showMapDetails ? '隐藏地图' : '显示地图' }}
+      </el-button>
+      <el-button
         size="small"
         @click="resetView"
         style="margin-bottom: 8px"
@@ -64,9 +73,17 @@ import { ElMessage } from 'element-plus'
 import * as Cesium from 'cesium'
 import 'cesium/Build/Cesium/Widgets/widgets.css'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tilesetUrl: string
-}>()
+  showGeographicEnvironment?: boolean  // 是否显示地理环境（地球、影像、地形等）
+  geoRefData?: {  // 地理参考数据（可选）
+    lon: number
+    lat: number
+    height?: number
+  }
+}>(), {
+  showGeographicEnvironment: false
+})
 
 const emit = defineEmits<{
   (e: 'viewer-ready', viewer: Cesium.Viewer): void
@@ -81,6 +98,9 @@ const tilesetProgressText = ref<string | null>(null)
 let viewer: Cesium.Viewer | null = null
 let currentTileset: Cesium.Cesium3DTileset | null = null
 
+// Show map details control (for geographic mode)
+const showMapDetails = ref(false)
+
 // Set Cesium base URL (required for Workers, Assets, etc.)
 // This is defined in vite.config.mjs via define
 ;(window as any).CESIUM_BASE_URL = '/cesium/'
@@ -91,29 +111,32 @@ async function initViewer() {
   try {
     // Create terrain provider (async in newer Cesium versions)
     let terrainProvider: Cesium.TerrainProvider | undefined
-    try {
-      terrainProvider = await Cesium.createWorldTerrainAsync()
-    } catch (terrainErr: any) {
-      // Fallback to ellipsoid terrain if world terrain fails
-      console.warn('Failed to create world terrain, using ellipsoid terrain:', terrainErr)
-      terrainProvider = new Cesium.EllipsoidTerrainProvider()
+    if (props.showGeographicEnvironment) {
+      try {
+        terrainProvider = await Cesium.createWorldTerrainAsync()
+      } catch (terrainErr: any) {
+        console.warn('Failed to create world terrain, using ellipsoid terrain:', terrainErr)
+        terrainProvider = new Cesium.EllipsoidTerrainProvider()
+      }
     }
 
-    // Create viewer
-    viewer = new Cesium.Viewer(container.value, {
+    // Create viewer options based on mode
+    const viewerOptions: Cesium.Viewer.ConstructorOptions = {
       terrainProvider: terrainProvider,
-      baseLayerPicker: false,
+      baseLayerPicker: props.showGeographicEnvironment || false,
       vrButton: false,
-      geocoder: false,
-      homeButton: false,
+      geocoder: props.showGeographicEnvironment || false,
+      homeButton: true,
       infoBox: false,
-      sceneModePicker: false,
+      sceneModePicker: props.showGeographicEnvironment || false,
       selectionIndicator: false,
       timeline: false,
       navigationHelpButton: false,
       animation: false,
       fullscreenButton: false,
-    })
+    }
+
+    viewer = new Cesium.Viewer(container.value, viewerOptions)
 
     // Hide default credit
     const creditContainer = viewer.cesiumWidget.creditContainer as HTMLElement
@@ -121,62 +144,102 @@ async function initViewer() {
       creditContainer.style.display = 'none'
     }
 
-    // Solution 1: Disable globe and imagery for model-only viewing (Recommended)
-    // This is the best solution when you only want to view the model without geographic reference
-    viewer.scene.globe.show = false
-    viewer.imageryLayers.removeAll()
-    viewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
-    
-    // Also disable sky box for cleaner view
-    if (viewer.scene.skyBox) {
+    // Configure scene based on mode
+    if (props.showGeographicEnvironment) {
+      // ===== Geographic mode: Keep globe for transform support, hide visual elements =====
+
+      // IMPORTANT: Keep globe.show = true for tilesets with root.transform (ENU→ECEF)
+      // The globe is required for ECEF coordinate system transformations
+      // We hide visual elements (skyBox, sun, moon, atmosphere) to achieve "model-only" look
+      viewer.scene.globe.show = true
+
+      // Hide visual geographic elements for cleaner model view
       viewer.scene.skyBox.show = false
-    }
-    if (viewer.scene.sun) {
       viewer.scene.sun.show = false
-    }
-    if (viewer.scene.moon) {
       viewer.scene.moon.show = false
-    }
-    if (viewer.scene.skyAtmosphere) {
       viewer.scene.skyAtmosphere.show = false
+
+      // Use black background for cleaner model view
+      viewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
+
+      // Disable collision detection initially
+      viewer.camera.enableCollisionDetection = false
+
+      // Remove camera axis constraints initially
+      viewer.camera.constrainedAxis = undefined
+
+      // Allow free camera rotation for model inspection
+      const screenSpaceController = viewer.scene.screenSpaceCameraController
+      const controllerAny = screenSpaceController as any
+      if (controllerAny) {
+        controllerAny._maximumPitch = Cesium.Math.PI
+        controllerAny._minimumPitch = -Cesium.Math.PI
+
+        const cameraAny = viewer.camera as any
+        if (cameraAny._controller) {
+          const camController = cameraAny._controller as any
+          if (camController) {
+            camController._maximumPitch = Cesium.Math.PI
+            camController._minimumPitch = -Cesium.Math.PI
+          }
+        }
+      }
+
+      console.log('✓ Geographic mode (model-only view) enabled - globe kept for transform support')
+    } else {
+      // ===== Local coordinate mode: Hide geographic elements (existing logic) =====
+      viewer.scene.globe.show = false
+      viewer.imageryLayers.removeAll()
+      viewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
+
+      // Also disable sky box for cleaner view
+      if (viewer.scene.skyBox) {
+        viewer.scene.skyBox.show = false
+      }
+      if (viewer.scene.sun) {
+        viewer.scene.sun.show = false
+      }
+      if (viewer.scene.moon) {
+        viewer.scene.moon.show = false
+      }
+      if (viewer.scene.skyAtmosphere) {
+        viewer.scene.skyAtmosphere.show = false
+      }
+
+      // Enable free camera rotation for local coordinate models
+      // Remove axis constraints to allow unlimited rotation
+      viewer.camera.constrainedAxis = undefined
+
+      // Disable collision detection to allow free movement
+      viewer.camera.enableCollisionDetection = false
+
+      // Remove pitch rotation constraints to allow unlimited up/down rotation
+      const screenSpaceController = viewer.scene.screenSpaceCameraController
+      const controllerAny = screenSpaceController as any
+      if (controllerAny) {
+        controllerAny._maximumPitch = Cesium.Math.PI
+        controllerAny._minimumPitch = -Cesium.Math.PI
+
+        const cameraAny = viewer.camera as any
+        if (cameraAny._controller) {
+          const camController = cameraAny._controller as any
+          if (camController) {
+            camController._maximumPitch = Cesium.Math.PI
+            camController._minimumPitch = -Cesium.Math.PI
+          }
+        }
+      }
+
+      console.log('✓ Local coordinate model mode enabled')
     }
 
-    // Enable free camera rotation for local coordinate models
-    // Remove axis constraints to allow unlimited rotation
-    viewer.camera.constrainedAxis = undefined
-    
-    // Disable collision detection to allow free movement
-    viewer.camera.enableCollisionDetection = false
-    
-    // Enable all camera controls
+    // Enable all camera controls (common for both modes)
     const screenSpaceController = viewer.scene.screenSpaceCameraController
     screenSpaceController.enableRotate = true
     screenSpaceController.enableTranslate = true
     screenSpaceController.enableZoom = true
     screenSpaceController.enableTilt = true
     screenSpaceController.enableLook = true
-    
-    // Remove pitch rotation constraints to allow unlimited up/down rotation
-    // This is the key fix for allowing free rotation
-    const controllerAny = screenSpaceController as any
-    if (controllerAny) {
-      // Set pitch limits to allow full 360-degree rotation
-      // Default is usually limited to prevent flipping
-      controllerAny._maximumPitch = Cesium.Math.PI  // 180 degrees (straight up)
-      controllerAny._minimumPitch = -Cesium.Math.PI  // -180 degrees (straight down)
-      
-      // Also try to remove constraints from the camera itself
-      const cameraAny = viewer.camera as any
-      if (cameraAny._controller) {
-        const camController = cameraAny._controller as any
-        if (camController) {
-          camController._maximumPitch = Cesium.Math.PI
-          camController._minimumPitch = -Cesium.Math.PI
-        }
-      }
-    }
-    
-    console.log('✓ Camera rotation constraints removed for free rotation')
 
     // Emit viewer-ready event for split-screen sync
     emit('viewer-ready', viewer)
@@ -587,7 +650,29 @@ async function loadTileset() {
           tilesetProgress.value = 100
           tilesetProgressText.value = '加载完成'
           loadingTileset.value = false
-          zoomToTileset()
+
+          // Get model bounding sphere for proper camera positioning
+          const boundingSphere = (tileset as any).boundingSphere
+          const modelRadius = boundingSphere?.radius || 0
+
+          console.log('[loadTileset] Model bounding sphere:', {
+            center: boundingSphere?.center,
+            radius: modelRadius
+          })
+
+          // Choose zoom method based on mode
+          if (props.showGeographicEnvironment) {
+            if (props.geoRefData) {
+              // Geographic mode with GPS data: fly to GPS location with model height
+              flyToGeoRefLocation(modelRadius)
+            } else {
+              // Geographic mode without GPS data: zoom to tileset (Cesium handles transform)
+              zoomToGeographicTileset()
+            }
+          } else {
+            // Local coordinate mode: use existing zoom logic
+            zoomToLocalTileset()
+          }
         })
         .catch((err: any) => {
           // Extract error message more carefully
@@ -612,7 +697,22 @@ async function loadTileset() {
       // No readyPromise, use polling approach
       console.log('No readyPromise available, using polling approach')
       loadingTileset.value = false
-      zoomToTileset()
+
+      // Get model bounding sphere
+      const boundingSphere = (tileset as any).boundingSphere
+      const modelRadius = boundingSphere?.radius || 0
+
+      // Choose zoom method based on mode
+      if (props.showGeographicEnvironment) {
+        if (props.geoRefData) {
+          // Pass model radius for proper height calculation
+          flyToGeoRefLocation(modelRadius)
+        } else {
+          zoomToGeographicTileset()
+        }
+      } else {
+        zoomToLocalTileset()
+      }
     }
   } catch (err: any) {
     // Extract error message more carefully
@@ -634,7 +734,92 @@ async function loadTileset() {
   }
 }
 
-function zoomToModel() {
+// New function: Fly to geographic reference location (GPS position)
+function flyToGeoRefLocation(modelHeight?: number) {
+  if (!viewer || !props.geoRefData) {
+    console.warn('Cannot fly to georef location: viewer or geoRefData not available')
+    return
+  }
+
+  const { lon, lat, height: gpsHeight = 220 } = props.geoRefData
+
+  // Calculate appropriate viewing height based on model size
+  // Default to 2000m if model height not provided, otherwise use model height * 10
+  const viewingHeight = modelHeight
+    ? Math.max(modelHeight * 10, 500) // At least 500m above model
+    : 2000 // Default viewing height for geographic mode
+
+  console.log('[flyToGeoRefLocation] Flying to GPS location:', {
+    lon, lat, gpsHeight, viewingHeight, modelHeight
+  })
+
+  // camera.flyTo uses complete callback, not Promise
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(lon, lat, viewingHeight),
+    orientation: {
+      heading: 0,
+      pitch: -Cesium.Math.PI_OVER_FOUR, // -45 degrees, looking down
+      roll: 0
+    },
+    duration: 2.0, // 2 seconds flight
+    complete: () => {
+      ElMessage.success(`已定位到地理坐标: ${lon.toFixed(4)}°E, ${lat.toFixed(4)}°N`)
+    },
+    cancel: () => {
+      ElMessage.warning('飞行已取消')
+    }
+  })
+}
+
+// New function: Zoom to tileset in geographic mode (Cesium handles root.transform automatically)
+function zoomToGeographicTileset() {
+  if (!viewer || !currentTileset) {
+    ElMessage.warning('模型尚未加载')
+    return
+  }
+
+  try {
+    // Cesium automatically applies root.transform
+    // Just use zoomTo, it will correctly position the camera
+    const promise = viewer.zoomTo(currentTileset, new Cesium.HeadingPitchRange(0, -Cesium.Math.PI_OVER_FOUR, 0))
+
+    // zoomTo returns a Promise in Cesium 1.136+
+    if (promise && typeof promise.then === 'function') {
+      promise
+        .then(() => {
+          ElMessage.success('已定位到模型')
+        })
+        .catch((err: any) => {
+          console.warn('zoomTo failed, trying alternative:', err)
+          // Fallback: try viewBoundingSphere
+          try {
+            const tilesetAny = currentTileset as any
+            const boundingSphere = tilesetAny.boundingSphere
+            if (boundingSphere) {
+              viewer.camera.viewBoundingSphere(
+                boundingSphere,
+                new Cesium.HeadingPitchRange(0, -Cesium.Math.PI_OVER_FOUR, boundingSphere.radius * 2)
+              )
+              ElMessage.success('已定位到模型（备用方法）')
+            }
+          } catch (err2: any) {
+            console.error('All zoom methods failed:', err2)
+            ElMessage.warning('定位失败，请手动查找模型')
+          }
+        })
+    } else {
+      // zoomTo completed synchronously or returned undefined
+      ElMessage.success('已定位到模型')
+    }
+  } catch (err: any) {
+    console.error('Failed to zoom to geographic tileset:', err)
+    ElMessage.error(`定位到模型失败: ${err.message || err}`)
+  }
+}
+
+// Renamed: zoomToLocalTileset (was zoomToTileset in the original code)
+// This function handles the local coordinate mode (original logic)
+function zoomToLocalTileset() {
   if (!viewer || !currentTileset) {
     ElMessage.warning('模型尚未加载')
     return
@@ -812,6 +997,119 @@ function zoomToModel() {
   } catch (err: any) {
     console.error('Failed to zoom to model:', err)
     ElMessage.error(`定位到模型失败: ${err.message || err}`)
+  }
+}
+
+// Button handler: "定位到模型" - chooses method based on mode
+function zoomToModel() {
+  if (!viewer || !currentTileset) {
+    ElMessage.warning('模型尚未加载')
+    return
+  }
+
+  // Get model bounding sphere for proper camera positioning
+  const boundingSphere = (currentTileset as any).boundingSphere
+  const modelRadius = boundingSphere?.radius || 0
+
+  // Choose zoom method based on mode
+  if (props.showGeographicEnvironment) {
+    if (props.geoRefData) {
+      // Geographic mode with GPS data: fly to GPS location with model size
+      flyToGeoRefLocation(modelRadius)
+    } else {
+      // Geographic mode without GPS data: zoom to tileset
+      zoomToGeographicTileset()
+    }
+  } else {
+    // Local coordinate mode: use local zoom logic
+    zoomToLocalTileset()
+  }
+}
+
+// Toggle map details visibility (for geographic mode)
+function toggleMapDetails() {
+  if (!viewer) return
+  if (!props.showGeographicEnvironment) {
+    ElMessage.info('仅在地理模式下可用')
+    return
+  }
+
+  showMapDetails.value = !showMapDetails.value
+
+  if (showMapDetails.value) {
+    // Show full map environment (sky, sun, moon, atmosphere)
+    // Keep globe.show = true (it should always be true in geographic mode)
+    viewer.scene.globe.show = true
+    viewer.scene.skyBox.show = true
+    viewer.scene.sun.show = true
+    viewer.scene.moon.show = true
+    viewer.scene.skyAtmosphere.show = true
+
+    // Reset background color to default (space color)
+    viewer.scene.backgroundColor = new Cesium.Color(0.0, 0.0, 0.0, 1.0)
+
+    // Enable collision detection
+    viewer.camera.enableCollisionDetection = true
+
+    // Restore camera axis constraints
+    viewer.camera.constrainedAxis = Cesium.Cartesian3.UNIT_Z
+
+    // Reset camera constraints to default values
+    const screenSpaceController = viewer.scene.screenSpaceCameraController
+    const controllerAny = screenSpaceController as any
+    if (controllerAny) {
+      delete controllerAny._maximumPitch
+      delete controllerAny._minimumPitch
+
+      const cameraAny = viewer.camera as any
+      if (cameraAny._controller) {
+        const camController = cameraAny._controller as any
+        if (camController) {
+          delete camController._maximumPitch
+          delete camController._minimumPitch
+        }
+      }
+    }
+
+    ElMessage.success('已显示地图（地球、地形、影像）')
+    console.log('✓ Map details enabled (full geographic environment)')
+  } else {
+    // Hide visual geographic elements, but keep globe for transform support
+    // IMPORTANT: globe.show must remain true for ECEF coordinate transforms to work
+    viewer.scene.globe.show = true  // Keep enabled for transform support
+    viewer.scene.skyBox.show = false
+    viewer.scene.sun.show = false
+    viewer.scene.moon.show = false
+    viewer.scene.skyAtmosphere.show = false
+
+    // Use black background for cleaner model view
+    viewer.scene.backgroundColor = Cesium.Color.BLACK.clone()
+
+    // Disable collision detection
+    viewer.camera.enableCollisionDetection = false
+
+    // Remove camera axis constraints
+    viewer.camera.constrainedAxis = undefined
+
+    // Restore free camera rotation
+    const screenSpaceController = viewer.scene.screenSpaceCameraController
+    const controllerAny = screenSpaceController as any
+    if (controllerAny) {
+      controllerAny._maximumPitch = Cesium.Math.PI
+      controllerAny._minimumPitch = -Cesium.Math.PI
+
+      const cameraAny = viewer.camera as any
+      if (cameraAny._controller) {
+        const camController = cameraAny._controller as any
+        if (camController) {
+          camController._maximumPitch = Cesium.Math.PI
+          camController._minimumPitch = -Cesium.Math.PI
+        }
+      }
+    }
+
+    ElMessage.success('已隐藏地图（仅显示模型）')
+    console.log('✓ Map details disabled (model-only view, globe kept for transform)')
   }
 }
 

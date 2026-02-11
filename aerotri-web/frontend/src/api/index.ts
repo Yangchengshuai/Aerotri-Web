@@ -408,6 +408,30 @@ export const tilesApi = {
 
   versionTilesetUrl: (blockId: string, versionId: string) =>
     api.get<{ tileset_url: string }>(`/blocks/${blockId}/recon-versions/${versionId}/tiles/tileset_url`),
+
+  // Get georeference data for block-level tiles
+  georef: (blockId: string) =>
+    api.get<{
+      has_georef: boolean
+      lon?: number
+      lat?: number
+      height?: number
+      utm_epsg?: number
+      utm_easting?: number
+      utm_northing?: number
+    }>(`/blocks/${blockId}/tiles/georef`),
+
+  // Get georeference data for version-level tiles
+  versionGeoref: (blockId: string, versionId: string) =>
+    api.get<{
+      has_georef: boolean
+      lon?: number
+      lat?: number
+      height?: number
+      utm_epsg?: number
+      utm_easting?: number
+      utm_northing?: number
+    }>(`/blocks/${blockId}/recon-versions/${versionId}/tiles/georef`),
 }
 
 // Queue API

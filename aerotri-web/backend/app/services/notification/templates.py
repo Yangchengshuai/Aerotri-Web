@@ -108,9 +108,17 @@ class NotificationTemplates:
         stage: Optional[str] = None,
         duration: Optional[float] = None,
         log_tail: Optional[List[str]] = None,
+        diagnosis: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> tuple:
-        """Template for task failed notification."""
+        """Template for task failed notification.
+
+        Args:
+            diagnosis: Optional diagnostic result from AI agent containing:
+                - error_type: Error type
+                - root_cause: Root cause analysis
+                - suggestions: List of fix suggestions
+        """
         task_type_names = {
             "sfm": "SfM 空三",
             "recon": "OpenMVS 重建",
@@ -119,7 +127,7 @@ class NotificationTemplates:
             "tiles": "3D Tiles 转换",
         }
         type_name = task_type_names.get(task_type, task_type)
-        
+
         title = f"❌ 任务失败: {block_name}"
         content = f"""### 任务失败
 
@@ -131,11 +139,36 @@ class NotificationTemplates:
 
 **运行时长**: {format_duration(duration)}
 
-**错误信息**: 
+**错误信息**:
 ```
 {error or "无错误信息"}
 ```
 """
+
+        # 添加AI诊断结果（如果有）
+        if diagnosis:
+            error_type = diagnosis.get('error_type', '未知错误')
+            root_cause = diagnosis.get('root_cause', '未知原因')
+            suggestions = diagnosis.get('suggestions', [])
+
+            content += f"""
+---
+
+### 🤖 AI 诊断分析
+
+**错误类型**: {error_type}
+
+**根本原因**: {root_cause}
+
+**修复建议**:
+"""
+            for i, suggestion in enumerate(suggestions[:5], 1):  # 最多显示5条
+                content += f"{i}. {suggestion}\n"
+
+            if len(suggestions) > 5:
+                content += f"... (还有 {len(suggestions) - 5} 条建议)\n"
+
+        # 添加日志尾部（如果有）
         if log_tail:
             log_text = "\n".join(log_tail[-10:])  # Last 10 lines
             content += f"""
@@ -274,4 +307,57 @@ class NotificationTemplates:
 
 **时间**: {format_timestamp(datetime.utcnow())}
 """
+        return title, content
+
+    @staticmethod
+    def diagnosis_completed(
+        block_name: str,
+        task_type: str,
+        diagnosis: Dict[str, Any],
+        **kwargs: Any,
+    ) -> tuple:
+        """Template for diagnosis completion notification.
+
+        Args:
+            block_name: Block name
+            task_type: Task type
+            diagnosis: Diagnosis result containing:
+                - error_type: Error type
+                - root_cause: Root cause analysis
+                - suggestions: List of fix suggestions
+            **kwargs: Additional parameters
+        """
+        task_type_names = {
+            "sfm": "SfM 空三",
+            "recon": "OpenMVS 重建",
+            "gs": "3DGS 训练",
+            "gs_tiles": "GS Tiles 转换",
+            "tiles": "3D Tiles 转换",
+        }
+        type_name = task_type_names.get(task_type, task_type)
+
+        title = f"🤖 AI诊断完成: {block_name}"
+        content = f"""### AI 诊断分析
+
+**Block**: {block_name}
+
+**任务类型**: {type_name}
+
+---
+
+### 🤖 AI 诊断结果
+
+**错误类型**: {diagnosis.get('error_type', '未知错误')}
+
+**根本原因**: {diagnosis.get('root_cause', '未知原因')}
+
+**修复建议**:
+"""
+        suggestions = diagnosis.get('suggestions', [])
+        for i, suggestion in enumerate(suggestions[:5], 1):
+            content += f"{i}. {suggestion}\n"
+
+        if len(suggestions) > 5:
+            content += f"... (还有 {len(suggestions) - 5} 条建议)\n"
+
         return title, content

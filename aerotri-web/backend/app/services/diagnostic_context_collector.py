@@ -209,7 +209,7 @@ class DiagnosticContextCollector:
 
     def _get_system_prompt(self) -> str:
         """系统提示词：定义 Agent 的角色和任务."""
-        return """你是 Aerotri-Web 的诊断 Agent，专门分析摄影测量任务失败的原因。
+        return """你是 Aerotri-Web 的诊断 Agent，专门分析三维建模任务失败的原因。
 
 ## 你的能力
 1. 快速定位错误根因（算法、环境、数据、代码）

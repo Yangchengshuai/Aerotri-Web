@@ -178,6 +178,7 @@ export interface Block {
   gs_output_path?: string | null
   gs_error_message?: string | null
   gs_statistics?: Record<string, unknown> | null
+  gs_params?: Record<string, unknown> | null
   // 3D Tiles fields
   tiles_status?: string | null
   tiles_progress?: number | null

@@ -186,7 +186,53 @@ class AerotriWebDiagnosticAgent:
 }}
 ```
 """
+        # 持久化上下文到文件（用于调试）
+        await self._save_context_to_file(context, full_prompt)
+
         return full_prompt
+
+    async def _save_context_to_file(self, context: Dict[str, Any], prompt: str) -> None:
+        """持久化诊断上下文到文件
+
+        Args:
+            context: 原始上下文字典
+            prompt: 发送给OpenClaw的完整Prompt
+        """
+        try:
+            from ..conf.settings import get_settings
+            settings = get_settings()
+            context_dir = settings.diagnostic.context_output_dir
+
+            # 创建上下文文件路径
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # 从顶层获取 block_id 和 task_type（实际 context 结构）
+            block_id = context.get("block_id", context.get("block_info", {}).get("id", "unknown"))
+            task_type = context.get("task_type", "unknown")
+            filename = f"{timestamp}_{block_id}_{task_type}_context.md"
+            context_file = context_dir / filename
+
+            # 写入上下文文件
+            with open(context_file, 'w', encoding='utf-8') as f:
+                f.write(f"# 诊断上下文 - {timestamp}\n\n")
+                f.write(f"**Block ID**: {block_id}\n")
+                f.write(f"**Task Type**: {task_type}\n")
+                f.write(f"**Stage**: {context.get('stage', 'N/A')}\n")
+                f.write(f"**Timestamp**: {datetime.now().isoformat()}\n\n")
+                f.write("---\n\n## 原始上下文\n\n")
+                f.write(f"```json\n")
+                import json
+                f.write(json.dumps(context, indent=2, ensure_ascii=False, default=str))
+                f.write(f"\n```\n\n")
+                f.write("---\n\n## 发送给OpenClaw的Prompt\n\n")
+                f.write(f"```\n")
+                f.write(prompt)
+                f.write(f"\n```\n")
+
+            logger.info(f"Saved diagnostic context to: {context_file}")
+
+        except Exception as e:
+            logger.warning(f"Failed to save context to file: {e}")
 
     async def _load_agent_memory(self) -> str:
         """加载 Agent 记忆库."""
@@ -322,31 +368,69 @@ class AerotriWebDiagnosticAgent:
             raise
 
     def _parse_openclaw_response(self, raw_response: str) -> Dict[str, Any]:
-        """解析 OpenClaw 响应."""
+        """解析 OpenClaw 响应（支持Markdown和JSON格式）."""
+        import re
+
         try:
-            # 尝试解析 JSON
+            # 尝试1: 解析JSON格式
             if raw_response.strip().startswith("{"):
                 return json.loads(raw_response)
-            else:
-                # 如果不是 JSON，尝试提取 JSON 部分
-                start = raw_response.find("{")
-                end = raw_response.rfind("}") + 1
-                if start >= 0 and end > start:
-                    json_str = raw_response[start:end]
-                    return json.loads(json_str)
 
-                # Fallback: 返回原始响应
+            # 尝试2: 从Markdown中提取结构化信息
+            # 提取错误类型
+            type_match = re.search(
+                r'\*\*类型\*\*:\s*(.+?)(?:\n|$)',
+                raw_response,
+                re.MULTILINE
+            )
+            error_type = type_match.group(1).strip() if type_match else None
+
+            # 提取根本原因
+            cause_match = re.search(
+                r'\*\*根本原因\*\*:\s*(.+?)(?=###|\n\n|\*\*修复建议\*\*|\Z)',
+                raw_response,
+                re.DOTALL
+            )
+            root_cause = cause_match.group(1).strip() if cause_match else None
+
+            # 提取修复建议
+            suggestions = re.findall(
+                r'^\d+\.\s+(.+)$',
+                raw_response,
+                re.MULTILINE
+            )
+
+            # 如果成功提取到信息，返回结构化数据
+            if error_type or root_cause or suggestions:
                 return {
-                    "error_type": "Unknown",
-                    "root_cause": raw_response[:500],
-                    "confidence": 0.5,
-                    "is_new_pattern": True,
-                    "suggestions": ["请人工查看日志"],
+                    "error_type": error_type or "未知错误",
+                    "root_cause": root_cause or raw_response[:500],
+                    "confidence": 0.85,
+                    "is_new_pattern": False,
+                    "suggestions": suggestions if suggestions else ["请查看日志了解详情"],
                     "related_resources": [],
-                    "tags": ["parse_error"]
+                    "tags": ["openclaw_diagnosis"]
                 }
 
-        except json.JSONDecodeError as e:
+            # 尝试3: 尝试提取JSON部分
+            start = raw_response.find("{")
+            end = raw_response.rfind("}") + 1
+            if start >= 0 and end > start:
+                json_str = raw_response[start:end]
+                return json.loads(json_str)
+
+            # Fallback: 返回原始响应
+            return {
+                "error_type": "Unknown",
+                "root_cause": raw_response[:500],
+                "confidence": 0.5,
+                "is_new_pattern": True,
+                "suggestions": ["请人工查看日志"],
+                "related_resources": [],
+                "tags": ["parse_error"]
+            }
+
+        except Exception as e:
             logger.error(f"Failed to parse OpenClaw response: {e}")
             return {
                 "error_type": "Parse Error",
@@ -355,7 +439,7 @@ class AerotriWebDiagnosticAgent:
                 "is_new_pattern": True,
                 "suggestions": ["检查 OpenClaw 响应格式"],
                 "related_resources": [],
-                "tags": ["json_parse_error"]
+                "tags": ["parse_error"]
             }
 
     async def _attempt_auto_fix(

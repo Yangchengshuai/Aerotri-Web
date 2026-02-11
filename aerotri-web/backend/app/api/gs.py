@@ -59,6 +59,10 @@ async def start_gs_training(
     # Extract train_params (handle None case)
     train_params = payload.train_params.model_dump() if payload.train_params else {}
 
+    # 保存训练参数到数据库
+    block.gs_params = train_params
+    await db.commit()
+
     await gs_runner.start_training(
         block=block,
         gpu_index=payload.gpu_index,

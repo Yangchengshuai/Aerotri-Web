@@ -200,6 +200,7 @@ class NotificationManager:
             "backend_error": templates.backend_error,
             "system_status": templates.system_status,
             "periodic_task_summary": templates.periodic_task_summary,
+            "diagnosis_completed": templates.diagnosis_completed,
         }
         
         template_func = template_map.get(event_type)
@@ -280,12 +281,37 @@ class NotificationManager:
         uptime = None
         if self._startup_time:
             uptime = (datetime.utcnow() - self._startup_time).total_seconds()
-        
+
         return await self.notify("backend_shutdown", {
             "uptime": uptime,
             "shutdown_at": datetime.utcnow(),
         })
-    
+
+    async def notify_diagnosis_completed(
+        self,
+        block_id: str,
+        block_name: str,
+        task_type: str,
+        diagnosis: Dict[str, Any],
+        **kwargs: Any,
+    ) -> int:
+        """Convenience method for diagnosis completion notification.
+
+        Args:
+            block_id: Block ID
+            block_name: Block name
+            task_type: Task type
+            diagnosis: Diagnosis result from OpenClaw
+            **kwargs: Additional parameters
+        """
+        return await self.notify("diagnosis_completed", {
+            "block_id": block_id,
+            "block_name": block_name,
+            "task_type": task_type,
+            "diagnosis": diagnosis,
+            **kwargs,
+        })
+
     def get_uptime(self) -> Optional[float]:
         """Get service uptime in seconds."""
         if self._startup_time:

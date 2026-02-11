@@ -66,6 +66,7 @@ async def init_db():
                 ("gs_output_path", "TEXT"),
                 ("gs_error_message", "TEXT"),
                 ("gs_statistics", "JSON"),
+                ("gs_params", "JSON"),
                 # 3D Tiles Conversion fields
                 ("tiles_status", "VARCHAR(32)"),
                 ("tiles_progress", "FLOAT"),

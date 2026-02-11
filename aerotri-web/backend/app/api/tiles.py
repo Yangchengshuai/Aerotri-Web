@@ -284,12 +284,12 @@ async def download_tiles_file(
         with open(requested, "r", encoding="utf-8") as f:
             tileset_data = json.load(f)
         
-        # Modify relative URIs in tileset.json to relative paths (not absolute URLs)
-        # This allows Cesium to use the same origin as tileset.json (via Vite proxy)
+        # Modify relative URIs in tileset.json to absolute API paths
+        # This ensures Cesium can load the resources correctly
         def fix_uri(uri: str) -> str:
             if not uri:
                 return uri
-            # If it's already an absolute URL with localhost:8000, convert to relative path
+            # If it's already an absolute URL with localhost:8000, convert to API path
             if uri.startswith("http://localhost:8000") or uri.startswith("https://localhost:8000"):
                 # Extract the path part (everything after the domain)
                 if "/api/" in uri:
@@ -298,8 +298,10 @@ async def download_tiles_file(
             # If it's already a relative path starting with /, keep it
             if uri.startswith("/"):
                 return uri
-            # Convert relative filename (e.g., "model.b3dm") to relative path
-            return f"/api/blocks/{block_id}/tiles/download?file={uri}"
+            # Convert relative filename (e.g., "./model.glb" or "model.glb") to API path
+            # Strip leading ./ if present
+            clean_uri = uri.lstrip('./')
+            return f"/api/blocks/{block_id}/tiles/download?file={clean_uri}"
         
         def fix_uris_in_content(content: dict) -> None:
             if isinstance(content, dict) and "uri" in content:
@@ -624,13 +626,17 @@ async def download_version_tiles_file(
         def fix_uri(uri: str) -> str:
             if not uri:
                 return uri
+            # Handle already-absolute URLs with localhost:8000
             if uri.startswith("http://localhost:8000") or uri.startswith("https://localhost:8000"):
                 if "/api/" in uri:
                     return "/api/" + uri.split("/api/", 1)[1]
                 return uri
+            # Handle absolute paths starting with /
             if uri.startswith("/"):
                 return uri
-            return f"/api/blocks/{block_id}/recon-versions/{version_id}/tiles/download?file={uri}"
+            # Handle relative paths starting with ./ or just filename
+            # Convert to absolute API path for Cesium to load correctly
+            return f"/api/blocks/{block_id}/recon-versions/{version_id}/tiles/download?file={uri.lstrip('./')}"
         
         def fix_uris_in_content(content: dict) -> None:
             if isinstance(content, dict) and "uri" in content:
@@ -712,7 +718,117 @@ async def get_version_tileset_url(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="tileset.json not found. Conversion may not be completed.",
         )
-    
+
     tileset_url = f"/api/blocks/{block_id}/recon-versions/{version_id}/tiles/download?file=tileset.json"
     return TilesetUrlResponse(tileset_url=tileset_url)
+
+
+@router.get("/blocks/{block_id}/tiles/georef")
+async def get_block_tiles_georef(
+    block_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get georeference data for block-level 3D Tiles.
+
+    Returns GPS coordinates if the block has georeference enabled.
+    Used by Cesium viewer to position the model at the correct geographic location.
+    """
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    if not block.output_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Block output path not found.",
+        )
+
+    # Check if geo_ref.json exists
+    geo_ref_path = Path(block.output_path) / "geo" / "geo_ref.json"
+    if not geo_ref_path.exists():
+        return {"has_georef": False}
+
+    import json
+    try:
+        geo = json.loads(geo_ref_path.read_text(encoding="utf-8"))
+        return {
+            "has_georef": True,
+            "lon": geo.get("origin_wgs84", {}).get("lon"),
+            "lat": geo.get("origin_wgs84", {}).get("lat"),
+            "height": geo.get("origin_wgs84", {}).get("h"),
+            "utm_epsg": geo.get("epsg_utm"),
+            "utm_easting": geo.get("origin_utm", {}).get("E"),
+            "utm_northing": geo.get("origin_utm", {}).get("N"),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read geo_ref.json: {str(e)}",
+        )
+
+
+@router.get("/blocks/{block_id}/recon-versions/{version_id}/tiles/georef")
+async def get_version_tiles_georef(
+    block_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get georeference data for version-level 3D Tiles.
+
+    Returns GPS coordinates if the block has georeference enabled.
+    Used by Cesium viewer to position the model at the correct geographic location.
+    """
+    result = await db.execute(
+        select(ReconVersion)
+        .where(ReconVersion.id == version_id)
+        .where(ReconVersion.block_id == block_id)
+    )
+    version = result.scalar_one_or_none()
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version not found: {version_id}",
+        )
+
+    # Get block for geo_ref path
+    result = await db.execute(select(Block).where(Block.id == block_id))
+    block = result.scalar_one_or_none()
+    if not block:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Block not found: {block_id}",
+        )
+
+    if not block.output_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Block output path not found.",
+        )
+
+    # Check if geo_ref.json exists (georef is at block level, not version level)
+    geo_ref_path = Path(block.output_path) / "geo" / "geo_ref.json"
+    if not geo_ref_path.exists():
+        return {"has_georef": False}
+
+    import json
+    try:
+        geo = json.loads(geo_ref_path.read_text(encoding="utf-8"))
+        return {
+            "has_georef": True,
+            "lon": geo.get("origin_wgs84", {}).get("lon"),
+            "lat": geo.get("origin_wgs84", {}).get("lat"),
+            "height": geo.get("origin_wgs84", {}).get("h"),
+            "utm_epsg": geo.get("epsg_utm"),
+            "utm_easting": geo.get("origin_utm", {}).get("E"),
+            "utm_northing": geo.get("origin_utm", {}).get("N"),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read geo_ref.json: {str(e)}",
+        )
 

@@ -101,6 +101,7 @@ class BlockResponse(BaseModel):
     gs_output_path: Optional[str] = None
     gs_error_message: Optional[str] = None
     gs_statistics: Optional[Dict[str, Any]] = None
+    gs_params: Optional[Dict[str, Any]] = None
     gs_tiles_status: Optional[str] = None
     gs_tiles_progress: Optional[float] = None
     gs_tiles_current_stage: Optional[str] = None
