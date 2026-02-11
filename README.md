@@ -314,12 +314,10 @@ CesiumGS/cesium            # CesiumJS 前端库（可选）
 ## 📊 开源路线图
 
 - [x] Phase 1: 基础设施（文档目录、GitHub 模板）
-- [ ] Phase 2: AI 协作专区（Case Studies）
-- [ ] Phase 3: OpenClaw 集成（智能诊断）
+- [x] Phase 2: AI 协作专区（Case Studies）
+- [x] Phase 3: OpenClaw 集成（智能诊断）
 - [ ] Phase 4: 示例与教程
 - [ ] Phase 5: 社区运营
-
-👉 [完整路线图](./docs/DEVELOPMENT_ROADMAP.md)
 
 ## 🙏 致谢
 

@@ -84,7 +84,7 @@ aerotri-web/backend/tests/
 aerotri-web/backend/docs/
 aerotri-web/frontend/docs/
 colmap/
-docs/
+# Note: Keep /docs/ directory for user documentation
 
 # gs_workspace - exclude build artifacts and dependencies
 gs_workspace/**/__pycache__/
@@ -144,16 +144,24 @@ vcg/
 *.deb
 install_log.txt
 
-# Claude Code skills (external)
 .claude/skills/
 
 # IDE
 .cursor/
 
 # Documentation drafts
-CHANGELOG.md
 FIX_SUMMARY.txt
-README_INTERNAL.md
+# Note: Keep CHANGELOG.md for version tracking
 
 # Tools outputs
 diff.txt
+
+# AI Collaboration Submodules
+aerotri-web/visionary/
+aerotri-web/ceres-solver/
+aerotri-web/CesiumGS/
+
+# Third-party tools and dependencies
+CesiumGS/
+ODM/
+
