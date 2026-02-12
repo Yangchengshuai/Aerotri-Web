@@ -365,7 +365,7 @@ http://localhost:<viser_port>
 #### 快速原型验证
 
 ```yaml
-algorithm: "INSTANTSFM"
+algorithm: "instantsfm"
 instantsfm_params:
   viser: true
   viser_port: 8080
@@ -438,7 +438,7 @@ num_threads = min(cpu_count, max(1, int(total_memory_gb / 2)))
 #### CPU 环境重建
 
 ```yaml
-algorithm: "OPENMVG"
+algorithm: "openmvg_global"
 openmvg_params:
   desc_type: "SIFT"
   num_threads: "auto"
@@ -448,7 +448,7 @@ openmvg_params:
 #### 内存受限环境
 
 ```yaml
-algorithm: "OPENMVG"
+algorithm: "openmvg_global"
 feature_params:
   max_image_size: 1024  # 降低图像尺寸
 openmvg_params:
