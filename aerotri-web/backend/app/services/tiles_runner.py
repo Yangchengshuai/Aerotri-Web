@@ -428,22 +428,20 @@ class TilesRunner:
         glb_size_bytes = glb_path.stat().st_size
 
         # Create 3D Tiles 1.1 tileset.json
-        # IMPORTANT: Don't include boundingVolume here
-        # When root.transform is present, Cesium will:
-        # 1. Load the GLB content in local coordinates
-        # 2. Apply the transform to both content and compute world-space bounds
-        # If we include a boundingVolume here with transform, Cesium may have issues
-        # with the coordinate transformation mismatch
+        # The bounding box uses default values; will be properly positioned
+        # by georeferencing transform if available
         tileset = {
             "asset": {
                 "version": "1.1"
             },
             "geometricError": 500,
             "root": {
+                "boundingVolume": {
+                    "box": [0, 0, 0, 100, 0, 0, 0, 100, 0, 0, 0, 100]
+                },
                 "geometricError": 0,
                 "content": {
-                    # Use relative path (./model.glb) for proper URI resolution
-                    "uri": f"./{glb_path.name}"
+                    "uri": glb_path.name  # References model.glb directly
                 }
             }
         }
