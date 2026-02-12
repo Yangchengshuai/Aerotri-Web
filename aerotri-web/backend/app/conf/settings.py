@@ -208,6 +208,69 @@ class GPUConfig(BaseModel):
 
 
 # ============================================================================
+# 通知服务配置
+# ============================================================================
+
+class DingTalkChannelConfig(BaseModel):
+    """钉钉通知通道配置"""
+    enabled: bool = False
+    webhook_url: str = ""
+    secret: str = ""
+    events: List[str] = Field(default_factory=list)
+
+
+class DingTalkConfig(BaseModel):
+    """钉钉通知配置"""
+    channels: Dict[str, DingTalkChannelConfig] = Field(default_factory=dict)
+
+
+class FeishuConfig(BaseModel):
+    """飞书通知配置"""
+    enabled: bool = False
+    channels: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PeriodicNotificationConfig(BaseModel):
+    """周期性通知配置"""
+    task_summary: Dict[str, Any] = Field(default_factory=lambda: {"enabled": False, "cron": "0 21 * * *"})
+    system_status: Dict[str, Any] = Field(default_factory=lambda: {"enabled": False, "interval": 14400})
+
+
+class NotificationConfig(BaseModel):
+    """通知服务配置"""
+    enabled: bool = Field(default=False, description="是否启用通知服务")
+    dingtalk: DingTalkConfig = Field(default_factory=DingTalkConfig)
+    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    periodic: PeriodicNotificationConfig = Field(default_factory=PeriodicNotificationConfig)
+
+
+# ============================================================================
+# 监控配置
+# ============================================================================
+
+class MonitoringGPUMonitor(BaseModel):
+    """GPU 监控配置"""
+    interval_seconds: int = Field(default=2, ge=1, description="监控间隔（秒）")
+
+
+class MonitoringQueueMonitor(BaseModel):
+    """队列监控配置"""
+    interval_seconds: int = Field(default=10, ge=1, description="监控间隔（秒）")
+
+
+class MonitoringSystemMonitor(BaseModel):
+    """系统监控配置"""
+    interval_seconds: int = Field(default=60, ge=1, description="监控间隔（秒）")
+
+
+class MonitoringConfig(BaseModel):
+    """监控配置"""
+    gpu: MonitoringGPUMonitor = Field(default_factory=MonitoringGPUMonitor)
+    queue: MonitoringQueueMonitor = Field(default_factory=MonitoringQueueMonitor)
+    system: MonitoringSystemMonitor = Field(default_factory=MonitoringSystemMonitor)
+
+
+# ============================================================================
 # 诊断Agent配置
 # ============================================================================
 
@@ -353,6 +416,8 @@ class AppSettings(BaseModel):
     gpu: GPUConfig = Field(default_factory=GPUConfig)
     image_roots: ImageRootModel = Field(default_factory=ImageRootModel)
     diagnostic: DiagnosticConfig = Field(default_factory=DiagnosticConfig)
+    notification: NotificationConfig = Field(default_factory=NotificationConfig)
+    monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
 
     def __init__(self, **data):
         """初始化配置并解析路径"""
@@ -492,6 +557,12 @@ class AppSettings(BaseModel):
         if "AEROTRI_DIAGNOSTIC_CONTEXT_DIR" in os.environ:
             overrides.setdefault("diagnostic", {})["context_output_dir"] = Path(os.getenv("AEROTRI_DIAGNOSTIC_CONTEXT_DIR"))
 
+        # 通知服务配置
+        if "AEROTRI_NOTIFICATION_ENABLED" in os.environ:
+            overrides.setdefault("notification", {})["enabled"] = (
+                os.getenv("AEROTRI_NOTIFICATION_ENABLED", "false").lower() == "true"
+            )
+
         return overrides
 
     @classmethod
@@ -499,11 +570,10 @@ class AppSettings(BaseModel):
         """
         创建配置实例，按照优先级加载配置
 
-        优先级:
+        优先级 (从高到低):
         1. 环境变量
-        2. settings.{environment}.yaml
-        3. settings.yaml
-        4. defaults.yaml
+        2. application.{environment}.yaml (可选)
+        3. application.yaml + observability.yaml (新配置)
         """
         # backend/app/conf/settings.py -> backend/config/
         # __file__ is in backend/app/conf/, need to go up 3 levels to backend/
@@ -515,20 +585,28 @@ class AppSettings(BaseModel):
         # 按优先级加载 YAML 配置
         yaml_config: Dict[str, Any] = {}
 
-        # 1. 加载默认配置
-        defaults_file = config_dir / "defaults.yaml"
-        if defaults_file.exists():
-            default_config = cls.load_from_yaml(defaults_file)
-            yaml_config.update(default_config)
+        # 1. 加载 application.yaml (核心应用配置)
+        application_file = config_dir / "application.yaml"
+        if application_file.exists():
+            app_config = cls.load_from_yaml(application_file)
+            if app_config:
+                # 处理 app 配置节 (添加 'app' 前缀的字段映射到顶层)
+                if "app" in app_config:
+                    app_section = app_config.pop("app")
+                    # 映射 app 节字段到顶层
+                    for key, value in app_section.items():
+                        yaml_config[key] = value
+                yaml_config.update(app_config)
 
-        # 2. 加载主配置 (覆盖默认)
-        settings_file = config_dir / "settings.yaml"
-        if settings_file.exists():
-            main_config = cls.load_from_yaml(settings_file)
-            yaml_config.update(main_config)
+        # 2. 加载 observability.yaml (可观测性配置)
+        observability_file = config_dir / "observability.yaml"
+        if observability_file.exists():
+            obs_config = cls.load_from_yaml(observability_file)
+            if obs_config:
+                yaml_config.update(obs_config)
 
         # 3. 加载环境特定配置 (覆盖主配置)
-        env_file = config_dir / f"settings.{environment}.yaml"
+        env_file = config_dir / f"application.{environment}.yaml"
         if env_file.exists():
             env_config = cls.load_from_yaml(env_file)
             yaml_config.update(env_config)

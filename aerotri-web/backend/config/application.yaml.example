@@ -1,0 +1,122 @@
+# ==============================================================================
+# AeroTri Web 主配置文件
+# ==============================================================================
+# 包含应用设置、数据路径、算法配置、队列和 GPU 配置
+#
+# 配置优先级 (高到低):
+# 1. 环境变量
+# 2. application.yaml (此文件)
+# 3. application.yaml.example (默认值)
+#
+# 环境变量参考（查看完整列表）:
+#   - 数据库: AEROTRI_DB_PATH
+#   - 算法: COLMAP_PATH, GLOMAP_PATH, INSTANTSFM_PATH
+#   - 3DGS: GS_REPO_PATH, GS_PYTHON
+#   - 图像路径: AEROTRI_IMAGE_ROOT, AEROTRI_IMAGE_ROOTS
+#   - 队列: QUEUE_MAX_CONCURRENT
+# ==============================================================================
+
+# ==============================================================================
+# 应用基础配置
+# ==============================================================================
+app:
+  name: "AeroTri-Web"
+  version: "1.0.0"
+  debug: false
+  environment: production  # development | staging | production
+  log_level: INFO  # DEBUG | INFO | WARNING | ERROR
+
+  # CORS 允许的前端源
+  cors_origins:
+    - "http://localhost:5173"  # Vite dev server
+
+# ==============================================================================
+# 路径配置（相对路径相对于 backend/ 目录）
+# ==============================================================================
+paths:
+  project_root: ".."
+  data_dir: "./data"
+  outputs_dir: "./data/outputs"
+  blocks_dir: "./data/blocks"
+  thumbnails_dir: "./data/thumbnails"
+
+# ==============================================================================
+# 数据库配置
+# ==============================================================================
+database:
+  path: "./data/aerotri.db"
+  pool_size: 5
+  max_overflow: 10
+
+# ==============================================================================
+# 算法可执行文件路径
+# ==============================================================================
+algorithms:
+  # COLMAP 路径配置
+  colmap:
+    path: "colmap"  # 从 PATH 查找，或使用绝对路径如 "/usr/local/bin/colmap"
+
+  # GLOMAP 路径配置
+  glomap:
+    path: "glomap"
+
+  # InstantSfM 路径配置
+  instantsfm:
+    path: "ins-sfm"
+
+  # OpenMVG 配置
+  openmvg:
+    bin_dir: "/root/work/Aerotri-Web/openMVG_Build/openMVG_install/bin"
+    sensor_db: "/root/work/Aerotri-Web/openMVG/src/openMVG/exif/sensor_width_database/sensor_width_camera_database.txt"
+
+  # OpenMVS 配置
+  openmvs:
+    bin_dir: "/root/work/Aerotri-Web/openMVS/make/bin"
+
+# ==============================================================================
+# cuDSS 配置（可选，用于加速 Bundle Adjustment）
+# ==============================================================================
+cudss_dir: null  # 或: "/opt/cudss"
+
+# ==============================================================================
+# 3D Gaussian Splatting 配置
+# ==============================================================================
+gaussian_splatting:
+  repo_path: "/root/work/Aerotri-Web/gs_workspace/gaussian-splatting"
+  python: "/root/miniconda3/envs/gaussian_splatting/bin/python"
+  tensorboard_path: "/root/miniconda3/envs/gaussian_splatting/bin/tensorboard"
+  tensorboard_port_start: 6006
+  tensorboard_port_end: 6100
+  network_gui_ip: "127.0.0.1"
+  network_gui_port_start: 6009
+  network_gui_port_end: 6109
+
+# ==============================================================================
+# SPZ 压缩配置
+# ==============================================================================
+spz:
+  python: "python"  # 或: "/opt/spz-env/bin/python"
+
+# ==============================================================================
+# 图像根路径配置（用于创建 Block 时浏览目录）
+# ==============================================================================
+image_roots:
+  default: "/root/work/aerotri-web/project_data"
+  paths:
+    - name: "本地数据"
+      path: "./data/images"
+
+# ==============================================================================
+# 队列配置
+# ==============================================================================
+queue:
+  max_concurrent: 1
+  scheduler_interval: 10
+
+# ==============================================================================
+# GPU 配置
+# ==============================================================================
+gpu:
+  monitor_interval: 2
+  default_device: 7
+  auto_selection: "most_free"  # most_free | least_used | first_available

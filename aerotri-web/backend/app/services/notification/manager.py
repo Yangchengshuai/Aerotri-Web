@@ -38,58 +38,65 @@ class NotificationManager:
     
     def initialize(self, config_path: Optional[str] = None) -> bool:
         """Initialize notification service from config file.
-        
+
         Args:
             config_path: Path to notification.yaml config file.
                         If None, uses default path.
-                        
+
         Returns:
             True if initialized and enabled, False otherwise
         """
         if self._initialized:
             logger.debug("NotificationManager already initialized")
             return self._enabled
-        
+
         self._startup_time = datetime.utcnow()
-        
-        # Determine config path
-        if config_path is None:
-            # Default path: backend/config/notification.yaml
-            config_path = str(
-                Path(__file__).parent.parent.parent.parent / "config" / "notification.yaml"
-            )
-        
-        config_file = Path(config_path)
-        
-        # Check if config exists
-        if not config_file.exists():
-            logger.info(f"Notification config not found at {config_path}, service disabled")
-            self._initialized = True
-            self._enabled = False
-            return False
-        
-        # Load config
+
+        # Try new configuration system first (from observability.yaml via settings.py)
+        notification_config = {}
+        config_loaded = False
+
         try:
-            from ...config import config_loader
-            self._config = config_loader.load("notification")
+            from ...conf.settings import get_settings
+            settings = get_settings()
+            notification_config = settings.notification.model_dump()
+            config_loaded = True
+            logger.debug("Loaded notification config from settings (observability.yaml)")
         except Exception as e:
-            logger.warning(f"Failed to load notification config: {e}")
+            logger.debug(f"Failed to load notification from settings: {e}")
+
+        # Fallback to legacy config_loader (for notification.yaml)
+        if not config_loaded:
+            try:
+                from ...config import config_loader
+                self._config = config_loader.load("notification")
+                notification_config = self._config.get("notification", {})
+                config_loaded = True
+                logger.debug("Loaded notification config from legacy config_loader")
+            except Exception as e:
+                logger.warning(f"Failed to load notification config from both sources: {e}")
+
+        # Check if we have any configuration
+        if not notification_config:
+            logger.info("No notification configuration found, service disabled")
             self._initialized = True
             self._enabled = False
             return False
-        
+
+        # Store the full config for compatibility
+        self._config = {"notification": notification_config}
+
         # Check global enable flag
-        notification_config = self._config.get("notification", {})
         if not notification_config.get("enabled", False):
             logger.info("Notification service disabled by config")
             self._initialized = True
             self._enabled = False
             return False
-        
+
         # Initialize notifiers
         self._init_dingtalk(notification_config.get("dingtalk", {}))
         # Future: self._init_feishu(notification_config.get("feishu", {}))
-        
+
         # Check if any notifier is configured
         has_notifier = any(n.is_configured() for n in self._notifiers.values())
         if not has_notifier:
@@ -97,7 +104,7 @@ class NotificationManager:
             self._initialized = True
             self._enabled = False
             return False
-        
+
         self._initialized = True
         self._enabled = True
         logger.info("NotificationManager initialized successfully")

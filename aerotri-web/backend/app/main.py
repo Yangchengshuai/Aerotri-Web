@@ -64,8 +64,9 @@ async def lifespan(app: FastAPI):
     
     # Start periodic notification scheduler (if notification is enabled)
     if notification_manager.enabled:
-        from .config import config_loader
-        periodic_config = config_loader.get("notification", "notification.periodic", default={})
+        from .conf.settings import get_settings
+        settings = get_settings()
+        periodic_config = settings.notification.periodic.model_dump()
         periodic_scheduler.configure(periodic_config)
         await periodic_scheduler.start()
     

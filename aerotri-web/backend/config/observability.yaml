@@ -1,0 +1,96 @@
+# ==============================================================================
+# AeroTri Web 监控与诊断配置
+# ==============================================================================
+# 包含通知服务、诊断 Agent 和系统监控配置
+#
+# 配置优先级 (高到低):
+# 1. 环境变量
+# 2. observability.yaml (此文件)
+# 3. observability.yaml.example (默认值)
+# ==============================================================================
+
+# ==============================================================================
+# 通知服务配置
+# ==============================================================================
+notification:
+  # 全局开关
+  enabled: true
+
+  # 钉钉多通道配置
+  dingtalk:
+    channels:
+      # 通道1: Block 运行通知（任务开始/完成/失败 + AI诊断）
+      block_events:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+        secret: "YOUR_SECRET"
+        events:
+          - task_started
+          - task_completed
+          - task_failed
+          - diagnosis_completed
+
+      # 通道2: 后端状态（系统状态汇总 + 后端健康）
+      backend_status:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+        secret: "YOUR_SECRET"
+        events:
+          - system_status
+          - backend_startup
+          - backend_shutdown
+          - backend_error
+
+      # 通道3: 任务监控（周期性任务汇总）
+      task_monitor:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+        secret: "YOUR_SECRET"
+        events:
+          - periodic_task_summary
+
+  # 飞书配置（后续迭代）
+  feishu:
+    enabled: false
+    channels: {}
+
+  # 周期性汇总配置
+  periodic:
+    # 任务汇总（发送到 task_monitor 通道）
+    task_summary:
+      enabled: false
+      cron: "0 21 * * *"
+
+    # 系统状态汇总（发送到 backend_status 通道）
+    system_status:
+      enabled: false
+      interval: 14400  # 每4小时（秒）
+
+# ==============================================================================
+# 诊断 Agent 配置（可选功能）
+# ==============================================================================
+diagnostic:
+  enabled: true  # 全局开关，默认关闭
+  openclaw_cmd: "openclaw"  # OpenClaw CLI路径（需要在PATH中或绝对路径）
+  agent_id: "main"  # OpenClaw Agent ID
+  # 路径配置：支持绝对路径（推荐）和相对路径
+  agent_memory_path: "/root/work/aerotri-web/data/diagnostics/AerotriWeb_AGENT.md"  # Agent知识库
+  history_log_path: "/root/work/aerotri-web/data/diagnostics/diagnosis_history.log"  # 诊断历史
+  claude_md_path: "/root/work/Aerotri-Web/aerotri-web/CLAUDE.md"  # 项目文档路径
+  # 上下文持久化目录（用于调试，存储发送给OpenClaw的完整上下文）
+  context_output_dir: "/root/work/aerotri-web/data/diagnostics/contexts"
+  timeout_seconds: 180  # OpenClaw调用超时时间
+  auto_fix: false  # 是否尝试自动修复（谨慎启用）
+
+# ==============================================================================
+# 监控配置
+# ==============================================================================
+monitoring:
+  gpu:
+    interval_seconds: 2
+
+  queue:
+    interval_seconds: 10
+
+  system:
+    interval_seconds: 60
