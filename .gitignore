@@ -80,6 +80,7 @@ openMVS/.git/
 aerotri-web/docs/
 aerotri-web/tools/
 aerotri-web/backend/tools/
+tools/
 aerotri-web/backend/tests/
 aerotri-web/backend/docs/
 aerotri-web/frontend/docs/
