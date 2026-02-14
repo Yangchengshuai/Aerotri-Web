@@ -1,5 +1,4 @@
 """Main FastAPI application."""
-import os
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +18,7 @@ from .services.gs_runner import gs_runner
 from .services.tiles_runner import tiles_runner
 from .services.queue_scheduler import queue_scheduler
 from .services.notification import notification_manager, periodic_scheduler
+from .conf.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +97,11 @@ app = FastAPI(
 
 # CORS middleware - MUST be before app.include_router()
 # This ensures all responses, including FileResponse, have CORS headers
-frontend_origins = [
-    # Local development
+settings = get_settings()
+frontend_origins = settings.cors_origins or [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
-
-# Optional demo / production origins (can be overridden via env)
-demo_frontend_origin = os.getenv("AEROTRI_FRONTEND_ORIGIN")
-if demo_frontend_origin:
-    frontend_origins.append(demo_frontend_origin)
 
 app.add_middleware(
     CORSMiddleware,

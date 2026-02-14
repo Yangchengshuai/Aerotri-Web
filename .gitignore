@@ -24,6 +24,8 @@ aerotri-web/data/
 aerotri-web/backend/config/settings.yaml
 aerotri-web/backend/config/image_roots.yaml
 aerotri-web/backend/config/notification.yaml
+aerotri-web/.env.demo
+aerotri-web/.demo-runtime/
 
 # AeroTri logs
 *.log
@@ -177,4 +179,3 @@ aerotri-web/CesiumGS/
 # Third-party tools and dependencies
 CesiumGS/
 ODM/
-

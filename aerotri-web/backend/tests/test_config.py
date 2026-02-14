@@ -237,6 +237,25 @@ class TestAppSettings:
             assert overrides["algorithms"]["colmap"]["path"] == "/usr/bin/colmap"
             assert overrides["queue"]["max_concurrent"] == 4
 
+    def test_load_env_overrides_frontend_origin(self):
+        """测试单个前端域名环境变量覆盖 CORS"""
+        with patch.dict(os.environ, {
+            "AEROTRI_FRONTEND_ORIGIN": "https://demo.pages.dev",
+        }):
+            overrides = AppSettings.load_env_overrides()
+            assert overrides["cors_origins"] == ["https://demo.pages.dev"]
+
+    def test_load_env_overrides_cors_origins_list(self):
+        """测试多域名 CORS 环境变量（逗号分隔）"""
+        with patch.dict(os.environ, {
+            "AEROTRI_CORS_ORIGINS": "https://demo.pages.dev,https://preview.pages.dev",
+        }):
+            overrides = AppSettings.load_env_overrides()
+            assert overrides["cors_origins"] == [
+                "https://demo.pages.dev",
+                "https://preview.pages.dev",
+            ]
+
     def test_flatten_config(self):
         """测试配置展平"""
         nested = {

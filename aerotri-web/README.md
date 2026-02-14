@@ -149,6 +149,35 @@ cd frontend
 npm run test
 ```
 
+### 4. 公网演示（Cloudflare Pages + Tunnel）
+
+适用于开源协作者在各自服务器上快速生成可分享 Demo 链接。
+
+```bash
+cd aerotri-web
+
+# 首次需要登录 Cloudflare（只需一次）
+cd frontend && npx wrangler login && cd ..
+
+# 可选：按需覆盖 demo 参数
+cp .env.demo.example .env.demo
+
+# 一键启动：后端本地运行 + 后端 Tunnel + 前端构建并发布 Pages
+./demo-up.sh
+
+# 一键停止并清理 demo 运行状态
+./demo-down.sh
+```
+
+执行成功后会输出两个 URL：
+- `Frontend`: `https://<name>.pages.dev`（分享给客户）
+- `Backend`: `https://<random>.trycloudflare.com`（由脚本注入到前端构建）
+
+注意：
+- 演示期间请保持 `demo-up.sh` 运行（`trycloudflare` 临时地址依赖该进程）。
+- 如果后端已在别处运行，可在 `.env.demo` 设置 `DEMO_SKIP_BACKEND_START=1`。
+- `demo-up.sh` 会写入运行状态到 `aerotri-web/.demo-runtime/state.env`，`demo-down.sh` 读取该文件执行清理。
+
 ## 环境变量
 
 ### 后端配置
@@ -179,6 +208,8 @@ uvicorn app.main:app --reload
 | `AEROTRI_DB_PATH` | 数据库文件路径 | `./data/aerotri.db` |
 | `AEROTRI_IMAGE_ROOT` | 图像浏览根目录（单个，向后兼容） | `./data/images` |
 | `AEROTRI_IMAGE_ROOTS` | 图像浏览根目录（多个，冒号分隔） | - |
+| `AEROTRI_FRONTEND_ORIGIN` | 单个前端域名（兼容旧配置） | - |
+| `AEROTRI_CORS_ORIGINS` | 多个前端域名（逗号分隔） | - |
 
 **算法路径**：
 

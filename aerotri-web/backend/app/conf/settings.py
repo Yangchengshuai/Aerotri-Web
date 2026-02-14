@@ -482,6 +482,7 @@ class AppSettings(BaseModel):
         - AEROTRI_IMAGE_ROOT, AEROTRI_IMAGE_ROOTS
         - QUEUE_MAX_CONCURRENT
         - AEROTRI_FRONTEND_ORIGIN
+        - AEROTRI_CORS_ORIGINS
 
         Returns:
             环境变量覆盖字典
@@ -526,9 +527,15 @@ class AppSettings(BaseModel):
             overrides.setdefault("queue", {})["max_concurrent"] = int(os.getenv("QUEUE_MAX_CONCURRENT", "1"))
 
         # CORS
-        if "AEROTRI_FRONTEND_ORIGIN" in os.environ:
-            origin = os.getenv("AEROTRI_FRONTEND_ORIGIN")
-            # 这里需要处理列表格式，暂时不处理
+        if "AEROTRI_CORS_ORIGINS" in os.environ:
+            origins_raw = os.getenv("AEROTRI_CORS_ORIGINS", "")
+            origins = [origin.strip() for origin in origins_raw.split(",") if origin.strip()]
+            if origins:
+                overrides["cors_origins"] = origins
+        elif "AEROTRI_FRONTEND_ORIGIN" in os.environ:
+            origin = os.getenv("AEROTRI_FRONTEND_ORIGIN", "").strip()
+            if origin:
+                overrides["cors_origins"] = [origin]
 
         # 应用配置
         if "AEROTRI_DEBUG" in os.environ:

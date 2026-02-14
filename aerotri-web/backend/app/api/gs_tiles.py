@@ -20,9 +20,22 @@ from ..schemas import (
     GSTilesetUrlResponse,
 )
 from ..services.gs_tiles_runner import gs_tiles_runner
+from ..conf.settings import get_settings
 
 
 router = APIRouter()
+
+
+def _resolve_cors_origin(request: Request) -> str:
+    """Return an allowed origin for explicit CORS headers on file responses."""
+    request_origin = request.headers.get("origin")
+    settings = get_settings()
+    allowed_origins = settings.cors_origins or []
+    if request_origin and request_origin in allowed_origins:
+        return request_origin
+    if allowed_origins:
+        return allowed_origins[0]
+    return "http://localhost:3000"
 
 
 @router.post(
@@ -313,7 +326,7 @@ async def download_gs_tiles_file(
                     fix_uris_in_content(child["content"])
         
         response = JSONResponse(content=tileset_data, media_type="application/json")
-        response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        response.headers["Access-Control-Allow-Origin"] = _resolve_cors_origin(request)
         response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "*"
         response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -331,7 +344,7 @@ async def download_gs_tiles_file(
         filename=requested.name,
         media_type=content_type,
         headers={
-            "Access-Control-Allow-Origin": "http://localhost:3000",
+            "Access-Control-Allow-Origin": _resolve_cors_origin(request),
             "Access-Control-Allow-Methods": "GET, OPTIONS",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Credentials": "true",
