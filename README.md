@@ -12,12 +12,17 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 ## ✨ 特性
 
 - **多算法支持**: COLMAP、GLOMAP、InstantSfM、OpenMVG
-- **密集重建**: OpenMVS 密集点云、网格重建、纹理映射
-- **3D Gaussian Splatting**: 高质量实时 3D 渲染
+- **密集重建**: OpenMVS 密集重建、网格重建、纹理映射
+- **3D Gaussian Splatting**: 高质量 3D 渲染
+- **SPZ 压缩**: 3DGS 点云压缩（~10x 压缩比），支持 `KHR_gaussian_splatting_compression_spz_2` 扩展
 - **3D Tiles 转换**: 支持 OpenMVS 和 3DGS 输出转换为 3D Tiles
 - **地理参考**: GPS → UTM → ENU 坐标转换，支持真实地理定位
-- **分区处理**: 大数据集自动分区和合并
-- **智能诊断**: AI 驱动的任务失败诊断和自动修复
+- **分区处理**: 大数据集支持分区和合并
+- **企业通知**: 钉钉/飞书集成，支持任务状态监控、周期性汇总、系统健康上报
+- **智能诊断**: 基于 OpenClaw 的 AI 驱动任务失败诊断和自动修复
+- **任务队列**: 支持置顶、删除、并发控制（1-10）、自动调度
+- **多版本管理**: 重建管线支持多版本参数管理和效果对比
+- **模型对比**: Cesium 分屏同步对比、刷子式对比，支持 Block 级别和重建版本级别对比
 - **实时进度**: WebSocket 实时进度更新
 - **GPU 监控**: 实时 GPU 状态监控和智能分配
 
@@ -33,29 +38,25 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 👉 [了解 AI 协作经验](./docs/06-ai-collaboration/)
 
+## 🎬 演示视频
+
+观看产品演示了解功能：
+
+- [完整功能演示](https://www.bilibili.com/video/BV17EzQBzEP3/) - 核心功能完整演示
+- [模型对比功能演示](https://www.bilibili.com/video/BV1mS6uB3Eyu/) - Block 对比和重建版本对比
+
 ## 🚀 快速开始
 
-### Docker 快速启动（推荐）
-
-```bash
-# 克隆仓库
-git clone https://github.com/your-org/aerotri-web.git
-cd aerotri-web
-
-# 启动服务
-docker-compose up -d
-
-# 访问 Web 应用
-open http://localhost:8000
-```
-
-### 本地开发
+### 本地开发（推荐）
 
 **后端**:
 ```bash
 cd aerotri-web/backend
-# 安装依赖（需要手动创建requirements.txt或使用poetry/pip-tools）
+# 安装依赖
+pip install -r requirements.txt
+# 或手动安装核心依赖
 pip install fastapi uvicorn sqlalchemy pydantic aiofiles python-multipart
+# 启动开发服务器
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -103,26 +104,161 @@ npm run dev -- --host 0.0.0.0 --port 3000
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 🔧 环境变量
+## 🤖 智能诊断 Agent (Diagnostic Agent)
 
-```bash
-# 数据库
-AEROTRI_DB_PATH=/root/work/aerotri-web/data/aerotri.db
+基于 **OpenClaw** 的 AI 驱动任务诊断系统：
 
-# 图像根路径
-AEROTRI_IMAGE_ROOTS=/data/images:/mnt/storage
+### 工作流程
 
-# 算法路径
-COLMAP_PATH=/usr/local/bin/colmap
-GLOMAP_PATH=/usr/local/bin/glomap
-INSTANTSFM_PATH=/path/to/ins-sfm
-GS_REPO_PATH=/root/work/gs_workspace/gaussian-splatting
+1. **触发**: 任务失败时自动触发
+2. **上下文收集**: 收集日志、系统状态、Block 信息、错误堆栈
+3. **诊断分析**: 发送给 OpenClaw Agent 进行智能分析
+4. **结果输出**: 生成诊断报告并可选自动修复
 
-# cuDSS (可选，用于 Bundle Adjustment 加速)
-CUDSS_DIR=/opt/cudss
+### 配置
+
+文件：`aerotri-web/backend/config/observability.yaml`
+
+```yaml
+diagnostic:
+  enabled: true
+  openclaw_cmd: "openclaw"
+  agent_id: "main"
+  agent_memory_path: "/path/to/AerotriWeb_AGENT.md"
+  claude_md_path: "/path/to/CLAUDE.md"
+  timeout_seconds: 180
+  auto_fix: false  # 谨慎启用自动修复
 ```
 
-👉 [完整配置说明](./aerotri-web/backend/config/settings.yaml.example)
+### OpenClaw Agent 知识库
+
+Agent 使用项目文档 (`CLAUDE.md`) 和历史诊断经验作为知识库，提供：
+- 失败原因分析
+- 代码位置定位
+- 修复建议
+- 自动修复（可选）
+
+## 🔔 通知服务 (Notification Services)
+
+Aerotri-Web 集成企业级通知服务，支持钉钉和飞书：
+
+### 钉钉集成
+
+配置文件：`aerotri-web/backend/config/observability.yaml`
+
+支持多通道通知：
+
+| 通道 | 用途 | 事件类型 |
+|------|------|----------|
+| **block_events** | Block 运行通知 | task_started, task_completed, task_failed, diagnosis_completed |
+| **backend_status** | 后端状态 | system_status, backend_startup, backend_shutdown, backend_error |
+| **task_monitor** | 任务监控 | periodic_task_summary (周期性任务汇总) |
+
+### 飞书集成
+
+当前版本支持飞书配置框架（后续迭代）。
+
+### 周期性汇总
+
+- **任务汇总**: 每日定时发送 (cron 配置)
+- **系统状态**: 周期性健康检查 (interval 配置)
+
+### 配置示例
+
+```yaml
+notification:
+  enabled: true
+  dingtalk:
+    channels:
+      block_events:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+        secret: "YOUR_SECRET"
+  periodic:
+    task_summary:
+      enabled: true
+      cron: "0 21 * * *"  # 每天 21:00
+```
+
+## 📋 任务队列管理 (Task Queue)
+
+### 功能特性
+
+- **自动调度**: 基于 `max_concurrent` 并发限制自动分发任务
+- **队列管理**: 支持置顶 (moveToTop)、删除 (dequeue)、查询 (enqueue)
+- **并发控制**: 可配置 1-10 并发任务数
+- **实时状态**: WebSocket 实时更新队列状态和运行任务数
+
+### API 端点
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/queue/blocks` | GET | 获取队列列表 |
+| `/api/queue/blocks/{id}/enqueue` | POST | 添加到队列 |
+| `/api/queue/blocks/{id}/dequeue` | POST | 从队列删除 |
+| `/api/queue/blocks/{id}/move-to-top` | POST | 置顶任务 |
+| `/api/queue/config` | GET | 获取队列配置 |
+| `/api/queue/config` | PUT | 更新并发限制 |
+
+### 环境变量
+
+- `QUEUE_MAX_CONCURRENT`: 最大并发任务数 (默认: 1, 范围: 1-10)
+
+## 🔍 模型对比 (Model Comparison)
+
+### 多版本管理
+
+支持为每个 Block 创建多个重建版本 (ReconVersion)，每个版本独立管理：
+- 独立的 OpenMVS 重建参数 (密集重建、网格、纹理)
+- 独立的输出目录 (dense/, mesh/, refine/, texture/)
+- 独立的 3D Tiles 转换状态
+- 版本间参数和效果对比
+
+### Block 级别对比
+
+**功能**: 对比不同 Block 的算法效果
+
+**支持场景**:
+- 不同空三算法对比 (COLMAP vs GLOMAP vs InstantSfM vs OpenMVG)
+- 同一算法不同参数对比
+- 不同数据集效果对比
+
+**页面**: `CompareView.vue`
+
+**对比维度**:
+- 稀疏重建统计 (图像数、点云数、相机数)
+- 重投影误差分布
+- 相机参数对比
+
+### 重建版本级别对比
+
+#### Cesium 分屏对比 (SplitCesiumViewer)
+
+**位置**: 3D Tiles Tab
+
+**特性**:
+- 双 Cesium Viewer 分屏显示
+- **视角同步**: 可选开启/关闭相机同步
+- 可拖动分屏线调整左右比例
+- 支持不同重建版本的 3D Tiles 模型对比
+
+#### 刷子式对比 (BrushCompareViewer)
+
+**位置**: 重建 Tab → "对比模型" 按钮
+
+**特性**:
+- **单 Cesium Viewer + 后端 stencil 裁剪**: 高性能实现
+- 拖动分屏线实时切换左右模型显示
+- 刷子式交互：左侧显示左模型，右侧显示右模型
+- 适用于同一场景不同参数的精细对比
+
+### API 支持
+
+- `GET /api/blocks/{id}/recon-versions` - 获取重建版本列表
+- `POST /api/blocks/{id}/recon-versions` - 创建新版本
+- `GET /api/blocks/{id}/recon-versions/{version_id}` - 获取版本详情
+- `DELETE /api/blocks/{id}/recon-versions/{version_id}` - 删除版本
+- `POST /api/blocks/{id}/recon-versions/{version_id}/cancel` - 取消运行中版本
 
 ## 🛠️ 第三方工具和依赖
 
@@ -139,6 +275,7 @@ CUDSS_DIR=/opt/cudss
 | **OpenMVS** | 密集重建 | [预编译](http://cdcseacave.com/openmvs) 或 [源码](https://github.com/cdcseacave/openmvs) | AGPL-3.0 |
 | **3DGS** | 3D 高斯溅射 | [源码](https://github.com/nerfstudio-project/gaussian-splatting) | NVIDIA |
 | **Ceres Solver** | 非线性优化 | [源码编译](http://ceres-solver.org) | BSD |
+| **Visionary** | 3DGS 查看器 | [源码](https://github.com/Visionary-Laboratory/visionary) | MIT |
 
 ### 3D Tiles 转换工具（可选）
 
@@ -312,13 +449,6 @@ CesiumGS/cesium            # CesiumJS 前端库（可选）
 
 👉 [贡献指南](./docs/07-contribution/)
 
-## 📊 开源路线图
-
-- [x] Phase 1: 基础设施（文档目录、GitHub 模板）
-- [x] Phase 2: AI 协作专区（Case Studies）
-- [x] Phase 3: OpenClaw 集成（智能诊断）
-- [ ] Phase 4: 示例与教程
-- [ ] Phase 5: 社区运营
 
 ## 🙏 致谢
 
@@ -330,6 +460,26 @@ CesiumGS/cesium            # CesiumJS 前端库（可选）
 - [3D Gaussian Splatting](https://github.com/nerfstudio-project/gaussian-splatting) - 3D Gaussian Splatting for Real-Time Rendering
 - [OpenClaw](https://github.com/openclaw/openclaw) - Personal AI Assistant
 - [Claude Code](https://claude.ai/code) - AI 协作开发工具
+
+## 🗺️ 后续开发规划
+
+### 短期 (3-6 个月)
+- [ ] 大场景分 Tile 重建支持
+- [ ] ROI (感兴趣区域) 设置和选择性重建
+- [ ] 大场景 3DGS 分 chunk 训练
+- [ ] 3DGS 多 GPU 并行训练
+
+### 中期 (6-12 个月)
+- [ ] 手持激光雷达工作流集成
+- [ ] 更多 3D Tiles 扩展支持
+- [ ] 云端部署方案
+
+### 开源路线图
+- [x] Phase 1: 基础设施（文档目录、GitHub 模板）
+- [x] Phase 2: AI 协作专区（Case Studies）
+- [x] Phase 3: OpenClaw 集成（智能诊断）
+- [ ] Phase 4: 示例与教程
+- [ ] Phase 5: 社区运营
 
 ## 📄 许可证
 
@@ -349,11 +499,13 @@ CesiumGS/cesium            # CesiumJS 前端库（可选）
 
 完整配置指南请查看：
 - **[配置指南](aerotri-web/backend/config/CONFIGURATION_GUIDE.md)** - 所有配置参数说明
+- **[可观测性配置](aerotri-web/backend/config/observability.yaml.example)** - 通知和诊断配置
 
 快速配置：
 ```bash
 cd aerotri-web/backend/config
 cp settings.yaml.example settings.yaml
+cp observability.yaml.example observability.yaml  # 可选
 vim settings.yaml  # 编辑你的配置
 ```
 
