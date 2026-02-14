@@ -63,6 +63,8 @@ git submodule update --init --recursive
 ### 2. 本地开发（推荐）
 
 **后端**:
+
+**后端**:
 ```bash
 cd aerotri-web/backend
 # 安装依赖
@@ -80,12 +82,30 @@ npm install
 npm run dev -- --host 0.0.0.0 --port 3000
 ```
 
+### 2.1 Visionary 可视化工具（可选）
+
+如果需要查看 3DGS 模型，需要启动 Visionary 查看器：
+
+```bash
+cd visionary
+npm install
+npm run dev -- --host 0.0.0.0 --port 3001
+```
+
+**⚠️ 端口说明**：
+- Visionary 默认端口为 `3000`，与主前端冲突
+- 建议使用 `--port 3001` 或其他端口避免冲突
+- 如需修改默认端口，编辑 `visionary/vite.config.ts` 中的 `server.port`
+
+### 3. 访问应用
+
 ### 3. 访问应用
 
 打开浏览器访问：
 - 前端：http://localhost:3000
 - 后端 API：http://localhost:8000
 - API 文档：http://localhost:8000/docs
+- Visionary 查看器（可选）：http://localhost:3001
 
 👉 [详细安装指南](./docs/02-installation/)
 
