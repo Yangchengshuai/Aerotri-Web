@@ -4,7 +4,7 @@
 
 [submodule "ceres-solver"]
 	path = ceres-solver
-	url = https://github.com/AeroTri/ceres-solver.git
+	url = https://ghfast.top/https://github.com/ceres-solver/ceres-solver.git
 
 [submodule "CesiumGS"]
 	path = CesiumGS
@@ -25,4 +25,4 @@
 
 [submodule "openMVG"]
 	path = openMVG
-	url = https://github.com/openMVG/openMVG.git
+	url = https://ghfast.top/https://github.com/openMVG/openMVG.git

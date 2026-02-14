@@ -130,12 +130,24 @@ diagnosis_history.log
 # Project data
 project_data/
 
-# Third-party dependencies
-ceres-solver/
-colmap3.11/
-gs_workspace/
-openMVG/
-visionary/
+# Third-party dependencies (submodules)
+# Git submodule .git files must not be ignored
+!ceres-solver/.git
+!colmap3.11/colmap/.git
+!gs_workspace/gaussian-splatting/.git
+!openMVG/.git
+!visionary/.git
+!instantsfm/.git
+!CesiumGS/.git
+
+# But ignore build artifacts and other content in submodules
+ceres-solver/build/
+colmap3.11/**/build*/
+colmap3.11/**/CMakeFiles/
+colmap3.11/**/CMakeCache.txt
+colmap3.11/**/Makefile
+colmap3.11/**/cmake_install.cmake
+gs_workspace/gaussian-splatting/output/
 openMVG_Build/
 eigen-3.4.0/
 cudss-local-repo-*.deb
