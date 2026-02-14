@@ -68,7 +68,6 @@
   - **版本级转换**: 支持为每个重建版本独立转换 3D Tiles，前端提供版本选择器
   - **地理定位支持**: 如果启用了地理定位，转换时会自动在 tileset.json 中注入 root.transform（ENU→ECEF 变换矩阵），使模型在 Cesium 中显示在真实地理位置
 - **3D GS Tiles 转换**: 
-  - 支持将 3DGS 训练产物（PLY 格式）转换为 3D Tiles 格式
   - 转换流程：PLY → [SPZ 压缩] → GLTF → 3D Tiles
   - 支持选择不同迭代版本和 SPZ 压缩（使用 `KHR_gaussian_splatting_compression_spz_2` 扩展）
   - SPZ 压缩可减少约 90% 文件大小
@@ -247,13 +246,32 @@ uvicorn app.main:app --reload
 
 ### 使用配置文件（推荐用于生产）
 
-创建 `backend/config/settings.yaml`：
+AeroTri Web 采用**双文件配置架构**：
 
+```bash
+cd backend/config
+
+# 主配置文件（应用设置、路径、算法配置等）
+cp application.yaml.example application.yaml
+
+# 可观测性配置（通知、诊断）
+cp observability.yaml.example observability.yaml
+
+# 编辑配置
+vim application.yaml
+```
+
+**配置文件结构**：
+- `application.yaml` - 主配置文件（app、paths、database、algorithms、gpu、queue 等）
+- `observability.yaml` - 可观测性配置（DingTalk 通知、诊断 Agent）
+
+**示例配置**（application.yaml）：
 ```yaml
 # 应用配置
 app:
   debug: false
   environment: production
+  log_level: INFO
 
 # 路径配置
 paths:
@@ -287,10 +305,10 @@ image_roots:
 
 ```bash
 # 开发环境
-backend/config/settings.development.yaml
+backend/config/application.development.yaml
 
 # 生产环境
-backend/config/settings.production.yaml
+backend/config/application.production.yaml
 
 # 激活环境
 export AEROTRI_ENV=development
@@ -300,8 +318,9 @@ uvicorn app.main:app --reload
 ### 更多配置选项
 
 详细的配置说明请参阅：
-- **[完整配置指南](docs/CONFIGURATION.md)** - 所有配置项的详细说明
-- **[迁移指南](docs/MIGRATION.md)** - 从旧配置系统迁移的步骤
+- **[完整配置指南](../docs/CONFIGURATION.md)** - 所有配置项的详细说明
+- **[可观测性配置示例](../config/observability.yaml.example)** - 通知和诊断配置
+- **[迁移指南](../docs/MIGRATION.md)** - 从旧配置系统迁移的步骤
 
 ## API 文档
 
