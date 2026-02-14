@@ -425,17 +425,32 @@ sudo apt-get install -y \
 
 ### 子模块
 
-本项目包含以下子模块：
+本项目使用 Git Submodules 管理第三方依赖库：
 
 ```bash
-# 初始化子模块
-git submodule update --init --recursive
+# 克隆时自动获取子模块
+git clone --recurse-submodules https://github.com/AeroTri/Aerotri-Web.git
 
-# 子模块列表
-CesiumGS/obj2gltf          # OBJ 转 GLTF/GLB 工具
-CesiumGS/3d-tiles-tools    # 3D Tiles 工具集
-CesiumGS/cesium            # CesiumJS 前端库（可选）
+# 或如果已克隆，手动初始化
+git submodule update --init --recursive
 ```
+
+**子模块列表**:
+
+| 子模块 | 路径 | 用途 | 版本 |
+|--------|------|------|------|
+| **ceres-solver** | `ceres-solver/` | 非线性优化库 | 46b4b3b |
+| **colmap** | `colmap3.11/colmap/` | SfM 稀疏重建 | 682ea9a (3.11.1) |
+| **gaussian-splatting** | `gs_workspace/gaussian-splatting/` | 3DGS 训练 | main |
+| **instantsfm** | `instantsfm/` | 快速 SfM | 0.2.0 |
+| **openMVG** | `openMVG/` | CPU 友好 SfM | v2.0 |
+| **visionary** | `visionary/` | 3DGS WebGPU 查看器 | main |
+| **CesiumGS** | `CesiumGS/` | 3D Tiles 转换工具 | - |
+
+**说明**:
+- 子模块使用特定版本 commit 确保稳定性
+- 部分子模块配置了固定版本（如 ceres-solver @ 46b4b3b）
+- 克隆失败可使用镜像源：`ghfast.top/https://github.com/...`
 
 ## 🤝 贡献
 
