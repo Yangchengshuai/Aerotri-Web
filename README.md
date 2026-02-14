@@ -500,9 +500,9 @@ git submodule update --init --recursive
 
 ## 📮 联系方式
 
-- 问题反馈: [GitHub Issues](https://github.com/your-org/aerotri-web/issues)
-- 功能建议: [GitHub Discussions](https://github.com/your-org/aerotri-web/discussions)
-- 邮件: your-email@example.com
+- 问题反馈: [GitHub Issues](https://github.com/AeroTri/Aerotri-Web/issues)
+- 功能建议: [GitHub Discussions](https://github.com/AeroTri/Aerotri-Web/discussions)
+- 邮件: yyccssyyds@gmail.com
 
 ---
 
