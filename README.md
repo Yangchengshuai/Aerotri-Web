@@ -47,7 +47,20 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 ## 🚀 快速开始
 
-### 本地开发（推荐）
+### 1. 克隆项目
+
+```bash
+# 克隆项目（包含子模块）
+git clone --recurse-submodules https://github.com/Yangchengshuai/Aerotri-Web.git
+
+# 或如果已克隆，手动初始化子模块
+cd Aerotri-Web
+git submodule update --init --recursive
+```
+
+**⚠️ 注意**：项目依赖多个第三方算法库（COLMAP、OpenMVS、3DGS 等），需要先克隆子模块，详见 [安装指南](./docs/02-installation/)。
+
+### 2. 本地开发（推荐）
 
 **后端**:
 ```bash
@@ -66,6 +79,13 @@ cd aerotri-web/frontend
 npm install
 npm run dev -- --host 0.0.0.0 --port 3000
 ```
+
+### 3. 访问应用
+
+打开浏览器访问：
+- 前端：http://localhost:3000
+- 后端 API：http://localhost:8000
+- API 文档：http://localhost:8000/docs
 
 👉 [详细安装指南](./docs/02-installation/)
 
