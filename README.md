@@ -31,13 +31,13 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 **钉钉三通道监控体系**
 
-![监控通知](pictures/Block运行通知.png)
+<img src="pictures/Block运行通知.png" alt="监控通知" width="700"/>
 
 *任务监控群、运行通知群、后端状态监控群 - 全方位任务状态监控*
 
 **AI 智能诊断**
 
-![AI诊断](pictures/Block运行通知-任务失败触发.png)
+<img src="pictures/Block运行通知-任务失败触发.png" alt="AI诊断" width="700"/>
 
 *任务失败自动触发 AI 诊断，10-30秒后返回详细分析和修复建议*
 
@@ -49,7 +49,7 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 <summary>📊 任务监控群 - 周期性汇总</summary>
 
-![任务监控](pictures/任务监控.png)
+<img src="pictures/任务监控.png" alt="任务监控" width="700"/>
 
 **功能**: 每日21:00自动发送任务统计报告，包含：
 - 统计时间段内的任务总数和成功率
@@ -63,7 +63,7 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 <summary>✅ Block运行通知群 - 任务完成</summary>
 
-![Block运行通知](pictures/Block运行通知.png)
+<img src="pictures/Block运行通知.png" alt="Block运行通知" width="700"/>
 
 **功能**: 任务生命周期实时通知，包含：
 - ✅ 任务开始：算法类型、预计耗时
@@ -76,7 +76,7 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 <summary>🚀 后端状态监控群 - 系统状态</summary>
 
-![后端状态监控](pictures/后端状态监控.png)
+<img src="pictures/后端状态监控.png" alt="后端状态监控" width="700"/>
 
 **功能**: 后端服务和系统资源监控，包含：
 - 🚀 后端启动通知：配置路径、数据库位置
@@ -89,7 +89,7 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 <summary>🤖 AI诊断Agent - 智能分析</summary>
 
-![AI诊断详情](pictures/诊断Agent.png)
+<img src="pictures/诊断Agent.png" alt="AI诊断详情" width="700"/>
 
 **功能**: 任务失败时自动触发智能诊断：
 - 🔍 自动分类错误类型（CUDA OOM、相机模型不兼容等）
