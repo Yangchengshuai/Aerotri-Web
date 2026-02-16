@@ -94,8 +94,8 @@ brew install cmake eigen exiftool node python3
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/your-org/aerotri-web.git
-cd aerotri-web
+git clone https://github.com/Yangchengshuai/Aerotri-Web.git
+cd Aerotri-Web/aerotri-web
 ```
 
 ### 2. 创建Python虚拟环境（推荐）
@@ -130,9 +130,9 @@ pip install pytest pytest-asyncio black
 ### 4. 配置后端
 
 ```bash
-cd config
-cp settings.yaml.example settings.yaml
-vim settings.yaml  # 编辑配置
+cd backend/config
+cp application.yaml.example application.yaml
+vim application.yaml  # 编辑配置
 ```
 
 **必需配置项**：
@@ -147,10 +147,16 @@ image_roots:
   default: "/path/to/your/images"  # 修改为图像存储路径
 ```
 
+**可选：配置通知服务**：
+```bash
+cp observability.yaml.example observability.yaml
+vim observability.yaml  # 编辑通知配置
+```
+
 ### 5. 初始化数据库
 
 ```bash
-cd aerotri-web/backend
+cd backend
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 # 数据库会在首次启动时自动创建
 ```
@@ -162,7 +168,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### 1. 安装依赖
 
 ```bash
-cd aerotri-web/frontend
+cd frontend
 npm install
 ```
 
@@ -320,13 +326,13 @@ ins-sfm --help
 
 **后端测试**：
 ```bash
-cd aerotri-web/backend
+cd backend
 pytest
 ```
 
 **前端测试**：
 ```bash
-cd aerotri-web/frontend
+cd frontend
 npm run test
 ```
 
@@ -346,7 +352,7 @@ uvicorn app.main:app --port 8001
 
 **问题**: 数据库权限错误
 ```bash
-chmod 755 aerotri-web/backend/data
+chmod 755 backend/data
 ```
 
 **问题**: 算法路径不正确
@@ -360,9 +366,10 @@ which colmap
 
 **问题**: CORS错误
 ```yaml
-# 检查 backend/config/defaults.yaml
-cors_origins:
-  - "http://localhost:3000"
+# 检查 backend/config/application.yaml
+app:
+  cors_origins:
+    - "http://localhost:3000"
 ```
 
 **问题**: 代理配置错误
@@ -416,9 +423,9 @@ After=network.target
 
 [Service]
 User=aerotri
-WorkingDirectory=/opt/aerotri-web/backend
-Environment="PATH=/opt/aerotri-web/backend/venv/bin"
-ExecStart=/opt/aerotri-web/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+WorkingDirectory=/opt/Aerotri-Web/aerotri-web/backend
+Environment="PATH=/opt/Aerotri-Web/aerotri-web/backend/venv/bin"
+ExecStart=/opt/Aerotri-Web/aerotri-web/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 
 [Install]

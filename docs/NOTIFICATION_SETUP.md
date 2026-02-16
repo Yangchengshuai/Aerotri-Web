@@ -1,6 +1,9 @@
-# AeroTri Web 通知服务配置指南
+# AeroTri Web 监控与诊断配置指南
 
-本文档介绍如何配置 AeroTri Web 的通知服务，包括钉钉（DingTalk）和飞书（Feishu）机器人的设置。
+本文档介绍如何配置 AeroTri Web 的监控和诊断功能，包括：
+- **通知服务**：钉钉和飞书机器人配置
+- **诊断 Agent**：AI 智能故障诊断
+- **系统监控**：资源使用和健康检查
 
 ## 目录
 
@@ -35,18 +38,19 @@ AeroTri Web 通知服务用于在系统关键事件发生时发送实时通知�
 
 ## 快速开始
 
-### 1. 启用通知服务
+### 1. 启用监控与诊断服务
 
 复制示例配置文件并启用：
 
 ```bash
 cd aerotri-web/backend/config
-cp notification.yaml.example notification.yaml
+cp observability.yaml.example observability.yaml
 ```
 
-编辑 `notification.yaml`，将全局开关设为 `true`：
+编辑 `observability.yaml`，启用需要的功能：
 
 ```yaml
+# 通知服务配置
 notification:
   enabled: true  # 改为 true 启用通知服务
   dingtalk:
@@ -59,6 +63,13 @@ notification:
           - task_started
           - task_completed
           - task_failed
+
+# AI 诊断 Agent 配置
+diagnostic:
+  enabled: false  # 按需启用
+  openclaw_cmd: "openclaw"
+  agent_id: "main"
+  timeout_seconds: 180
 ```
 
 ### 2. 重启后端服务
@@ -322,16 +333,17 @@ AeroTri Web 集成了 AI 诊断 Agent，任务失败时会自动调用 OpenClaw 
 
 ### 启用AI诊断
 
-编辑 `backend/config/settings.yaml`：
+编辑 `aerotri-web/backend/config/observability.yaml`：
 
 ```yaml
 diagnostic:
   enabled: true  # 启用AI诊断
   openclaw_cmd: "openclaw"
   agent_id: "main"
-  timeout_seconds: 60
-  auto_fix: false  # 谨慎启用自动修复
+  timeout_seconds: 180
 ```
+
+**注意**：诊断功能已集成到 `observability.yaml`，不需要在 `application.yaml` 中单独配置。
 
 ### 诊断结果通知
 
@@ -392,7 +404,7 @@ OpenClaw 可以独立于 AeroTri Web 发送通知，适用于：
 1. 确认通知服务已启用：
    ```bash
    # 检查配置文件
-   cat aerotri-web/backend/config/notification.yaml | grep "enabled: true"
+   cat aerotri-web/backend/config/observability.yaml | grep "enabled: true"
    ```
 
 2. 检查后端日志：
@@ -438,8 +450,8 @@ notification:
 
 **检查诊断是否启用：**
 ```bash
-# 检查 settings.yaml
-cat aerotri-web/backend/config/settings.yaml | grep -A 5 "diagnostic:"
+# 检查 observability.yaml
+cat aerotri-web/backend/config/observability.yaml | grep -A 5 "diagnostic:"
 
 # 应该看到 enabled: true
 ```
@@ -494,9 +506,10 @@ dingtalk:
 ## 配置文件完整示例
 
 ```yaml
-# AeroTri Web 通知配置
-# 位置: aerotri-web/backend/config/notification.yaml
+# AeroTri Web 监控与诊断配置
+# 位置: aerotri-web/backend/config/observability.yaml
 
+# ==================== 通知服务配置 ====================
 notification:
   # 全局开关
   enabled: true
@@ -544,6 +557,116 @@ notification:
       enabled: true
       cron: "0 21 * * *"  # 每天21:00
 
+    system_status:
+      enabled: true
+      interval: 14400  # 每4小时
+
+# ==================== AI 诊断 Agent 配置 ====================
+diagnostic:
+  enabled: false  # 默认禁用，按需启用
+  openclaw_cmd: "openclaw"
+  agent_id: "main"
+  timeout_seconds: 180
+```
+
+---
+
+## 实际效果
+
+本节展示 AeroTri Web 通知系统的实际使用效果。以下截图来自生产环境的三个钉钉群：
+
+### 1. Block 运行通知群
+
+**功能**：接收任务开始、完成、失败通知以及 AI 诊断结果
+
+#### 任务完成通知
+
+![Block运行通知](../pictures/Block运行通知.png)
+
+**包含信息**：
+- ✅ 任务状态标识
+- Block 名称和算法类型
+- 处理图像数量
+- 任务耗时
+- 输出统计信息
+
+#### 任务失败 + AI 诊断通知
+
+![Block运行通知-任务失败触发](../pictures/Block运行通知-任务失败触发.png)
+
+**包含信息**：
+- ❌ 失败阶段和错误信息
+- 🤖 **AI 诊断分析**（自动触发）
+  - 错误类型识别
+  - 根本原因分析
+  - 具体修复建议
+  - 相关代码位置
+
+**诊断流程**：
+1. 任务失败触发通知
+2. 自动调用 OpenClaw Agent 进行诊断
+3. 诊断完成后发送第二条消息（包含详细分析）
+4. 诊断结果自动保存到知识库
+
+---
+
+### 2. 任务监控群
+
+**功能**：周期性任务汇总，每日/每周任务统计
+
+![任务监控](../pictures/任务监控.png)
+
+**包含信息**：
+- 📊 统计时间段
+- 总任务数和成功率
+- 各算法类型分布
+- 平均处理时长
+- 失败任务列表
+
+**配置示例**：
+```yaml
+notification:
+  periodic:
+    task_summary:
+      enabled: true
+      cron: "0 21 * * *"  # 每天21:00发送
+```
+
+---
+
+### 3. 后端状态监控群
+
+**功能**：后端启动/关闭通知，系统资源监控
+
+![后端状态监控](../pictures/后端状态监控.png)
+
+**包含信息**：
+- 🚀 后端启动通知
+  - 启动时间
+  - 配置路径
+  - 数据库位置
+  - 通知服务状态
+
+- 💻 系统状态监控（定时）
+  - CPU/内存使用率
+  - GPU 状态
+  - 任务队列状态
+  - 磁盘空间
+
+**配置示例**：
+```yaml
+notification:
+  dingtalk:
+    channels:
+      backend_status:
+        enabled: true
+        webhook_url: "..."
+        events:
+          - backend_startup
+          - backend_shutdown
+          - system_status
+
+  periodic:
     system_status:
       enabled: true
       interval: 14400  # 每4小时

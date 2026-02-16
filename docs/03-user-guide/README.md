@@ -307,11 +307,10 @@ openmvg_params:
 2. 配置训练参数：
    ```yaml
    gs_params:
-     iterations: 30000              # 迭代次数
-     resolution: 1                  # 分辨率缩放
-     eval: false                     # 评估
-     OpacityReset: "7000"           # 不透明度重置间隔
-     DensifyUntilIter: 15000       # 密集化迭代数
+     iterations: 30000                    # 迭代次数
+     resolution: 1                        # 分辨率缩放
+     opacity_reset_interval: 3000        # 不透明度重置间隔
+     densify_until_iter: 15000            # 密集化迭代数
    ```
 
 3. 选择输出选项：

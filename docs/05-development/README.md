@@ -82,12 +82,22 @@ backend/
 │   │
 │   ├── api/                    # RESTful API端点
 │   │   ├── __init__.py
-│   │   ├── blocks.py
-│   │   ├── queue.py
-│   │   ├── reconstruction.py
-│   │   ├── gs.py
-│   │   ├── tiles.py
-│   │   ├── system.py
+│   │   ├── blocks.py           # Block管理
+│   │   ├── queue.py            # 任务队列
+│   │   ├── reconstruction.py   # 密集重建（旧版）
+│   │   ├── recon_versions.py   # 重建版本管理
+│   │   ├── gs.py               # 3DGS训练
+│   │   ├── gs_tiles.py         # 3DGS Tiles转换
+│   │   ├── tiles.py            # OpenMVS Tiles转换
+│   │   ├── filesystem.py       # 文件系统浏览
+│   │   ├── georef.py           # 地理参考
+│   │   ├── gpu.py              # GPU监控
+│   │   ├── images.py           # 图像浏览
+│   │   ├── partitions.py       # 分区管理
+│   │   ├── results.py          # 结果读取
+│   │   ├── tasks.py            # 任务管理
+│   │   ├── unified_tasks.py    # 统一任务
+│   │   └── system.py           # 系统管理
 │   │   └── ...
 │   │
 │   ├── models/                 # SQLAlchemy ORM模型
@@ -116,8 +126,8 @@ backend/
 │   └── ...
 │
 └── config/                    # 配置文件
-    ├── defaults.yaml           # 默认配置
-    ├── settings.yaml.example   # 配置模板
+    ├── application.yaml.example       # 应用配置模板
+    ├── observability.yaml.example     # 可观测性配置模板
     └── ...
 ```
 
@@ -261,6 +271,8 @@ frontend/
 │   ├── views/              # 页面组件
 │   │   ├── HomeView.vue
 │   │   ├── BlockDetailView.vue
+│   │   ├── CompareView.vue
+│   │   ├── ReconCompareView.vue    # 重建版本对比
 │   │   └── ...
 │   │
 │   ├── types/              # TypeScript类型
@@ -511,11 +523,18 @@ enum AlgorithmType {
 
 **客户端代码**：
 ```typescript
-import { io } from 'socket.io-client'
+// 使用原生 WebSocket API
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+const url = `${protocol}//${window.location.host}/ws/blocks/${blockId}/progress`
 
-const socket = io(`ws://localhost:8000/ws/blocks/${blockId}/progress`)
+const ws = new WebSocket(url)
 
-socket.on('message', (data) => {
+ws.onopen = () => {
+  console.log('WebSocket connected')
+}
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data)
   switch (data.type) {
     case 'progress':
       updateProgressBar(data.progress)
@@ -526,15 +545,72 @@ socket.on('message', (data) => {
     case 'completed':
       showCompletionMessage()
       break
+    case 'failed':
+      showErrorMessage(data.message)
+      break
   }
-})
+}
+
+ws.onerror = (error) => {
+  console.error('WebSocket error:', error)
+}
+
+ws.onclose = () => {
+  console.log('WebSocket disconnected')
+}
+```
+
+**Vue 3 组合式函数封装**（项目中实际使用）：
+```typescript
+// composables/useWebSocket.ts
+import { ref, onUnmounted } from 'vue'
+
+export function useWebSocket(blockId: string) {
+  const connected = ref(false)
+  const progress = ref<ProgressMessage | null>(null)
+  const error = ref<string | null>(null)
+
+  let ws: WebSocket | null = null
+
+  function connect() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const url = `${protocol}//${window.location.host}/ws/blocks/${blockId}/progress`
+
+    ws = new WebSocket(url)
+
+    ws.onopen = () => {
+      connected.value = true
+    }
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data) as ProgressMessage
+      progress.value = data
+    }
+
+    ws.onerror = () => {
+      error.value = 'WebSocket connection error'
+    }
+
+    ws.onclose = () => {
+      connected.value = false
+      // 自动重连
+      setTimeout(() => connect(), 3000)
+    }
+  }
+
+  onUnmounted(() => {
+    ws?.close()
+  })
+
+  return { connected, progress, error, connect }
+}
 ```
 
 ### 可视化频道（InstantSfM）
 
-**端点**：`ws://localhost:8000/ws/blocks/{block_id}/visualization`
+**端点**：`ws://localhost:8000/ws/visualization/{block_id}`
 
-**用途**：实时推送InstantSfM的Viser可视化数据
+**用途**：实时推送 InstantSfM 的 Viser 可视化数据
 
 **服务端代理**：
 ```python
@@ -571,65 +647,53 @@ async def db():
         yield session
 ```
 
-**API测试示例**：
-```python
-# tests/test_api.py
-
-@pytest.mark.asyncio
-async def test_create_block(client: AsyncClient):
-    response = await client.post(
-        "/api/blocks",
-        json={
-            "name": "Test Block",
-            "image_path": "/test/images",
-            "algorithm": "COLMAP"
-        }
-    )
-    assert response.status_code == 201
-    data = response.json()
-    assert data["id"] is not None
-    assert data["status"] == "created"
+**后端测试**：
+```bash
+cd backend
+pytest                           # 运行所有测试
+pytest tests/test_config.py       # 运行配置测试
+pytest -v                         # 详细输出
+pytest --cov=app                  # 测试覆盖率
 ```
 
-**服务测试示例**：
-```python
-# tests/test_services.py
+**实际测试文件**：
+- `conftest.py` - Pytest 配置和 fixtures
+- `test_config.py` - 配置系统测试
+- `test_config_fixtures.py` - 配置 fixtures 测试
 
-@pytest.mark.asyncio
-async def test_task_runner():
-    runner = TaskRunner.get_instance()
-
-    # Mock subprocess calls
-    with patch('subprocess.Popen') as mock_popen:
-        mock_popen.return_value = MockProcess()
-
-        await runner.run_task("test-block-id")
-
-        # Verify calls
-        assert mock_popen.called
-        assert runner.get_status("test-block-id") == "running"
-```
-
-### 前端测试
+**前端测试**：
 
 **Vitest配置**（`frontend/vitest.config.ts`）：
 ```typescript
 import { defineConfig } from 'vitest/config'
+import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
+  plugins: [vue()],
   test: {
-    globals: true,
     environment: 'jsdom',
+    setupFiles: ['./src/tests/setup.ts'],
+    globals: true,
+  },
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url))
+    }
   },
 })
 ```
 
-**组件测试示例**：
-```vue
-<!-- components/BlockCard.test.ts -->
+**实际测试文件**：
+- `tests/components/BlockCard.test.ts` - BlockCard 组件测试
+- `tests/stores/blocks.test.ts` - Blocks store 测试
+- `tests/setup.ts` - 测试环境设置
 
-<script setup lang="ts">
+**组件测试示例**：
+```typescript
+// tests/components/BlockCard.test.ts
 import { describe, it, expect } from 'vitest'
+import { mount } from '@vue/test-utils'
+import BlockCard from '@/components/BlockCard.vue'
 
 describe('BlockCard', () => {
   it('renders block name', () => {
@@ -646,16 +710,24 @@ describe('BlockCard', () => {
     expect(wrapper.text()).toContain('Test Block')
   })
 })
-</script>
+```
+
+**运行测试**：
+```bash
+cd frontend
+npm run test        # 运行所有测试
+npm run test:ui     # 使用 Vitest UI
 ```
 
 ---
 
 ## 部署
 
-### Docker部署
+### Docker部署（可选）
 
-**后端Dockerfile**：
+> **注意**：以下 Docker 配置为示例，项目根目录未包含 Dockerfile。如需 Docker 部署，请根据实际情况创建。
+
+**后端 Dockerfile 示例**：
 ```dockerfile
 FROM python:3.10-slim
 
@@ -669,7 +741,7 @@ EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-**前端Dockerfile**：
+**前端 Dockerfile 示例**：
 ```dockerfile
 FROM node:18-alpine
 
@@ -685,7 +757,7 @@ RUN npm run build
 CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0"]
 ```
 
-**Docker Compose**：
+**Docker Compose 示例**：
 ```yaml
 version: '3.8'
 

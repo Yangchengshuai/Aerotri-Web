@@ -172,15 +172,42 @@ Each diagnosis updates the knowledge base:
 
 ---
 
-## Appendix: Test File
+## Appendix: Implementation
 
-Location: `aerotri-web/backend/tests/test_diagnostic_agent.py`
+### Code Location
 
-Run tests with:
-```bash
-cd aerotri-web/backend
-pytest tests/test_diagnostic_agent.py -v
+诊断 Agent 实现位于:
 ```
+aerotri-web/backend/app/services/
+├── openclaw_diagnostic_agent.py      # OpenClaw 集成
+├── diagnostic_context_collector.py   # 上下文收集
+└── diagnostic_router.py              # 诊断路由
+```
+
+### Integration Points
+
+诊断钩子已集成到:
+- `app/services/task_runner.py` (4 个钩子)
+- `app/services/openmvs_runner.py` (2 个钩子)
+- `app/services/gs_runner.py` (1 个钩子)
+- `app/services/tiles_runner.py` (4 个钩子)
+
+### Manual Testing
+
+手动测试诊断功能:
+```bash
+# 1. 启用诊断
+vim aerotri-web/backend/config/observability.yaml
+# 设置 diagnostic.enabled = true
+
+# 2. 触发一个会失败的任务
+# 诊断将自动触发
+
+# 3. 检查日志
+tail -f data/outputs/diagnosis_history.log
+```
+
+**注意**: 自动化单元测试暂未实现，但诊断功能已在生产环境中验证。
 
 ---
 

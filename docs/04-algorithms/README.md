@@ -596,7 +596,8 @@ gs_params:
   position_lr_max_steps: 30000 # 位置LR衰减步数
 
   # 输出控制
-  eval: false                   # 启用评估
+  white_background: false       # 白色背景
+  quiet: false                  # 静默模式
   export_spz: true             # 导出SPZ压缩
 ```
 

@@ -48,11 +48,14 @@ uvicorn app.main:app
 
 1. 复制配置示例：
 ```bash
-cp backend/config/settings.yaml.example backend/config/settings.yaml
+cd aerotri-web/backend/config
+cp application.yaml.example application.yaml
+cp observability.yaml.example observability.yaml  # 可选，如需通知服务
 ```
 
 2. 编辑配置文件：
 ```yaml
+# application.yaml
 paths:
   data_dir: "./data"
   outputs_dir: "./data/outputs"
@@ -73,33 +76,37 @@ uvicorn app.main:app
 
 ### 配置文件位置
 
-配置文件位于 `backend/config/` 目录：
+配置文件位于 `aerotri-web/backend/config/` 目录：
 
 ```
-backend/config/
-├── defaults.yaml              # 默认配置（最低优先级）
-├── settings.yaml.example       # 配置示例（复制并修改为 settings.yaml）
-├── settings.yaml              # 主配置文件（用户配置）
-├── settings.development.yaml   # 开发环境配置（可选）
-├── settings.production.yaml    # 生产环境配置（可选）
-├── image_roots.yaml           # 图像根路径配置
-└── notification.yaml          # 通知服务配置
+aerotri-web/backend/config/
+├── application.yaml.example      # 配置示例（复制并修改为 application.yaml）
+├── application.yaml              # 主配置文件（应用设置、路径、算法配置）
+├── observability.yaml.example    # 监控配置示例
+└── observability.yaml            # 监控配置（通知、诊断、系统监控）
 ```
 
 ### 配置文件结构
 
-#### 主配置文件：`settings.yaml`
+#### 主配置文件：`application.yaml`
 
 ```yaml
 # 应用配置
 app:
+  name: "AeroTri-Web"
+  version: "1.0.0"
   debug: false
   environment: production
   log_level: INFO
 
-# 路径配置
+  # CORS 允许的前端源
+  cors_origins:
+    - "http://localhost:3000"  # Vite dev server
+
+# 路径配置（相对路径相对于 backend/ 目录）
 paths:
-  data_dir: "./data"              # 相对于 backend/（自动解析为绝对路径）
+  project_root: ".."
+  data_dir: "./data"
   outputs_dir: "./data/outputs"
   blocks_dir: "./data/blocks"
   thumbnails_dir: "./data/thumbnails"
@@ -108,15 +115,19 @@ paths:
 database:
   path: "./data/aerotri.db"
   pool_size: 5
+  max_overflow: 10
 
 # 算法配置
 algorithms:
   colmap:
-    path: "colmap"                # 或 "/usr/local/bin/colmap"
+    path: "colmap"              # 从 PATH 查找，或使用绝对路径
   glomap:
     path: "glomap"
+  instantsfm:
+    path: "ins-sfm"
   openmvg:
     bin_dir: "/usr/local/bin"
+    sensor_db: "/usr/local/share/sensor_width_camera_database.txt"
   openmvs:
     bin_dir: "/usr/local/lib/openmvs/bin"
 
@@ -125,36 +136,38 @@ gaussian_splatting:
   repo_path: "./gs_workspace/gaussian-splatting"
   python: "python"
 
-# 图像根路径
+# 图像根路径配置
 image_roots:
   default: "./data/images"
+  paths:
+    - name: "本地数据"
+      path: "./data/images"
 ```
 
-#### 环境特定配置
+#### 监控配置文件：`observability.yaml`（可选）
 
-创建 `settings.{environment}.yaml` 用于不同环境：
-
-**开发环境** (`settings.development.yaml`):
 ```yaml
-app:
-  debug: true
-  environment: development
-  log_level: DEBUG
+# 通知服务配置
+notification:
+  enabled: true  # 全局开关
 
-paths:
-  data_dir: "./data"
-```
+  dingtalk:
+    channels:
+      block_events:
+        enabled: true
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
+        secret: "YOUR_SECRET"
+        events:
+          - task_started
+          - task_completed
+          - task_failed
 
-**生产环境** (`settings.production.yaml`):
-```yaml
-app:
-  debug: false
-  environment: production
-  log_level: WARNING
-
-paths:
-  data_dir: "/var/lib/aerotri/data"
-  outputs_dir: "/var/lib/aerotri/outputs"
+# 诊断 Agent 配置（可选）
+diagnostic:
+  enabled: false
+  openclaw_cmd: "openclaw"
+  agent_id: "main"
+  timeout_seconds: 180
 ```
 
 ---
@@ -230,22 +243,17 @@ paths:
 配置优先级从高到低：
 
 1. **环境变量** - 最高优先级，用于部署覆盖
-2. **settings.{environment}.yaml** - 环境特定配置（如 `settings.development.yaml`）
-3. **settings.yaml** - 主配置文件
-4. **defaults.yaml** - 默认配置（最低优先级）
+2. **application.yaml** - 主配置文件
+3. **application.yaml.example** - 默认配置（最低优先级）
 
 ### 优先级示例
 
 ```yaml
-# defaults.yaml
+# application.yaml.example
 app:
   debug: false
 
-# settings.yaml
-app:
-  debug: true
-
-# settings.development.yaml
+# application.yaml
 app:
   debug: true
 
@@ -254,6 +262,8 @@ export AEROTRI_DEBUG=false
 ```
 
 最终生效：`AEROTRI_DEBUG=false`（环境变量优先级最高）
+
+**注意**：`observability.yaml` 的加载优先级与 `application.yaml` 相同（环境变量优先）。
 
 ---
 
@@ -347,7 +357,7 @@ gaussian_splatting:
 
 ### 6. 图像根路径配置
 
-#### 方式 1：在 `settings.yaml` 中配置
+#### 方式 1：在 `application.yaml` 中配置
 
 ```yaml
 image_roots:
@@ -359,24 +369,13 @@ image_roots:
       path: "/mnt/storage"
 ```
 
-#### 方式 2：使用独立的 `image_roots.yaml`
-
-```yaml
-# backend/config/image_roots.yaml
-image_roots:
-  - name: "项目数据"
-    path: "/data/projects"
-  - name: "NAS 存储"
-    path: "/mnt/nas/images"
-```
-
-#### 方式 3：使用环境变量
+#### 方式 2：使用环境变量
 
 ```bash
 # 单个路径（向后兼容）
 export AEROTRI_IMAGE_ROOT=/mnt/data/images
 
-# 多个路径
+# 多个路径（冒号分隔）
 export AEROTRI_IMAGE_ROOTS=/mnt/data/images:/mnt/storage:/home/user/images
 ```
 
@@ -398,13 +397,14 @@ gpu:
 
 ---
 
-## 多环境配置
+## 配置文件使用建议
 
 ### 开发环境
 
-创建 `backend/config/settings.development.yaml`：
+建议使用相对路径，便于在不同机器上开发：
 
 ```yaml
+# application.yaml
 app:
   debug: true
   environment: development
@@ -412,23 +412,14 @@ app:
 
 paths:
   data_dir: "./dev_data"
-
-algorithms:
-  colmap:
-    path: "/usr/local/bin/colmap"
-```
-
-设置环境变量激活：
-```bash
-export AEROTRI_ENV=development
-uvicorn app.main:app --reload
 ```
 
 ### 生产环境
 
-创建 `backend/config/settings.production.yaml`：
+建议使用绝对路径，更明确且避免路径问题：
 
 ```yaml
+# application.yaml
 app:
   debug: false
   environment: production
@@ -440,12 +431,6 @@ paths:
 
 queue:
   max_concurrent: 4
-```
-
-设置环境变量激活：
-```bash
-export AEROTRI_ENV=production
-uvicorn app.main:app
 ```
 
 ---
@@ -553,21 +538,12 @@ export AEROTRI_IMAGE_ROOTS=/data/images:/mnt/storage:/home/user/images
 
 **方式 2**：配置文件
 ```yaml
-# image_roots.yaml
-image_roots:
-  - name: "本地存储"
-    path: "/data/images"
-  - name: "NAS 存储"
-    path: "/mnt/storage"
-```
-
-**方式 3**：settings.yaml
-```yaml
+# application.yaml
 image_roots:
   paths:
-    - name: "本地"
+    - name: "本地存储"
       path: "/data/images"
-    - name: "NAS"
+    - name: "NAS 存储"
       path: "/mnt/storage"
 ```
 
@@ -582,7 +558,7 @@ export AEROTRI_DB_PATH=/custom/path/aerotri.db
 
 2. **配置文件**：
 ```yaml
-# settings.yaml
+# application.yaml
 database:
   path: "/custom/path/aerotri.db"
 ```
@@ -601,7 +577,7 @@ export AEROTRI_DEBUG=true
 或：
 
 ```yaml
-# settings.yaml
+# application.yaml
 app:
   debug: true
 ```
@@ -625,20 +601,20 @@ gaussian_splatting:
 
 A: 如果遇到配置文件未加载的问题，检查以下几点：
 
-1. **确认配置文件位置**：配置文件必须在 `backend/config/` 目录下
+1. **确认配置文件位置**：配置文件必须在 `aerotri-web/backend/config/` 目录下
    ```bash
-   ls -la backend/config/settings.yaml
+   ls -la aerotri-web/backend/config/application.yaml
    ```
 
 2. **检查 YAML 语法**：使用 YAML 验证工具检查语法错误
    ```bash
-   python3 -c "import yaml; yaml.safe_load(open('backend/config/settings.yaml'))"
+   python3 -c "import yaml; yaml.safe_load(open('aerotri-web/backend/config/application.yaml'))"
    ```
 
 3. **查看启动日志**：配置系统会输出加载的配置文件
    ```
-   INFO: Loaded config from: /path/to/backend/config/defaults.yaml
-   INFO: Loaded config from: /path/to/backend/config/settings.yaml
+   INFO: Loaded config from: .../backend/config/application.yaml.example
+   INFO: Loaded config from: .../backend/config/application.yaml
    ```
 
 4. **验证配置生效**：使用 Python 验证
@@ -672,27 +648,27 @@ uvicorn app.main:app --reload
 
 ### 问题1: 配置文件不生效
 
-**症状**: 修改了 `settings.yaml`，但配置没有生效
+**症状**: 修改了 `application.yaml`，但配置没有生效
 
 **可能原因**:
-1. 配置文件路径错误（必须在 `backend/config/` 目录）
+1. 配置文件路径错误（必须在 `aerotri-web/backend/config/` 目录）
 2. YAML 语法错误
 3. 环境变量覆盖了配置文件
 
 **解决方法**:
 ```bash
 # 1. 检查文件路径
-ls -la backend/config/settings.yaml
+ls -la aerotri-web/backend/config/application.yaml
 
 # 2. 验证 YAML 语法
-python3 -c "import yaml; yaml.safe_load(open('backend/config/settings.yaml'))"
+python3 -c "import yaml; yaml.safe_load(open('aerotri-web/backend/config/application.yaml'))"
 
 # 3. 检查是否有环境变量覆盖
 env | grep AEROTRI
 
 # 4. 查看启动日志中的配置加载信息
 # 应该看到:
-# INFO: Loaded config from: .../backend/config/settings.yaml
+# INFO: Loaded config from: .../backend/config/application.yaml
 ```
 
 ### 问题2: 数据库路径错误
@@ -701,7 +677,7 @@ env | grep AEROTRI
 
 **解决方法**:
 ```yaml
-# 在 backend/config/settings.yaml 中明确指定旧数据库路径
+# 在 aerotri-web/backend/config/application.yaml 中明确指定旧数据库路径
 database:
   path: "/path/to/your/old/aerotri.db"  # 使用绝对路径
 ```
@@ -716,9 +692,9 @@ export AEROTRI_DB_PATH=/path/to/your/old/aerotri.db
 **症状**: 相对路径被解析到错误的位置
 
 **理解路径解析**:
-- 配置文件位置: `backend/config/settings.yaml`
-- 代码位置: `backend/app/conf/settings.py`
-- 检测的项目根目录: `backend/`
+- 配置文件位置: `aerotri-web/backend/config/application.yaml`
+- 代码位置: `aerotri-web/backend/app/conf/settings.py`
+- 检测的项目根目录: `aerotri-web/backend/`
 
 **路径解析示例**:
 ```yaml
@@ -743,7 +719,7 @@ which colmap
 export COLMAP_PATH=/usr/local/bin/colmap
 
 # 3. 或在配置文件中使用绝对路径
-# 编辑 backend/config/settings.yaml:
+# 编辑 aerotri-web/backend/config/application.yaml:
 algorithms:
   colmap:
     path: "/usr/local/bin/colmap"

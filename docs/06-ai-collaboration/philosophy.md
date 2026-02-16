@@ -443,12 +443,13 @@ def merge_partitions(partitions):
 ---
 
 **相关文档**:
-- [Vibe Coding 最佳实践](../Vibe%20Coding最佳实践.md)
-- [Case Studies](./case-studies/)
+- **[AI 协作最佳实践](./best-practices.md)** - 34条实战经验技巧 ⭐
+- [案例研究](./case-studies/)
 - [CLAUDE.md](../CLAUDE.md)
+- [Vibe Coding 最佳实践归档](../Vibe%20Coding最佳实践.md) - 原始实践记录
 
 ---
 
 **作者**: Aerotri-Web Team
-**更新时间**: 2025-02-09
-**版本**: 1.0.0
+**更新时间**: 2026-02-16
+**版本**: 1.1.0
