@@ -14,7 +14,7 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 - **多算法支持**: COLMAP、GLOMAP、InstantSfM、OpenMVG
 - **密集重建**: OpenMVS 密集重建、网格重建、纹理映射
 - **3D Gaussian Splatting**: 高质量 3D 渲染 + SPZ 压缩（~10x 压缩比）
-- **3D Tiles 转换**: 支持 OpenMVS 和 3DGS 输出转换为 3D Tiles
+- **3D Tiles 转换**: 支持 OBJ 转换为 3D Tiles
 - **地理参考**: GPS → UTM → ENU 坐标转换，支持真实地理定位
 - **智能诊断**: 基于 OpenClaw 的 AI 驱动任务诊断
 - **企业通知**: 钉钉/飞书集成，任务状态监控

@@ -164,6 +164,14 @@ install_log.txt
 # IDE
 .cursor/
 
+# Backup files
+README_old.md
+*_backup.md
+*.backup
+
+# Performance trace files
+*_performance_trace.json.gz
+
 # Documentation drafts
 FIX_SUMMARY.txt
 # Note: Keep CHANGELOG.md for version tracking
