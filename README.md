@@ -27,29 +27,47 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 
 ## 📱 监控与诊断效果
 
-### 快速预览
-
-**钉钉三通道监控体系**
-
-<img src="pictures/Block运行通知.png" alt="监控通知" width="400"/>
-
-*任务监控群、运行通知群、后端状态监控群 - 全方位任务状态监控*
-
-**AI 智能诊断**
-
-<img src="pictures/Block运行通知-任务失败触发.png" alt="AI诊断" width="400"/>
-
-*任务失败自动触发 AI 诊断，10-30秒后返回详细分析和修复建议*
-
----
-
-### 详细效果 <Badge type="info">点击展开</Badge>
+<table align="center">
+  <tr align="center">
+    <th><p align="center">📊 任务监控群</p></th>
+    <th><p align="center">✅ 运行通知群</p></th>
+    <th><p align="center">🚀 后端状态监控</p></th>
+    <th><p align="center">🤖 AI诊断Agent</p></th>
+  </tr>
+  <tr>
+    <td align="center">
+      <p align="center">
+        <img src="pictures/任务监控.png" alt="任务监控" width="200">
+      </p>
+    </td>
+    <td align="center">
+      <p align="center">
+        <img src="pictures/Block运行通知.png" alt="运行通知" width="200">
+      </p>
+    </td>
+    <td align="center">
+      <p align="center">
+        <img src="pictures/后端状态监控.png" alt="后端状态监控" width="200">
+      </p>
+    </td>
+    <td align="center">
+      <p align="center">
+        <img src="pictures/诊断Agent.png" alt="AI诊断" width="200">
+      </p>
+    </td>
+  </tr>
+  <tr align="center">
+    <td>周期汇总 • 统计报告</td>
+    <td>实时通知 • 任务追踪</td>
+    <td>系统状态 • 资源监控</td>
+    <td>智能分析 • 自动诊断</td>
+  </tr>
+</table>
 
 <details>
+<summary>📖 查看详细功能说明</summary>
 
-<summary>📊 任务监控群 - 周期性汇总</summary>
-
-<img src="pictures/任务监控.png" alt="任务监控" width="400"/>
+### 📊 任务监控群 - 周期性汇总
 
 **功能**: 每日21:00自动发送任务统计报告，包含：
 - 统计时间段内的任务总数和成功率
@@ -57,46 +75,34 @@ Aerotri-Web 是一个基于 Web 的航空摄影测量平台，集成多种 SfM�
 - 平均处理时长统计
 - 失败任务列表
 
-</details>
+---
 
-<details>
-
-<summary>✅ Block运行通知群 - 任务完成</summary>
-
-<img src="pictures/Block运行通知.png" alt="Block运行通知" width="400"/>
+### ✅ 运行通知群 - 实时通知
 
 **功能**: 任务生命周期实时通知，包含：
-- ✅ 任务开始：算法类型、预计耗时
-- ✅ 任务完成：处理图像数、耗时、输出统计
-- ❌ 任务失败：失败阶段、错误信息、AI诊断结果
+- ✅ **任务开始**: 算法类型、预计耗时
+- ✅ **任务完成**: 处理图像数、耗时、输出统计
+- ❌ **任务失败**: 失败阶段、错误信息、AI诊断结果
 
-</details>
+---
 
-<details>
-
-<summary>🚀 后端状态监控群 - 系统状态</summary>
-
-<img src="pictures/后端状态监控.png" alt="后端状态监控" width="400"/>
+### 🚀 后端状态监控群 - 系统状态
 
 **功能**: 后端服务和系统资源监控，包含：
-- 🚀 后端启动通知：配置路径、数据库位置
-- 💻 系统状态监控：CPU、内存、GPU 使用率
-- 📊 任务队列状态：等待中和运行中的任务
+- 🚀 **后端启动通知**: 配置路径、数据库位置
+- 💻 **系统状态监控**: CPU、内存、GPU 使用率
+- 📊 **任务队列状态**: 等待中和运行中的任务
 
-</details>
+---
 
-<details>
-
-<summary>🤖 AI诊断Agent - 智能分析</summary>
-
-<img src="pictures/诊断Agent.png" alt="AI诊断详情" width="400"/>
+### 🤖 AI诊断Agent - 智能分析
 
 **功能**: 任务失败时自动触发智能诊断：
-- 🔍 自动分类错误类型（CUDA OOM、相机模型不兼容等）
-- 🎯 分析根本原因（结合日志、参数、系统状态）
-- 💡 提供具体修复建议（参数调整、命令操作等）
-- 📍 定位相关代码（文件路径和行号）
-- 📚 自动更新知识库（持续学习）
+- 🔍 **自动分类错误类型**（CUDA OOM、相机模型不兼容等）
+- 🎯 **分析根本原因**（结合日志、参数、系统状态）
+- 💡 **提供具体修复建议**（参数调整、命令操作等）
+- 📍 **定位相关代码**（文件路径和行号）
+- 📚 **自动更新知识库**（持续学习）
 
 **诊断流程**:
 ```
