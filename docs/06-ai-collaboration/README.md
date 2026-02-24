@@ -6,6 +6,7 @@ AeroTri-Web AI 协作开发文档，记录项目中 AI 辅助开发的理念、�
 
 - [核心理念](./philosophy.md) - AI 协作的 5 个核心原则
 - [最佳实践](./best-practices.md) - 34 条实战经验技巧
+- [开发方法论](./ai-development-methodology.md) - 苏格拉底式对话总结，95% 自动化路径 ⭐ 新
 - [案例研究](./case-studies/) - 实际应用案例
 - [测试报告](./test-report.md) - 诊断 Agent 集成测试
 
@@ -24,18 +25,25 @@ AeroTri-Web AI 协作开发文档，记录项目中 AI 辅助开发的理念、�
    - 精准上下文
    - 分析对应代码
 
-2. **AI 协作最佳实践** (`best-practices.md`) ⭐ 新
+2. **AI 协作最佳实践** (`best-practices.md`)
    - 34 条实战经验技巧
    - 规划与设计
    - 协作技巧
    - 工具使用
    - 质量保证
 
-3. **案例研究** (`case-studies/`)
+3. **AI 开发方法论** (`ai-development-methodology.md`) ⭐ 新
+   - 苏格拉底式对话总结
+   - 95% 自动化路径探索
+   - 工具协作 vs 切换
+   - 复利迭代的三个阶段
+   - 工作流演进与 Gap 分析
+
+4. **案例研究** (`case-studies/`)
    - 具体问题的 AI 协作解决过程
    - 成功模式和最佳实践
 
-4. **测试报告** (`test-report.md`)
+5. **测试报告** (`test-report.md`)
    - 诊断 Agent 集成测试结果
    - 验证 AI 协作工具的有效性
 

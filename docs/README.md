@@ -91,9 +91,10 @@
 ### AI 工程师
 
 1. 阅读 [AI 协作理念](./06-ai-collaboration/philosophy.md) - 核心原则
-2. 学习 [AI 协作最佳实践](./06-ai-collaboration/best-practices.md) - 34条实战经验 ⭐
-3. 查看 [案例研究](./06-ai-collaboration/case-studies/) - 实际应用案例
-4. 了解 [诊断 Agent](./NOTIFICATION_SETUP.md/#ai诊断agent通知) - 智能诊断系统
+2. 学习 [AI 协作最佳实践](./06-ai-collaboration/best-practices.md) - 34条实战经验
+3. 查看 [AI 开发方法论](./06-ai-collaboration/ai-development-methodology.md) - 95% 自动化路径 ⭐ 新
+4. 阅读 [案例研究](./06-ai-collaboration/case-studies/) - 实际应用案例
+5. 了解 [诊断 Agent](./NOTIFICATION_SETUP.md/#ai诊断agent通知) - 智能诊断系统
 
 ## 🆘 获取帮助
 
